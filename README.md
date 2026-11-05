@@ -247,6 +247,31 @@ How to read these numbers:
 
 ---
 
+## HQ in the browser: `8sync hq ui`
+
+`8sync hq ui` opens a local dashboard for every Claude Code and omp session on the machine: who is working, who is waiting on you, what each one posted, and how hard the machine is running. `--public` adds a login link for your phone.
+
+![HQ office view: every session by project, what each is doing, and its context size](docs/assets/hq-office.webp)
+
+| Results | Machine |
+|---|---|
+| ![HQ results tab: a report a session posted, open in the preview pane](docs/assets/hq-results.webp) | ![HQ machine view: RAM, CPU, GPU, power, keep-awake](docs/assets/hq-machine.webp) |
+
+Screenshots from a real HQ; other projects' session names are covered.
+
+## Bundled skills
+
+36 skills ship inside the binary and install into `~/.omp/skills`; the Claude Code kit links them. Four are read in every session; the rest only show the agent a one-line trigger until a task matches. The ECC plugin adds 300+ more skills, agents and commands.
+
+| Group | Skills |
+|---|---|
+| Always on | `trail` · `karpathy-guidelines` · `ponytail` · `8sync-cli` |
+| Design & frontend | `impeccable` · `taste-skill` · `taste-redesign` · `taste-minimalist` · `taste-soft` · `taste-brutalist` · `taste-output` · `senior-frontend` · `nextjs-app` · `tauri-v2` |
+| Research | `deep-research-web` · `last30days` · `research-paper` · `autoresearch` · `remote-compute` |
+| Images & vision | `image-gen` · `image-routing` · `locate-anything` · `zai-vision` |
+| Build & ship | `feature` · `full-flow` · `branch-sync` · `encore-deploy` · `encore-eino-go` · `ai-microservice-design` · `senior-security` · `aup-audit` · `hq-control` |
+| Docs, brand & reach | `super-pdf` · `assp-skill` · `social-growth` · `ego-zalo-advisor` |
+
 ## Agent HQ on Discord: `8sync hq`
 
 Post your Claude Code sessions' work to a private Discord server: personas post logs and alerts through webhooks driven by Claude Code hooks, and you talk to the lead session through Anthropic's official Channels plugin. `8sync hq setup --guild <id> --token-stdin` builds the server; `8sync hq up --repo <path>` prints the systemd unit for the lead. Setup and rules: [docs/hq.md](docs/hq.md).

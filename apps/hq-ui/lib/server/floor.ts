@@ -8,6 +8,7 @@ import { deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { projectIdFor } from "./db";
 import { coreGet } from "./core";
 import { inboxLive } from "./inbox";
+import { readRoomModel } from "./models";
 import { mergedSessions, run, type SessionView } from "./proc";
 import { ompRepoDir } from "./omp-sessions";
 
@@ -182,7 +183,9 @@ const OMP_STATUS: Partial<Record<FloorRow["state"], SessionView["status"]>> = { 
 
 /**
  * The live omp rooms as sessions (contract C3/C4). HQ cannot type into them; it queues into their
- * inbox by `inbox_id`, so they join the room list like any inbox room. `model`: the row's own `8sync ls` model.
+ * inbox by `inbox_id`, so they join the room list like any inbox room. `model`: what the room's
+ * 8sync-inbox extension last wrote (`<provider>/<model>:<thinking>`, follows a switch from the
+ * composer or omp's own /model), else the row's `8sync ls` model.
  */
 export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
   return rows.flatMap((r): SessionView[] => {
@@ -203,10 +206,16 @@ export function ompSessions(db: DatabaseSync, rows: FloorRow[]): SessionView[] {
         detail: r.caption || null,
         inbox_live: inboxLive(id),
         engine: "omp",
-        model: r.model ?? null,
+        model: liveModel(id) ?? r.model ?? null,
       },
     ];
   });
+}
+
+function liveModel(id: string): string | null {
+  const m = readRoomModel(id);
+  if (!m?.model) return null;
+  return m.thinking ? `${m.model}:${m.thinking}` : m.model;
 }
 
 /** 4 s cache; concurrent callers share one in-flight `8sync ls`. */

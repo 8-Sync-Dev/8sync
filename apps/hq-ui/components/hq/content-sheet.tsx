@@ -1,19 +1,20 @@
 "use client";
 
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
-// approve (which also sends the posting task to the chosen session), inline caption / time edits,
-// the channels (0064) with a caption and a post status each, the AI-label choice and "Giao việc".
-// Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, PlayIcon, RotateCcwIcon, SparklesIcon, XIcon } from "lucide-react";
+// approve (the owner's also sends the posting task to the chosen session), inline caption / time
+// edits, the channels (0064) with a caption and a post status each, the optional AI-label answer and
+// "Giao việc". Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner
+// can share or come back.
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, Maximize2Icon, PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AI_CHOICES,
-  aiReason,
   CAPTION_LIMIT,
   captionFor,
   CHANNEL_LABEL,
@@ -40,11 +41,15 @@ import {
   type ContentTextField,
   type AssignPref,
 } from "@/lib/content";
+import { atLeast } from "@/lib/access";
 import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
+import { useAccess } from "./access";
 import { AssignBox, Editable, FORMAT_TONE, sessionLabel, STATUS_EDGE, STATUS_TONE, StatusIcon, useAssignSessions, type Patch } from "./content-bits";
+import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
+import { ItemResults, NO_RESULTS, ResultMark, type ResultIndex } from "./content-results";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
 
@@ -64,6 +69,8 @@ export function ContentSheet({
   schedule,
   assign,
   api,
+  token,
+  results = NO_RESULTS,
   now,
   patch,
   errors,
@@ -80,6 +87,9 @@ export function ContentSheet({
   /** The saved default session for "Duyệt" (GET /api/content `assign`). */
   assign: AssignPref | null;
   api: Api;
+  token: string;
+  /** What the rooms reported back (owner only; empty for a guest). */
+  results?: ResultIndex;
   now: number;
   patch: Patch;
   errors: Record<number, string>;
@@ -110,6 +120,8 @@ export function ContentSheet({
                     <ItemDetail
                       it={it}
                       api={api}
+                      token={token}
+                      results={results}
                       now={now}
                       patch={patch}
                       error={errors[it.id]}
@@ -120,7 +132,7 @@ export function ContentSheet({
                     />
                   ) : (
                     <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
-                      <ItemLine it={it} />
+                      <ItemLine it={it} results={results} />
                       <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                     </button>
                   )}
@@ -135,7 +147,7 @@ export function ContentSheet({
 }
 
 /** Time, format, title, status: the collapsed row and the open item's heading. */
-function ItemLine({ it }: { it: ContentRow }) {
+function ItemLine({ it, results = NO_RESULTS }: { it: ContentRow; results?: ResultIndex }) {
   const at = whenOf(it);
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -145,6 +157,14 @@ function ItemLine({ it }: { it: ContentRow }) {
         {FORMAT_LABEL[it.format]}
       </span>
       <span className="min-w-0 flex-1 truncate text-sm font-medium">{it.title}</span>
+      {/* Which items already have a file to watch or download, without opening each one. */}
+      {it.media.length > 0 && (
+        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground" title={`${it.media.length} file ảnh/video`}>
+          <DownloadIcon className="size-3" aria-hidden />
+          {it.media.length}
+        </span>
+      )}
+      <ResultMark arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} />
       <span className={cn("shrink-0 text-xs", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</span>
     </span>
   );
@@ -162,6 +182,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function ItemDetail({
   it,
   api,
+  token,
+  results,
   now,
   patch,
   error,
@@ -172,6 +194,8 @@ function ItemDetail({
 }: {
   it: ContentRow;
   api: Api;
+  token: string;
+  results: ResultIndex;
   now: number;
   patch: Patch;
   error: string | undefined;
@@ -180,20 +204,17 @@ function ItemDetail({
   onCollapse?: () => void;
   reload: () => void;
 }) {
+  const role = useAccess();
+  const canEdit = atLeast(role, "editor");
   const warn = contentWarning(it);
-  const ai = aiReason(it);
-  // The owner's answer to `aiReason`, sent as `ai_label`; asked again on every entry into approved.
+  // The owner's optional AI answer, sent as `ai_label` with "Duyệt" (no gate: owner 2026-11-05).
   const [aiChoice, setAiChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
   // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
-  // Approve and publish both need the AI choice when flagged: the media folder can change after approval.
   const steps = nextStatuses(it.status);
-  const gated = (s: ContentStatus) => (s === "approved" || s === "published") && ai != null;
-  const needsChoice = steps.some(gated);
-  const blocked = needsChoice && aiChoice === null;
   const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
   // An approved item whose posts already sit on a platform scheduler: they keep the text they were
   // given. Editing captions or channels here says so, next to approve.
@@ -203,9 +224,11 @@ function ItemDetail({
     if (it.status === "approved" && live) setStale(true);
   };
 
-  // Where "Duyệt" sends the posting task: the pick in "Giao việc", else the item's holder, else the
-  // saved default; a session gone from the list is skipped (and a gone default is forgotten).
-  const sessions = useAssignSessions(api);
+  // Where "Duyệt" sends the posting task (owner only: a guest's "Duyệt" only approves): the pick in
+  // "Giao việc", else the item's holder, else the saved default; a session gone from the list is
+  // skipped (and a gone default is forgotten).
+  const owner = role === "owner";
+  const sessions = useAssignSessions(api, owner);
   const known = (s: string | null | undefined): s is string => !!s && (!sessions.loaded || sessions.list.some((r) => r.id === s));
   const [picked, setPicked] = useState<string | null>(null);
   const session = picked ?? [it.assignee_session, assign?.session].find(known) ?? it.assignee_session ?? "";
@@ -219,7 +242,7 @@ function ItemDetail({
   const [need, setNeed] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const forgotten = useRef<string | null>(null);
-  const goneDefault = sessions.loaded && assign != null && !sessions.list.some((r) => r.id === assign.session) ? assign.session : null;
+  const goneDefault = owner && sessions.loaded && assign != null && !sessions.list.some((r) => r.id === assign.session) ? assign.session : null;
   useEffect(() => {
     if (!goneDefault || forgotten.current === goneDefault) return;
     forgotten.current = goneDefault;
@@ -242,14 +265,27 @@ function ItemDetail({
   async function setStatus(status: ContentStatus) {
     setBusy(true);
     try {
-      await patch(it.id, gated(status) ? { status, ai_label: aiChoice } : { status });
+      await patch(it.id, { status });
     } finally {
       setBusy(false);
     }
   }
 
-  /** One tap (owner 2026-11-04): approve AND send the posting task; nothing changes when either fails. */
+  /**
+   * One tap (owner 2026-11-04): approve AND send the posting task; nothing changes when either fails.
+   * A guest editor cannot send (`send` is owner only): its "Duyệt" only approves.
+   */
   async function approve() {
+    const ai = aiChoice === null ? {} : { ai_label: aiChoice };
+    if (!owner) {
+      setBusy(true);
+      try {
+        await patch(it.id, { status: "approved", ...ai });
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const to = known(session) ? session : "";
     if (!to) {
       setNeed(true);
@@ -258,7 +294,7 @@ function ItemDetail({
     }
     setBusy(true);
     try {
-      const ok = await patch(it.id, { status: "approved", send: { session: to, base: labelOf(to) }, ...(gated("approved") ? { ai_label: aiChoice } : {}) });
+      const ok = await patch(it.id, { status: "approved", send: { session: to, base: labelOf(to) }, ...ai });
       if (ok) toast.success(`Đã duyệt #${it.id} và gửi việc đăng cho ${labelOf(to)}`);
     } finally {
       setBusy(false);
@@ -271,10 +307,10 @@ function ItemDetail({
         <div className="flex items-center gap-2">
           {onCollapse ? (
             <button type="button" onClick={onCollapse} className="flex min-w-0 flex-1 items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`Thu gọn #${it.id}`}>
-              <ItemLine it={it} />
+              <ItemLine it={it} results={results} />
             </button>
           ) : (
-            <ItemLine it={it} />
+            <ItemLine it={it} results={results} />
           )}
         </div>
         <h3 id={`ci-${it.id}`} className="text-base font-semibold text-balance">
@@ -291,33 +327,9 @@ function ItemDetail({
         </p>
       </header>
 
-      {(warn || ai || error) && (
+      {(warn || error) && (
         <div className="space-y-2">
-          {ai && (
-            <div role="note" className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-900 dark:text-amber-200">
-              <p className="flex items-start gap-1.5 font-medium">
-                <SparklesIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-                Nhớ bật nhãn AI khi đăng nếu bài dùng AI: {ai}.
-              </p>
-              {needsChoice && (
-                <fieldset className="mt-2 space-y-1.5 text-foreground">
-                  <legend className="sr-only">Bài này có dùng AI không</legend>
-                  {AI_CHOICES.map((c) => (
-                    <label key={String(c.value)} className="flex cursor-pointer items-start gap-2 max-sm:min-h-11">
-                      <input
-                        type="radio"
-                        name={`ai-${it.id}`}
-                        checked={aiChoice === c.value}
-                        onChange={() => setAiChoice(c.value)}
-                        className="mt-1 size-4 shrink-0 accent-primary max-sm:size-5"
-                      />
-                      <span className="text-sm">{c.label}</span>
-                    </label>
-                  ))}
-                </fieldset>
-              )}
-            </div>
-          )}
+
           {warn && (
             <p className="flex items-start gap-1.5 text-sm font-medium text-destructive">
               <AlertTriangleIcon aria-hidden className="mt-0.5 size-4 shrink-0" /> {warn}
@@ -331,11 +343,11 @@ function ItemDetail({
         </div>
       )}
 
-      {steps.length > 0 && (
+      {canEdit && steps.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
-              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || blocked || stepHint(it, s) != null} onClick={() => void approve()}>
+              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || stepHint(it, s) != null} onClick={() => void approve()}>
                 {busy ? <Loader2Icon aria-hidden className="animate-spin" /> : <CheckIcon aria-hidden />} Duyệt
               </Button>
             ) : s === "rejected" ? (
@@ -343,7 +355,7 @@ function ItemDetail({
                 <XIcon aria-hidden /> Bỏ
               </Button>
             ) : (
-              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || (gated(s) && aiChoice === null) || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
+              <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
                 → {STATUS_LABEL[s]}
               </Button>
             ),
@@ -353,9 +365,25 @@ function ItemDetail({
               {h}.
             </span>
           ))}
-          {blocked && hints.length === 0 && <span className="text-xs text-muted-foreground">Chọn có hay không dùng AI ở trên để duyệt.</span>}
-          {steps.includes("approved") && !blocked && hints.length === 0 && (
+          {owner && steps.includes("approved") && hints.length === 0 && (
             <span className="text-xs text-muted-foreground">Duyệt sẽ gửi việc đăng cho {known(session) ? labelOf(session) : "phiên chọn ở Giao việc"}.</span>
+          )}
+          {steps.includes("approved") && (
+            <fieldset className="w-full space-y-1 text-xs">
+              <legend className="text-muted-foreground">Nhãn AI khi đăng (không bắt buộc)</legend>
+              {AI_CHOICES.map((c) => (
+                <label key={String(c.value)} className="flex cursor-pointer items-start gap-2 max-sm:min-h-11">
+                  <input
+                    type="radio"
+                    name={`ai-${it.id}`}
+                    checked={aiChoice === c.value}
+                    onChange={() => setAiChoice(c.value)}
+                    className="mt-0.5 size-4 shrink-0 accent-primary max-sm:size-5"
+                  />
+                  <span>{c.label}</span>
+                </label>
+              ))}
+            </fieldset>
           )}
           {stale && it.status === "approved" && (
             <span className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
@@ -371,11 +399,22 @@ function ItemDetail({
 
       <dl className="space-y-3">
         <Field label="Giờ đăng">
-          {schedule ? <TimeEdit at={it.scheduled_at ?? null} fallback={at} onSave={(ms) => patch(it.id, { scheduled_at: ms })} id={it.id} /> : <span className="text-xs text-muted-foreground">{NO_SCHEDULE}</span>}
+          {!schedule ? (
+            <span className="text-xs text-muted-foreground">{NO_SCHEDULE}</span>
+          ) : canEdit ? (
+            <TimeEdit at={it.scheduled_at ?? null} fallback={at} onSave={(ms) => patch(it.id, { scheduled_at: ms })} id={it.id} />
+          ) : (
+            <span className="text-sm tabular-nums">{at != null ? timeOf(at) : "chưa đặt lịch"}</span>
+          )}
         </Field>
+        {role === "owner" && (
+          <Field label="Kết quả">
+            <ItemResults id={it.id} token={token} arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} now={now} />
+          </Field>
+        )}
         {it.channels !== undefined && (
           <Field label="Kênh">
-            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} />
+            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} />
           </Field>
         )}
         <Field label={it.channels !== undefined ? "Caption chung" : "Caption"}>
@@ -389,15 +428,21 @@ function ItemDetail({
             }}
             multiline
           />
+          {it.caption && (
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <CopyButton value={it.caption} label={`Chép caption #${it.id}`} />
+              Chép caption để dán lên trang
+            </div>
+          )}
         </Field>
         {/* Always shown (owner 2026-11-04: a clip with no file had no way to watch or download it): set the render's path here. */}
         <Field label="Media">
-          <Editable value={it.media_path} label={`Media #${it.id} (đường dẫn file hoặc thư mục)`} onSave={edit("media_path")} />
+          <Editable value={it.media_path} label={`Media #${it.id} (đường dẫn file hoặc thư mục)`} onSave={edit("media_path")} ownerOnly />
           {it.media_path &&
             (it.media.length === 0 ? (
               <p className="mt-0.5 text-xs text-muted-foreground">không đọc được file ảnh/video ở đường dẫn này</p>
             ) : (
-              <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
+              <div className="mt-1.5 grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(14rem,1fr))]">
                 {it.media.map((m) => (
                   <MediaTile key={`${m.index}:${m.name}:${m.size}`} m={m} />
                 ))}
@@ -410,10 +455,12 @@ function ItemDetail({
             <p className="mt-0.5 flex items-center gap-1 text-xs text-st-running">
               <CheckIcon aria-hidden className="size-3" /> đã duyệt nguồn · {it.source_approved_by} · {agoShort(it.source_approved_at, now)}
             </p>
-          ) : it.source_url ? (
+          ) : it.source_url && canEdit ? (
             <Button type="button" size="sm" variant="outline" className={cn("mt-1 h-7 text-xs", TOUCH)} onClick={() => void patch(it.id, { approve_source: it.source_url })}>
               Duyệt nguồn
             </Button>
+          ) : it.source_url ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">nguồn chưa duyệt</p>
           ) : (
             <p className="mt-0.5 text-xs text-muted-foreground">chưa có nguồn</p>
           )}
@@ -431,27 +478,29 @@ function ItemDetail({
         )}
       </dl>
 
-      <div className="rounded-lg border p-3">
-        <AssignBox
-          it={it}
-          api={api}
-          now={now}
-          canSave={schedule}
-          onSaved={reload}
-          sessions={sessions}
-          session={session}
-          label={session ? labelOf(session) : ""}
-          onPick={(id) => void pick(id)}
-          need={need}
-          triggerRef={trigger}
-        />
-      </div>
+      {owner && (
+        <div className="rounded-lg border p-3">
+          <AssignBox
+            it={it}
+            api={api}
+            now={now}
+            canSave={schedule}
+            onSaved={reload}
+            sessions={sessions}
+            session={session}
+            label={session ? labelOf(session) : ""}
+            onPick={(id) => void pick(id)}
+            need={need}
+            triggerRef={trigger}
+          />
+        </div>
+      )}
     </article>
   );
 }
 
 /** "Kênh": which platforms get the item, each with its caption and how its post stands. */
-function ChannelsBox({ it, patch, onEdit }: { it: ContentRow; patch: Patch; onEdit: () => void }) {
+function ChannelsBox({ it, patch, onEdit, canEdit }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean }) {
   const selected = it.channels ?? [];
   const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
   const [busy, setBusy] = useState(false);
@@ -475,7 +524,7 @@ function ChannelsBox({ it, patch, onEdit }: { it: ContentRow; patch: Patch; onEd
               key={ch}
               type="button"
               aria-pressed={on}
-              disabled={busy || last}
+              disabled={!canEdit || busy || last}
               title={last ? "Cần ít nhất một kênh" : undefined}
               onClick={() => void toggle(ch)}
               className={cn(
@@ -490,7 +539,7 @@ function ChannelsBox({ it, patch, onEdit }: { it: ContentRow; patch: Patch; onEd
         })}
       </div>
       {selected.map((ch) => (
-        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} />
+        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} />
       ))}
     </div>
   );
@@ -507,7 +556,7 @@ const LINE_TONE: Record<ChannelLine["tone"], string> = {
  * One channel's caption: its own text (`captions_json`) or, until edited, what `captionFor` reads from
  * the shared caption. Saving the shared text back keeps it shared; clearing an own caption returns to it.
  */
-function ChannelCaption({ it, ch, post, patch, onEdit }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void }) {
+function ChannelCaption({ it, ch, post, patch, onEdit, canEdit }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void; canEdit: boolean }) {
   const own = it.captions_json?.[ch]?.trim() || null;
   const shared = captionFor({ caption: it.caption, captions_json: null }, ch);
   const value = own ?? shared ?? "";
@@ -563,7 +612,7 @@ function ChannelCaption({ it, ch, post, patch, onEdit }: { it: ContentRow; ch: C
             Mở bài <ExternalLinkIcon aria-hidden className="size-3" />
           </a>
         )}
-        {line.retry && (
+        {line.retry && canEdit && (
           <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px]", TOUCH)} disabled={retrying} onClick={() => void retry()}>
             <RotateCcwIcon aria-hidden /> Thử lại
           </Button>
@@ -572,6 +621,7 @@ function ChannelCaption({ it, ch, post, patch, onEdit }: { it: ContentRow; ch: C
       <Textarea
         id={id}
         value={text}
+        readOnly={!canEdit}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => void commit()}
         onKeyDown={(e) => {
@@ -600,7 +650,7 @@ function ChannelCaption({ it, ch, post, patch, onEdit }: { it: ContentRow; ch: C
                 ? "Lấy từ caption chung; sửa ở đây để viết riêng cho kênh này"
                 : "Chưa có caption"}
         </span>
-        {own && draft === null && (
+        {own && draft === null && canEdit && (
           <button type="button" className="rounded px-1 underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11" onClick={() => void save("")}>
             Dùng caption chung
           </button>
@@ -665,12 +715,14 @@ function MediaTile({ m }: { m: ContentMedia }) {
   // `m.url` is signed (no token header needed): the browser streams it. A video loads only on tap, then
   // seeks with Range requests, so a 2 GB render never sits in memory. The URL is pinned on first view
   // so the hourly re-signed URL of a later poll does not restart a playing video; the tile is keyed by
-  // name + size, so a re-rendered file remounts with its new URL.
+  // name + size, so a re-rendered file remounts with its new URL. A tap on the picture (or the expand
+  // button) opens it near full screen: reviewing a post at thumbnail size misses what is in it.
   const [want, setWant] = useState(m.kind === "image");
   const [src] = useState(m.url);
   const [failed, setFailed] = useState(false);
+  const [big, setBig] = useState(false);
   return (
-    <figure className={cn("overflow-hidden rounded-lg border", m.ai && "border-destructive/60")}>
+    <figure className="overflow-hidden rounded-lg border">
       <div className="relative grid aspect-video place-items-center bg-muted">
         {!want ? (
           <Button type="button" size="sm" variant="outline" className={TOUCH} onClick={() => setWant(true)} aria-label={`Xem video ${m.name}`}>
@@ -679,22 +731,28 @@ function MediaTile({ m }: { m: ContentMedia }) {
         ) : failed ? (
           <span className="px-2 text-center text-[11px] text-muted-foreground">không tải được, mở lại mục này</span>
         ) : m.kind === "video" ? (
-          <video src={src} controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" aria-label={m.name} />
+          !big && <video src={src} controls autoPlay playsInline preload="metadata" onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" aria-label={m.name} />
         ) : (
-          // A signed API URL: next/image would proxy it through the optimizer.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt={m.name} onError={() => setFailed(true)} className="absolute inset-0 size-full object-contain" />
+          <button type="button" onClick={() => setBig(true)} className="absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`Phóng to ${m.name}`}>
+            {/* A signed API URL: next/image would proxy it through the optimizer. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={m.name} onError={() => setFailed(true)} className="size-full object-contain" />
+          </button>
         )}
       </div>
       <figcaption className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
         <span className="min-w-0 flex-1 truncate" title={m.name}>
           {m.name}
         </span>
-        {m.ai && (
-          <span className="shrink-0 font-medium text-destructive" title={m.ai}>
-            AI
-          </span>
-        )}
+        <button
+          type="button"
+          onClick={() => setBig(true)}
+          className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-9"
+          aria-label={`Phóng to ${m.name}`}
+          title="Phóng to"
+        >
+          <Maximize2Icon className="size-3.5" aria-hidden />
+        </button>
         {/* A real link: the browser's own download manager streams it to disk, any size, with progress. */}
         <a
           href={`${m.url}&dl=1`}
@@ -706,6 +764,22 @@ function MediaTile({ m }: { m: ContentMedia }) {
           <DownloadIcon className="size-3.5" aria-hidden />
         </a>
       </figcaption>
+      <Dialog open={big} onOpenChange={setBig}>
+        <DialogContent
+          aria-describedby={undefined}
+          className="h-dvh w-screen max-w-none gap-0 rounded-none border-0 bg-black/95 p-0 text-white ring-0 sm:h-[94dvh] sm:w-[min(96vw,1400px)] sm:max-w-none sm:rounded-xl [&_[data-slot=dialog-close]]:size-10 [&_[data-slot=dialog-close]]:bg-black/40 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/60 [&_[data-slot=dialog-close]]:hover:text-white"
+        >
+          <DialogTitle className="absolute top-4 left-4 z-10 max-w-[calc(100%-8rem)] truncate text-xs font-medium text-white/85">{m.name}</DialogTitle>
+          <div className="absolute inset-0 touch-pinch-zoom overscroll-contain p-3 pt-14 sm:p-6 sm:pt-14">
+            {m.kind === "video" ? (
+              <video src={src} controls autoPlay playsInline preload="metadata" className="size-full object-contain" aria-label={m.name} />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={src} alt={m.name} draggable={false} className="size-full object-contain" />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </figure>
   );
 }

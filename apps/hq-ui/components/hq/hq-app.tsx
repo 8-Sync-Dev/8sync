@@ -22,6 +22,7 @@ import { useArchive, useSessionTree, useTreeOrder, useTreePrefs } from "./use-se
 import { COMPOSER_ID, useWorkspace, workspace } from "./workspace-store";
 import { cycleKey, groupSessions, type TreeSession } from "@/lib/session-tree";
 import { RoomBar, RoomBrief } from "./room-brief";
+import { RoomLogProvider } from "./room-outputs";
 import type { PreviewState } from "./preview-view";
 import { FloatShell } from "./float-shell";
 import { useEdgeFade } from "./scroll-strip";
@@ -62,9 +63,10 @@ const LoopsView = dynamic(() => import("./loops-view").then((m) => m.LoopsView),
 const SessionsView = dynamic(() => import("./sessions-view").then((m) => m.SessionsView), { loading: ViewLoading });
 const ActivityView = dynamic(() => import("./activity-view").then((m) => m.ActivityView), { loading: ViewLoading });
 const ContentView = dynamic(() => import("./content-view").then((m) => m.ContentView), { loading: ViewLoading });
+const ArtifactsView = dynamic(() => import("./artifacts-view").then((m) => m.ArtifactsView), { loading: ViewLoading });
 
-/** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens. */
-type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
+/** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens · artifacts: files rooms posted. */
+type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -516,22 +518,23 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   }}
                 />
               ) : (
-              <TeamView
-                hq={hq}
-                messages={view.messages}
-                sessions={view.sessions}
-                target={target}
-                onTarget={setTarget}
-                onStartSession={focusStartSession}
-                bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
-                header={
-                  room && roomState ? (
-                    <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} />
-                  ) : loaded && !liveRooms.length ? (
-                    <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
-                  ) : null
-                }
-              />
+              <RoomLogProvider sessionId={room?.session_id ?? null} token={token} working={roomState?.state === "working"}>
+                <TeamView
+                  hq={hq}
+                  messages={view.messages}
+                  sessions={view.sessions}
+                  target={target}
+                  onTarget={setTarget}
+                  onStartSession={focusStartSession}
+                  bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
+                  split={room && roomState ? <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} /> : null}
+                  header={
+                    !(room && roomState) && loaded && !liveRooms.length ? (
+                      <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
+                    ) : null
+                  }
+                />
+              </RoomLogProvider>
               )}
             </TabsContent>
             <TabsContent value="report" className="h-full">
@@ -548,6 +551,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
             </TabsContent>
             <TabsContent value="content" className="h-full">
               {contentOn && <ContentView token={token} active={tab === "content"} />}
+            </TabsContent>
+            <TabsContent value="artifacts" className="h-full">
+              <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
               <PreviewView state={previews} token={token} rooms={officeRooms} repo={repo?.root ?? null} />

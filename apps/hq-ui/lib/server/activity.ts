@@ -3,13 +3,16 @@
 // result) and subagent start, newest last. Commands are never shown: a shell call shows its
 // description / intent, else only the program name.
 import fs from "node:fs";
+import { TURNS_MAX, turnsFrom, type Turn } from "../room-turns";
 import { maskSecrets } from "../mask";
 import { claudeDir, transcriptOf } from "./ask";
 
 const TAIL_BYTES = 1024 * 1024;
-// Replies and prompts keep their lines (the log renders them as markdown, owner 2026-11-04); 80
-// events × 4 000 chars bounds one poll at ~320 KB.
+// Replies and prompts keep their lines (the log renders them as markdown, owner 2026-11-04). A reply is
+// parsed up to OUTPUT_MAX so a turn's output ("Kết quả") reads in full; the step log sends 4 000 of it.
+// 80 events × 4 000 + 20 turns × (8 000 + 2 000) bounds one changed poll at ~520 KB; unchanged = `same`.
 const TEXT_MAX = 4000;
+const OUTPUT_MAX = 8000;
 const PROMPT_MAX = 2000;
 const ERROR_MAX = 200;
 
@@ -121,7 +124,7 @@ export function activityFrom(lines: string[], limit = 80): ActivityEvent[] {
     if (!Array.isArray(content)) continue;
     for (const b of content as Block[]) {
       if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
-        out.push({ kind: "text", at, text: clipText(b.text, TEXT_MAX) });
+        out.push({ kind: "text", at, text: clipText(b.text, OUTPUT_MAX) });
       } else if (b?.type === "tool_use" && typeof b.name === "string") {
         const input = (b.input ?? {}) as Record<string, unknown>;
         const agent = (b.name === "Agent" || b.name === "Task") && str(input.subagent_type);
@@ -187,7 +190,7 @@ export function ompActivityFrom(lines: string[], limit = 80): ActivityEvent[] {
     if (m.role !== "assistant") continue;
     for (const b of m.content as OmpBlock[]) {
       if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
-        out.push({ kind: "text", at, text: clipText(b.text, TEXT_MAX) });
+        out.push({ kind: "text", at, text: clipText(b.text, OUTPUT_MAX) });
       } else if (b?.type === "toolCall" && typeof b.name === "string") {
         const args = (b.arguments && typeof b.arguments === "object" ? b.arguments : {}) as Record<string, unknown>;
         const first = Array.isArray(args.tasks) ? (args.tasks[0] as Record<string, unknown> | undefined) : undefined;
@@ -203,46 +206,65 @@ export function ompActivityFrom(lines: string[], limit = 80): ActivityEvent[] {
   return out.slice(-limit);
 }
 
-const cache = new Map<string, { size: number; mtime: number; limit: number; events: ActivityEvent[] }>();
+/** A room's log as the view polls it: the last `limit` steps, its turns, and `rev` (changes with the file). */
+export type RoomLog = { events: ActivityEvent[]; turns: Turn[]; rev: string };
 
-/** The last `limit` events of a transcript file (its last 1 MB), cached by size and mtime; [] when unreadable. */
-function readTail(f: string, limit: number, parse: (lines: string[], limit: number) => ActivityEvent[]): ActivityEvent[] {
+const EMPTY: RoomLog = { events: [], turns: [], rev: "" };
+
+/** A step's reply text as the step log shows it (the turn keeps the longer one). */
+const step = (ev: ActivityEvent): ActivityEvent =>
+  ev.kind === "text" && ev.text.length > TEXT_MAX ? { ...ev, text: `${ev.text.slice(0, TEXT_MAX - 1)}…` } : ev;
+
+type Cached = { size: number; mtime: number; events: ActivityEvent[]; logs: Map<number, RoomLog> };
+const cache = new Map<string, Cached>();
+
+/**
+ * A transcript file's log (its last 1 MB parsed once per size and mtime; each `limit` built once from
+ * that): the same object until the file changes. EMPTY when unreadable.
+ */
+function readTail(f: string, limit: number, parse: (lines: string[], limit: number) => ActivityEvent[]): RoomLog {
   let st: fs.Stats;
   try {
     st = fs.statSync(f);
   } catch {
-    return [];
+    return EMPTY;
   }
-  const hit = cache.get(f);
-  if (hit && hit.size === st.size && hit.mtime === st.mtimeMs && hit.limit === limit) return hit.events;
-  const start = Math.max(0, st.size - TAIL_BYTES);
-  let body = "";
-  let fd: number | null = null;
-  try {
-    fd = fs.openSync(f, "r");
-    const buf = Buffer.alloc(st.size - start);
-    // The session may be writing: use what was read.
-    const n = fs.readSync(fd, buf, 0, buf.length, start);
-    body = buf.subarray(0, n).toString("utf8");
-  } catch {
-    return [];
-  } finally {
-    if (fd != null) fs.closeSync(fd);
+  let hit = cache.get(f);
+  if (!hit || hit.size !== st.size || hit.mtime !== st.mtimeMs) {
+    const start = Math.max(0, st.size - TAIL_BYTES);
+    let body = "";
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(f, "r");
+      const buf = Buffer.alloc(st.size - start);
+      // The session may be writing: use what was read.
+      const n = fs.readSync(fd, buf, 0, buf.length, start);
+      body = buf.subarray(0, n).toString("utf8");
+    } catch {
+      return EMPTY;
+    } finally {
+      if (fd != null) fs.closeSync(fd);
+    }
+    const lines = body.split("\n");
+    // A tail read starts mid-line: drop that first partial line.
+    hit = { size: st.size, mtime: st.mtimeMs, events: parse(start > 0 ? lines.slice(1) : lines, Infinity), logs: new Map() };
+    cache.set(f, hit);
   }
-  const lines = body.split("\n");
-  // A tail read starts mid-line: drop that first partial line.
-  const events = parse(start > 0 ? lines.slice(1) : lines, limit);
-  cache.set(f, { size: st.size, mtime: st.mtimeMs, limit, events });
-  return events;
+  let log = hit.logs.get(limit);
+  if (!log) {
+    log = { events: hit.events.slice(-limit).map(step), turns: turnsFrom(hit.events, TURNS_MAX), rev: `${hit.size}:${hit.mtime}` };
+    hit.logs.set(limit, log);
+  }
+  return log;
 }
 
-/** The last `limit` events of a Claude Code session; [] when its transcript is not found. Never throws. */
-export function readActivity(sessionId: string, cwd: string | null, limit = 80, root = claudeDir()): ActivityEvent[] {
+/** The log of a Claude Code session (last `limit` steps); EMPTY when its transcript is not found. Never throws. */
+export function readActivity(sessionId: string, cwd: string | null, limit = 80, root = claudeDir()): RoomLog {
   const f = transcriptOf(sessionId, cwd, root);
-  return f ? readTail(f, limit, activityFrom) : [];
+  return f ? readTail(f, limit, activityFrom) : EMPTY;
 }
 
-/** The last `limit` events of an omp room's transcript file (path from `8sync ls`, never a client). Never throws. */
-export function readOmpActivity(file: string, limit = 80): ActivityEvent[] {
+/** The log of an omp room's transcript file (path from `8sync ls`, never a client). Never throws. */
+export function readOmpActivity(file: string, limit = 80): RoomLog {
   return readTail(file, limit, ompActivityFrom);
 }

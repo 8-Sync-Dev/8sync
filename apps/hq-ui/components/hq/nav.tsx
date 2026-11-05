@@ -590,11 +590,22 @@ function GroupMenu({
   );
 }
 
+/** The running spinner: the palette's running green, thicker strokes, a soft neon glow on dark. */
+function RunSpinner({ className, label }: { className: string; label?: string }) {
+  return (
+    <LoaderIcon
+      strokeWidth={2.5}
+      className={cn("shrink-0 text-st-running motion-safe:animate-spin motion-safe:[animation-duration:1.6s] dark:drop-shadow-[0_0_3px_var(--st-running)]", className)}
+      {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}
+    />
+  );
+}
+
 /** What a row says without colour alone: a spinner while working, the blue dot, ⚠ on error. */
 function Mark({ state, unread }: { state: TreeSession["state"]; unread: boolean }) {
   if (state === "error") return <AlertTriangleIcon className="size-3.5 shrink-0 text-warning" aria-label={TREE_WORD.error} />;
   if (unread) return <span className="size-2 shrink-0 rounded-full bg-st-unread" role="img" aria-label={state === "needs" ? TREE_WORD.needs : "Xong, chưa xem"} />;
-  if (state === "working") return <LoaderIcon className="size-3.5 shrink-0 text-muted-foreground motion-safe:animate-spin motion-safe:[animation-duration:2s]" aria-label={TREE_WORD.working} />;
+  if (state === "working") return <RunSpinner className="size-3.5" label={TREE_WORD.working} />;
   return null;
 }
 
@@ -719,7 +730,7 @@ function ChildRow({ c, last, now, onOpen }: { c: TreeChild; last: boolean; now: 
         <span className="min-w-0 flex-1 truncate">{c.title}</span>
         <span className="sr-only"> · {TREE_WORD[c.state]}</span>
         {c.state === "working" ? (
-          <LoaderIcon className="size-3 shrink-0 motion-safe:animate-spin motion-safe:[animation-duration:2s]" aria-hidden />
+          <RunSpinner className="size-3" />
         ) : c.state === "error" ? (
           <AlertTriangleIcon className="size-3 shrink-0 text-warning" aria-hidden />
         ) : c.state === "done" ? (

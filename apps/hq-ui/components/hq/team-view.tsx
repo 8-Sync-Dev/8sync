@@ -15,11 +15,17 @@ import { Conversation, ConversationContent, ConversationEmptyState, Conversation
 import { Message as ChatMessage, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useDefaultLayout } from "react-resizable-panels";
 import { AttachButton, AttachList, useAttach } from "./attach";
-import { MessageText } from "./attachments";
+import { MessageText, ReplyMedia } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
+import { ModelPicker } from "./model-picker";
+import { TOUCH } from "./room-send";
+import { TurnLink } from "./room-outputs";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
@@ -35,6 +41,7 @@ export function TeamView({
   target,
   onTarget,
   header,
+  split,
   bar,
   onStartSession,
 }: {
@@ -44,6 +51,12 @@ export function TeamView({
   target: string | null;
   onTarget: (s: string) => void;
   header?: ReactNode;
+  /**
+   * Chat phòng: the room's brief and Nhật ký (Kết quả · Từng bước). On a wide screen it is the right
+   * column beside the chat (the chat and its message box on the left), the border between them dragged
+   * to give either more room (size kept per browser); on a phone it scrolls with the chat as `header` does.
+   */
+  split?: ReactNode;
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
   bar?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
@@ -70,54 +83,79 @@ export function TeamView({
 
   const { loading, error } = hq.messages;
 
+  const mobile = useIsMobile();
+  const layout = useDefaultLayout({ id: "hq-room-columns", panelIds: ["chat", "brief"] });
+  const top = mobile ? (split ?? header) : header;
+
+  const chat = (
+    <Conversation className="min-h-0 flex-1">
+      <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
+        {top && <div className="mb-6">{top}</div>}
+        <SessionStrip sessions={sessions} />
+        {error ? (
+          <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
+        ) : loading ? (
+          <TimelineSkeleton />
+        ) : messages.length === 0 ? (
+          <ConversationEmptyState
+            icon={<MessagesSquareIcon />}
+            title="No conversation yet"
+            description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
+          />
+        ) : (
+          <div aria-label="Team timeline" className="pb-2">
+            {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
+            {groups.map((g) => (
+              <section key={g.day + g.rows[0].id}>
+                <div
+                  aria-hidden
+                  className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
+                >
+                  {g.day}
+                </div>
+                {g.rows.map((m, i) => (
+                  <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
+                ))}
+              </section>
+            ))}
+          </div>
+        )}
+      </ConversationContent>
+      <ConversationScrollButton />
+    </Conversation>
+  );
+
+  // Its own full-width row under the split (the split is chat | Nhật ký only); centred on one column.
+  const wide = !!split && !mobile;
+  const composer =
+    messageTargets(sessions).length === 0 ? (
+      <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
+    ) : (
+      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} />
+    );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
       {bar && (
         <div className="shrink-0 border-b bg-background">
-          <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">{bar}</div>
+          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
         </div>
       )}
-      <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-4 py-4 sm:px-6">
-          {header && <div className="mb-6">{header}</div>}
-          <SessionStrip sessions={sessions} />
-          {error ? (
-            <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
-          ) : loading ? (
-            <TimelineSkeleton />
-          ) : messages.length === 0 ? (
-            <ConversationEmptyState
-              icon={<MessagesSquareIcon />}
-              title="No conversation yet"
-              description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
-            />
-          ) : (
-            <div aria-label="Team timeline" className="pb-2">
-              {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
-              {groups.map((g) => (
-                <section key={g.day + g.rows[0].id}>
-                  <div
-                    aria-hidden
-                    className="sticky top-0 z-10 -mx-2 bg-background/95 px-2 pt-3 pb-1.5 text-xs font-medium text-muted-foreground backdrop-blur-[2px]"
-                  >
-                    {g.day}
-                  </div>
-                  {g.rows.map((m, i) => (
-                    <Row key={m.id} m={m} prev={g.rows[i - 1]} who={who} token={hq.token} />
-                  ))}
-                </section>
-              ))}
-            </div>
-          )}
-        </ConversationContent>
-        <ConversationScrollButton />
-      </Conversation>
-      {messageTargets(sessions).length === 0 ? (
-        <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
+      {wide ? (
+        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+          <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
+            {chat}
+          </ResizablePanel>
+          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
+          <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
+            <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       ) : (
-        <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+        chat
       )}
+      {composer}
     </div>
   );
 }
@@ -223,7 +261,15 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
       )}
       <ChatMessage from={owner ? "user" : "assistant"}>
         <MessageContent className={cn(!owner && "rounded-lg border bg-card px-3 py-2")}>
-          {owner ? <MessageText text={m.text} token={token} className="break-words whitespace-pre-wrap" /> : <MessageResponse>{m.text ?? ""}</MessageResponse>}
+          {owner ? (
+            <MessageText text={m.text} token={token} className="wrap-anywhere whitespace-pre-wrap" />
+          ) : (
+            <>
+              {/* wrap-anywhere: a long path or URL breaks inside the bubble instead of being clipped on a phone. */}
+              <MessageResponse className="wrap-anywhere">{m.text ?? ""}</MessageResponse>
+              <ReplyMedia text={m.text} token={token} />
+            </>
+          )}
         </MessageContent>
       </ChatMessage>
       {owner && m.delivery && (
@@ -231,6 +277,7 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
           <DeliveryTag delivery={m.delivery} />
         </div>
       )}
+      {(owner || m.kind === "session_reply") && <TurnLink m={m} align={owner ? "end" : "start"} />}
       {m.kind === "session_reply" && m.delivery === "terminal" && (
         <div className="mt-1">
           <ReplySource delivery={m.delivery} />
@@ -288,11 +335,14 @@ function Composer({
   sessions,
   target,
   onTarget,
+  wide = false,
 }: {
   hq: Hq;
   sessions: Session[];
   target: string | null;
   onTarget: (s: string) => void;
+  /** Under the chat | Nhật ký split: spans both columns instead of one centred chat column. */
+  wide?: boolean;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -366,7 +416,7 @@ function Composer({
         return (
           <div className="shrink-0 border-t bg-background">
             <form
-              className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
+              className={cn("mx-auto w-full px-4 py-3 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();
@@ -400,7 +450,7 @@ function Composer({
                   rows={2}
                   maxLength={4000}
                   placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file` : "Message"}
-                  className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+                  className="max-h-[40dvh] min-h-14 resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
                 />
                 <AttachList a={att} token={hq.token} />
                 <div className="flex items-center gap-2 px-2 pb-2">
@@ -417,6 +467,7 @@ function Composer({
                       ))}
                     </SelectContent>
                   </Select>
+                  {current && <ModelPicker api={hq.api} session={addressOf(current)} engine={current.engine === "omp" ? "omp" : "claude"} model={current.model} className={TOUCH} />}
                   <AttachButton a={att} disabled={disabled || !current} />
                   <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
                   <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}

@@ -72,8 +72,6 @@ export type ContentMedia = {
   name: string;
   kind: "image" | "video";
   size: number;
-  /** Why the file reads as AI-made (C2PA / IPTC), null = no mark found. */
-  ai: string | null;
   url: string;
 };
 
@@ -238,12 +236,19 @@ export type ContentList =
       pages: string[];
       /** Migration 0063 is in: schedule + assignee columns exist. */
       schedule: boolean;
-      /** The session "Duyệt" sends the posting task to unless the owner picks another (saved server-side). */
+      /** The session "Duyệt" sends the posting task to unless the owner picks another (saved server-side; null for a guest). */
       assign: AssignPref | null;
+      /** The content-post-agency checkout (owner only): where `8sync . cpa-live` opens its omp session. */
+      repo?: string | null;
     };
 
 /** The default session for approve+send: an omp room id or Claude session id, and its label as the owner saw it. */
 export type AssignPref = { session: string; base: string | null };
+
+/** The omp session that keeps content-post-agency up to date from HQ (create-or-resume by name). */
+export const CPA_SESSION = "cpa-live";
+/** `;` not `&&`: Windows PowerShell 5.1 rejects `&&`; `;` runs in PowerShell 5.1/7 and bash alike. */
+export const cpaCommand = (repo: string) => `cd "${repo}"; 8sync . ${CPA_SESSION}`;
 
 /** What the calendar and the sheet say when the DB predates migration 0063. */
 export const NO_SCHEDULE = "DB nội dung chưa có cột lịch đăng (migration 0063): mở app content-ai một lần để chạy migration.";
@@ -295,27 +300,10 @@ export function contentTaskText(it: Pick<ContentItem, "id" | "title" | "fb_page"
   return `[Nội dung #${it.id} · ${it.fb_page}] ${it.title}\n${typed.trim()}`;
 }
 
-/** Formats that are video: the course pipeline's lip-synced presenter and cloned voice carry no C2PA mark, yet Meta labelled reel 1.2 "AI". */
-const VIDEO_FORMATS: readonly ContentFormat[] = ["course_video", "ai_video", "asmr", "clip"];
-
 /**
- * Why an item may come out as AI-made (owner rule 2026-11-04, revised the same day: a course video
- * with a cloned voice or lip-sync MAY be posted, but with the platform's AI disclosure turned on):
- * an AI video by format; any video (a lip-synced face or a cloned voice leaves no mark in the file);
- * media carrying a C2PA manifest / an IPTC AI source type. Approving it needs the owner's explicit
- * choice, sent as `ai_label` (true = turn the AI label on). Null = nothing to choose.
+ * The owner's optional AI answer in the sheet (no gate: owner 2026-11-05 dropped the AI-label
+ * warning and tick); the value is `ai_label`, kept in the 0064 column and sent with the posting task.
  */
-export function aiReason(it: Pick<ContentItem, "format"> & { media?: Pick<ContentMedia, "name" | "ai" | "kind">[] }): string | null {
-  const why: string[] = [];
-  const media = it.media ?? [];
-  if (it.format === "ai_video") why.push("định dạng AI video");
-  else if (VIDEO_FORMATS.includes(it.format) || media.some((m) => m.kind === "video"))
-    why.push("video: mặt lip-sync hay giọng clone không để lại dấu trong file, phải nghe/xem lại");
-  for (const m of media) if (m.ai) why.push(`${m.name}: ${m.ai}`);
-  return why.length ? why.join("; ") : null;
-}
-
-/** The two answers to `aiReason`, in the order the sheet lists them; the value is `ai_label`. */
 export const AI_CHOICES: readonly { value: boolean; label: string }[] = [
   { value: true, label: "Có AI (giọng clone, lip-sync, ảnh AI): bật nhãn AI khi đăng" },
   { value: false, label: "Không dùng AI" },
@@ -327,10 +315,10 @@ export const fullStampOf = (ms: number) => `${stampOf(ms)}/${new Date(ms).getFul
 /**
  * The task "Duyệt" sends to the chosen session: the AssignBox line naming the item, what to post
  * where and when, each channel's caption, then how to schedule it. Without migration 0064 the item
- * goes to Facebook with its caption. `cap` shortens each caption (the worker reads the full ones
- * from the DB); null = whole.
+ * goes to Facebook with its caption. `aiLabel` undefined = the owner did not say. `cap` shortens
+ * each caption (the worker reads the full ones from the DB); null = whole.
  */
-export function publishTaskText(it: ContentItem, aiLabel: boolean, cap: number | null = null): string {
+export function publishTaskText(it: ContentItem, aiLabel: boolean | undefined, cap: number | null = null): string {
   const channels = it.channels ?? (["facebook"] as Channel[]);
   const caption = (ch: Channel) => {
     const text = (it.channels ? captionFor(it, ch) : it.caption) ?? "(chưa có caption)";
@@ -342,14 +330,13 @@ export function publishTaskText(it: ContentItem, aiLabel: boolean, cap: number |
     `Định dạng: ${FORMAT_LABEL[it.format]}`,
     `Giờ đăng: ${it.scheduled_at != null ? `${fullStampOf(it.scheduled_at)} (${it.scheduled_at})` : "chưa có"}`,
     `Kênh: ${channels.map((c) => CHANNEL_LABEL[c]).join(", ")}`,
-    `Nhãn AI: ${aiLabel ? "BẬT khi đăng" : "không"}`,
+    `Nhãn AI: ${aiLabel === true ? "BẬT khi đăng" : aiLabel === false ? "không" : "chủ chưa chọn"}`,
     `Media: ${it.media_path || "chưa có"}`,
     ...channels.flatMap((c) => [`--- ${CHANNEL_LABEL[c]} ---`, caption(c)]),
     `Lên lịch: trong content-post-agency chạy \`pnpm --dir apps/content-ai channels:tick --only ${it.id}\` (worker lên lịch native qua ego-browser) rồi kiểm trạng thái từng kênh trong HQ.`,
   ];
   return contentTaskText(it, lines.join("\n"));
 }
-
 // ── Calendar (local time: the owner plans posts by the wall clock of this machine) ──
 
 const pad = (n: number) => String(n).padStart(2, "0");

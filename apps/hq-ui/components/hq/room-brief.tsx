@@ -50,8 +50,8 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
   const term = useOpenTerminal(room, tmux, token, onTerminal);
 
   return (
-    <section aria-labelledby="room-brief" className="space-y-4">
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+    <section aria-labelledby="room-brief" className="space-y-4 md:flex md:min-h-0 md:flex-1 md:flex-col md:gap-4 md:space-y-0">
+      <dl className="grid shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
         <dt className="text-muted-foreground">Đang làm</dt>
         <dd className="min-w-0">
           {n.last ? (
@@ -76,7 +76,7 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
       )}
 
       {room.session_id ? (
-        <RoomLog sessionId={room.session_id} token={token} onFull={term.open ?? undefined} />
+        <RoomLog room={room.label} onFull={term.open ?? undefined} fill />
       ) : (
         <p className="text-xs text-muted-foreground">Nhật ký đọc từ transcript của Claude Code: phòng này chưa có session id. Mở terminal để xem nó làm gì.</p>
       )}

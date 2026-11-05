@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { LogLines } from "@/components/hq/room-log";
+import { ATTACH_HEADER } from "@/lib/attachments";
 import { activityFrom, readActivity, toolSummary } from "@/lib/server/activity";
 
 const SID = "04d7c8d5-7473-44e7-bab9-0606b4db5a01";
@@ -43,10 +47,9 @@ describe("activityFrom", () => {
     ]);
     expect(ev[3].error).toBe("exit 22: 401 Unauthorized");
     expect(ev[0].at).toBe(Date.parse(at(2)));
-    // A reply keeps its markdown lines (CRs and extra blank lines go) and stops at 4 000 chars.
+    // A reply keeps its markdown lines (CRs and extra blank lines go); 5 000 chars fit the 8 000 a turn's output keeps.
     expect(ev[7].text.startsWith("**Gói:**\n\n| Món | Được |\n|---|---|\n| short |  có\n")).toBe(true);
-    expect(ev[7].text.length).toBe(4000);
-    expect(ev[7].text.endsWith("…")).toBe(true);
+    expect(ev[7].text.endsWith("x".repeat(5000))).toBe(true);
   });
 
   it("never shows a command line: only its description or the first word", () => {
@@ -74,11 +77,19 @@ describe("readActivity", () => {
     fs.writeFileSync(f, FIXTURE.join("\n") + "\n");
     const root = path.join(home, ".claude");
     const a = readActivity(SID, "C:\\w\\game", 80, root);
-    expect(a).toHaveLength(8);
+    expect(a.events).toHaveLength(8);
     expect(readActivity(SID, "C:\\w\\game", 80, root)).toBe(a);
+    // The step log stops a reply at 4 000 chars; the turn's output keeps it whole.
+    expect(a.events[7].text).toHaveLength(4000);
+    expect(a.events[7].text.endsWith("…")).toBe(true);
+    expect(a.turns).toHaveLength(1);
+    expect(a.turns[0].output?.endsWith("x".repeat(5000))).toBe(true);
     fs.appendFileSync(f, user("thêm việc", 20) + "\n");
-    expect(readActivity(SID, "C:\\w\\game", 80, root).at(-1)?.text).toBe("thêm việc");
-    expect(readActivity("not-a-session", null, 80, root)).toEqual([]);
+    const b = readActivity(SID, "C:\\w\\game", 80, root);
+    expect(b.events.at(-1)?.text).toBe("thêm việc");
+    expect(b.rev).not.toBe(a.rev);
+    expect(b.turns.map((t) => [t.prompt, t.live])).toEqual([["Làm card #6: art bible", false], ["thêm việc", true]]);
+    expect(readActivity("not-a-session", null, 80, root).events).toEqual([]);
   });
 });
 
@@ -112,6 +123,12 @@ describe("GET /api/sessions/[name]/activity", () => {
       const body = (await ok.json()) as { events: { kind: string }[] };
       expect(body.events.map((e) => e.kind)).toEqual(["agent", "text"]);
       expect(JSON.stringify(body)).not.toContain(FAKE_SECRET);
+      // An unchanged transcript answers only that it is unchanged.
+      const rev = (body as unknown as { rev: string }).rev;
+      const same = await GET(req(`/api/sessions/${SID}/activity?limit=2&since=${encodeURIComponent(rev)}`, { token: getToken(), origin: ORIGIN }), params(SID));
+      expect(Object.keys((await same.json()) as object).sort()).toEqual(["at", "rev", "same"]);
+      const stale = await GET(req(`/api/sessions/${SID}/activity?limit=2&since=0:0`, { token: getToken(), origin: ORIGIN }), params(SID));
+      expect(((await stale.json()) as { turns: unknown[] }).turns).toHaveLength(1);
     } finally {
       delete process.env.CLAUDE_CONFIG_DIR;
     }
@@ -119,15 +136,23 @@ describe("GET /api/sessions/[name]/activity", () => {
 });
 
 describe("Nhật ký UI", () => {
-  it("one line per event, errors expandable, empty state", async () => {
-    const { createElement } = await import("react");
-    const { renderToStaticMarkup } = await import("react-dom/server");
-    const { LogLines } = await import("@/components/hq/room-log");
+  it("one line per event, errors expandable, empty state", () => {
     const ev = activityFrom(FIXTURE);
     const html = renderToStaticMarkup(createElement(LogLines, { events: ev, now: Date.parse(at(30)) }));
     for (const s of ["Làm card #6", "Read: /w/ai-game-studio/su-code/STATE.md", "Bash: Kiểm PR đang mở", "401 Unauthorized", "<details", "researcher: Tìm sprite 64px", "đang chạy", "28s", 'aria-label="Nhật ký phòng, mới nhất ở cuối"'])
       expect(html).toContain(s);
     expect(html).not.toContain(FAKE_SECRET);
     expect(renderToStaticMarkup(createElement(LogLines, { events: [], now: 0 }))).toContain("Chưa có gì trong nhật ký");
+  });
+
+  it("a prompt sent with files shows its body and the file names, not the markdown-mangled paths", () => {
+    const file = "C:\\w\\proj\\.claude\\hq-uploads\\0123456789abcdef0123456789abcdef\\bao_cao.zip";
+    const html = renderToStaticMarkup(
+      createElement(LogLines, { events: [{ kind: "prompt", at: null, text: `Xem file này\n\n${ATTACH_HEADER}\n- ${file}` }], now: 0 }),
+    );
+    expect(html).toContain("Xem file này");
+    expect(html).toContain(">bao_cao.zip<");
+    expect(html).not.toContain(ATTACH_HEADER);
+    expect(html).not.toContain("proj.claude");
   });
 });

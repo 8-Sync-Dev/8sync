@@ -130,6 +130,38 @@ describe("web terminal bridge", () => {
     expect(termOpen(ID)).toBe(false);
   });
 
+  it("a viewer that leaves twice (a stream's abort and its cancel) leaves no timer that closes the bridge under the next one", () => {
+    vi.useFakeTimers();
+    const f = fakeSpawn();
+    const t = openTerm(OMP, null, { cols: 100, rows: 30 }, f.spawn);
+    const stop = watch(OMP, t, () => {});
+    stop();
+    stop();
+    watch(OMP, t, () => {});
+    vi.advanceTimersByTime(IDLE_CLOSE_MS * 2);
+    expect(termOpen(OMP)).toBe(true);
+  });
+
+  it("a page joining a running bridge sizes its pty to the page; a bridge just started has that size already", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const f = fakeSpawn();
+    const t = openTerm(OMP, null, { cols: 100, rows: 30 }, f.spawn);
+    const fresh = await termResponse(new Request("http://127.0.0.1/t?cols=100&rows=30"), OMP, t);
+    await fresh.body!.cancel();
+    f.proc().stdout.write("screen");
+    await new Promise((r) => setImmediate(r));
+    expect(f.written).toEqual([]);
+    // `8sync . <name>` on the PC made the pty 144×50; this page's xterm is 120×38.
+    const joined = await termResponse(new Request("http://127.0.0.1/t?cols=120&rows=38"), OMP, t);
+    await joined.body!.cancel();
+    // A link's first poll (reset) joins too; its next polls do not resize again.
+    const p = await (await termResponse(new Request("http://127.0.0.1/t?cols=90&rows=24&gen=0&since=-1"), OMP, t)).json();
+    expect(p.reset).toBe(true);
+    await termResponse(new Request(`http://127.0.0.1/t?cols=90&rows=24&gen=${p.gen}&since=${p.cursor}`), OMP, t);
+    await new Promise((r) => setImmediate(r));
+    expect(f.written.join("")).toBe(`{"r":[120,38]}\n{"r":[90,24]}\n`);
+  });
+
   it("a replay is marked answered only once the bridge has had input, so a late viewer never re-answers ESC[6n", async () => {
     const f = fakeSpawn();
     const t = openTerm(ID, null, { cols: 100, rows: 30 }, f.spawn);

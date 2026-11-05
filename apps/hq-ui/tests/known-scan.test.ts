@@ -30,4 +30,8 @@ describe("Dự án trên máy: repos found on disk", () => {
     expect(scanBases(["C:/Users/Projects/su-code", "C:/Users/Projects/tools/x", "C:/repo", "C:/Users/Admin/code-a"], home)).toEqual(["C:/Users/Projects", "C:/Users/Projects/tools"]);
     expect(scanBases(["/home/me/x"], "/home/me")).toEqual([]);
   });
+  it("never scans inside the temp dir, where test fixtures and scratch repos live", () => {
+    const tmp = "C:/Users/Admin/AppData/Local/Temp";
+    expect(scanBases(["C:/Users/Admin/AppData/Local/Temp/stop-x", "C:/Users/Admin/AppData/Local/Temp/a/repo", "C:/Users/Projects/su-code"], "C:/Users/Admin", tmp)).toEqual(["C:/Users/Projects"]);
+  });
 });

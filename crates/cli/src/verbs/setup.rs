@@ -143,6 +143,7 @@ fn install_gitleaks() -> Result<()> {
           · omp AI CLI                          (official installer: install.sh / install.ps1)
           · paru                                (AUR helper — Arch family only)
           · trail                               (code map for agents: npm i -g @trailhq/trail-code --ignore-scripts)
+          · graphify                            (fallback code graph, needs uv: uv tool install graphifyy)
           · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
           · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · skills · hooks)
           · gitleaks                            (secret scanner for the pre-commit hook + /aup-audit; GitHub release)
@@ -284,6 +285,7 @@ pub fn run(a: Args) -> Result<()> {
             ));
         }
         ui::info("would install trail (npm install -g @trailhq/trail-code --ignore-scripts) if missing, then `trail telemetry disable`");
+        ui::info("would install graphify (uv tool install graphifyy) if missing and uv is present: fallback code graph for callers trail misses");
         ui::info("would install forge (GitHub release) + zsh (Windows: MSYS2 zsh) if missing");
         ui::info("would install Claude Code (official installer) if missing + the 8sync kit into ~/.claude");
         ui::info("would install gitleaks (GitHub release → ~/.local/bin, sha256-checked) if missing");
@@ -316,6 +318,7 @@ pub fn run(a: Args) -> Result<()> {
             ui::info(&format!("AUR helper is Arch-only — skipping on {}", env.os_id));
         }
         try_step("trail",      yolo, &mut failures, install_trail)?;
+        try_step("graphify",   yolo, &mut failures, install_graphify)?;
         try_step("forge",      yolo, &mut failures, || {
             ui::step("Forge + zsh (`8sync forge <name>`)");
             let forge = crate::verbs::forge::ensure_forge()?;
@@ -671,6 +674,31 @@ fn install_trail() -> Result<()> {
     }
     if let Some(h) = dirs::home_dir() {
         crate::verbs::harness::trail::ensure_telemetry_off(&h, &bin);
+    }
+    Ok(())
+}
+
+/// graphify version the harness text and the RAM cap were measured against (2026-11-04, su-code:
+/// 49/50 callers of `open()` where trail found 0; cold build 18.7 s / 490 MB at 4 workers).
+const GRAPHIFY_PKG: &str = "graphifyy==0.9.102";
+
+/// Best-effort, like trail: the fallback code graph for what trail misses (callers of a common
+/// name, `graphify path A B`). Needs `uv` (Python tool installer); without it the step only says
+/// how to get it, since STEP 0 still works with trail alone.
+fn install_graphify() -> Result<()> {
+    ui::step("graphify (fallback code graph: callers trail misses, path A→B)");
+    if let Ok(bin) = which::which("graphify") {
+        ui::skip("graphify", &format!("present ({})", bin.display()));
+        return Ok(());
+    }
+    let Ok(uv) = which::which("uv") else {
+        ui::info("graphify skipped: needs uv (Windows `winget install astral-sh.uv`, else https://docs.astral.sh/uv/), then re-run `8sync setup`");
+        return Ok(());
+    };
+    match std::process::Command::new(uv).args(["tool", "install", GRAPHIFY_PKG]).status() {
+        Ok(s) if s.success() => ui::ok(&format!("{GRAPHIFY_PKG} installed (uv tool)")),
+        Ok(s) => ui::warn(&format!("graphify not installed: `uv tool install {GRAPHIFY_PKG}` exited {s}; trail still covers STEP 0")),
+        Err(e) => ui::warn(&format!("graphify not installed: {e}; trail still covers STEP 0")),
     }
     Ok(())
 }

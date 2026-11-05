@@ -55,6 +55,7 @@ Scope: agent harnesses, loops, evals, prompts, context and token economy.
 - `ecc:gan-style-harness` — GAN-inspired Generator-Evaluator agent harness for building high-quality applications autonomously
 - `ecc:hermes-imports` — Convert local Hermes operator workflows into sanitized ECC skills and release-pack artifacts
 - `ecc:hookify-rules` — Create and configure hookify rules
+- `hq-control` — Làm việc với các phòng Claude Code/omp đang mở qua HQ: xem
 - `ecc:loop-design-check` — Design a goal-oriented agent loop or review one for failure modes: spinning
 - `ecc:mcp-server-patterns` — Build MCP servers with Node/TypeScript SDK
 - `ecc:nasiko-control-plane` — Manage the experimental Nasiko CLI lifecycle through ECC

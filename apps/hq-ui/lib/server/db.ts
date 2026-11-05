@@ -95,6 +95,51 @@ CREATE TABLE IF NOT EXISTS api_key_calls (
   source TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS api_key_calls_at ON api_key_calls(at);
+-- Files a room registered for the owner (lib/server/artifacts.ts): the path only, the bytes stay on disk.
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  root TEXT NOT NULL,
+  project TEXT NOT NULL,
+  branch TEXT,
+  session TEXT,
+  title TEXT NOT NULL,
+  note TEXT,
+  kind TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  -- Content item ids as ",16,38," (so one LIKE finds an id), the result's link, the project it is about.
+  content TEXT,
+  link TEXT,
+  for_root TEXT,
+  for_project TEXT
+);
+CREATE INDEX IF NOT EXISTS artifacts_updated ON artifacts(updated_at);
+-- Numbers a room read off a published post (lib/server/content-metrics.ts): one row per reading,
+-- never overwritten, so a post's growth over the hours stays visible. NULL = not shown on that platform.
+CREATE TABLE IF NOT EXISTS content_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  content_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  url TEXT,
+  captured_at INTEGER NOT NULL,
+  reach INTEGER,
+  reactions INTEGER,
+  comments INTEGER,
+  shares INTEGER,
+  views INTEGER,
+  session TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS content_metrics_item ON content_metrics(content_id, platform, captured_at);
+-- The end-of-day "read today's numbers" task (lib/server/content-digest.ts): one row per day, written
+-- before the send, so a restart or a second HQ never sends it twice.
+CREATE TABLE IF NOT EXISTS content_digest (
+  day TEXT PRIMARY KEY,
+  session TEXT,
+  status TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };
@@ -149,6 +194,8 @@ function migrate(db: DatabaseSync): void {
   // The SSE tick counts these every second per client: without it, a scan of every message (3 ms at
   // 5k rows, growing); with it, a few index entries.
   db.exec(`CREATE INDEX IF NOT EXISTS messages_rewritten ON messages(delivery) WHERE ${REWRITTEN_DELIVERY}`);
+  const acols = (db.prepare("PRAGMA table_info(artifacts)").all() as { name: string }[]).map((c) => c.name);
+  for (const c of ["content", "link", "for_root", "for_project"]) if (!acols.includes(c)) db.exec(`ALTER TABLE artifacts ADD COLUMN ${c} TEXT`);
 }
 
 /** Rows whose delivery changes after they were sent (app/api/stream "rewrite"); the partial index's WHERE, which a query must repeat verbatim to use it. */

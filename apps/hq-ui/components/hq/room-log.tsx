@@ -1,95 +1,98 @@
 "use client";
 
-import { BotIcon, CircleAlertIcon, MessageSquareIcon, ScrollTextIcon, UsersIcon, WrenchIcon, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { BotIcon, CircleAlertIcon, MessageSquareIcon, PaperclipIcon, ScrollTextIcon, UsersIcon, WrenchIcon, type LucideIcon } from "lucide-react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { parseAttachments, type Attachment } from "@/lib/attachments";
 import { agoShort, agoVi } from "@/lib/now";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ErrorNote } from "./bits";
-import { makeApi } from "./use-hq";
+import { RoomOutputs, useRoomLog } from "./room-outputs";
 
-const POLL_MS = 4000;
 /** A line longer than this folds; the rest opens on demand. */
 const FOLD = 140;
 
 const KIND_ICON: Record<ActivityEvent["kind"], LucideIcon> = { prompt: MessageSquareIcon, text: BotIcon, tool: WrenchIcon, agent: UsersIcon };
 const KIND_VI: Record<ActivityEvent["kind"], string> = { prompt: "Lời nhắn", text: "Trả lời", tool: "Công cụ", agent: "Subagent" };
 
-/** GET the room's activity every 4 s while the tab is visible. */
-function useActivity(token: string, sessionId: string) {
-  const [data, setData] = useState<{ events: ActivityEvent[]; at: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const ac = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const load = async () => {
-      if (!document.hidden) {
-        try {
-          setData(await makeApi(token)<{ events: ActivityEvent[]; at: number }>(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, { signal: ac.signal }));
-          setError(null);
-        } catch (e) {
-          if (!ac.signal.aborted) setError((e as Error).message);
-        }
-      }
-      if (!ac.signal.aborted) timer = setTimeout(load, POLL_MS);
-    };
-    const onShow = () => {
-      if (!document.hidden) {
-        clearTimeout(timer);
-        void load();
-      }
-    };
-    document.addEventListener("visibilitychange", onShow);
-    void load();
-    return () => {
-      ac.abort();
-      clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onShow);
-    };
-  }, [token, sessionId, tick]);
-  return { data, error, retry: useCallback(() => setTick((t) => t + 1), []) };
-}
+type Tab = "results" | "steps";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "results", label: "Kết quả" },
+  { id: "steps", label: "Từng bước" },
+];
 
 /**
- * "Nhật ký": what the room did lately, one line per prompt, reply, tool call and subagent, newest at the
- * bottom. Follows new lines unless the owner scrolled up to read. `onFull` opens its terminal.
+ * "Nhật ký" of a room, read from RoomLogProvider (one poll shared with the chat). "Kết quả" (default):
+ * each turn's final output as a document with its table of contents; "Từng bước": one line per prompt,
+ * reply, tool call and subagent, newest at the bottom. A chat link to a result switches to Kết quả.
+ * `onFull` opens its terminal.
  */
-export function RoomLog({ sessionId, token, onFull }: { sessionId: string; token: string; onFull?: () => void }) {
-  const { data, error, retry } = useActivity(token, sessionId);
+export function RoomLog({ room, onFull, fill }: { room: string; onFull?: () => void; fill?: boolean }) {
+  const ctx = useRoomLog();
+  const [tab, setTab] = useState<Tab>("results");
+  const seq = ctx?.focused?.seq;
+  const [seen, setSeen] = useState(seq);
+  if (seq !== seen) {
+    // A link from the chat: show the results it points into (adjusting state while rendering, no effect pass).
+    setSeen(seq);
+    setTab("results");
+  }
+  const data = ctx?.log ?? null;
   return (
-    <section aria-labelledby="room-log" className="space-y-2">
-      <div className="flex items-center gap-2">
+    <section aria-labelledby="room-log" className={cn("space-y-2", fill && "md:flex md:min-h-40 md:flex-1 md:flex-col md:gap-2 md:space-y-0")}>
+      <div className="flex shrink-0 items-center gap-2">
         <h3 id="room-log" className="flex items-center gap-1.5 text-sm font-semibold">
           <ScrollTextIcon aria-hidden className="size-4 text-muted-foreground" />
           Nhật ký
         </h3>
-        {data && <span className="text-xs text-muted-foreground tabular">{data.events.length} việc gần nhất</span>}
+        <div role="tablist" aria-label="Cách xem nhật ký" className="inline-flex rounded-md bg-muted p-0.5 text-xs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "rounded-[5px] px-2 py-0.5 font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-9",
+                tab === t.id && "bg-background text-foreground shadow-xs",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {data && tab === "steps" && <span className="text-xs text-muted-foreground tabular">{data.events.length} việc gần nhất</span>}
         {onFull && (
-          <button type="button" onClick={onFull} className="ml-auto rounded-sm text-xs font-medium text-brand-ink underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 dark:text-brand">
+          <button type="button" onClick={onFull} className="ml-auto inline-flex items-center rounded-sm text-xs font-medium text-brand-ink underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-10 dark:text-brand">
             Mở log đầy đủ
           </button>
         )}
       </div>
-      {error && !data ? (
-        <ErrorNote what="nhật ký" error={error} onRetry={retry} />
+      {ctx?.error && !data ? (
+        <ErrorNote what="nhật ký" error={ctx.error} onRetry={ctx.retry} />
       ) : !data ? (
         <div className="space-y-2 rounded-lg border p-3" aria-busy="true" aria-label="Đang tải nhật ký">
           <Skeleton className="h-3.5 w-2/3" />
           <Skeleton className="h-3.5 w-1/2" />
           <Skeleton className="h-3.5 w-3/4" />
         </div>
+      ) : tab === "results" ? (
+        <RoomOutputs turns={data.turns} now={ctx!.now} room={room} />
       ) : (
-        <LogLines events={data.events} now={data.at} />
+        <LogLines events={data.events} now={ctx!.now} fill={fill} />
       )}
     </section>
   );
 }
 
-/** The scrolling list. Pinned to the bottom while the owner is there; reading older lines stops the follow. */
-export function LogLines({ events, now }: { events: ActivityEvent[]; now: number }) {
+/**
+ * The scrolling list. Pinned to the bottom while the owner is there; reading older lines stops the follow.
+ * `fill`: on a wide screen it takes the height its panel gives it instead of stopping at 20rem.
+ */
+export function LogLines({ events, now, fill }: { events: ActivityEvent[]; now: number; fill?: boolean }) {
   const box = useRef<HTMLOListElement>(null);
   const follow = useRef(true);
   useLayoutEffect(() => {
@@ -112,7 +115,10 @@ export function LogLines({ events, now }: { events: ActivityEvent[]; now: number
         const el = e.currentTarget;
         follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       }}
-      className="max-h-80 divide-y divide-border/60 overflow-y-auto rounded-lg border text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      className={cn(
+        "max-h-80 divide-y divide-border/60 overflow-y-auto rounded-lg border text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+        fill && "md:max-h-none md:min-h-0 md:flex-1",
+      )}
     >
       {events.map((ev, i) => (
         <LogLine key={`${ev.at ?? 0}-${i}`} ev={ev} now={now} />
@@ -125,8 +131,8 @@ export function LogLines({ events, now }: { events: ActivityEvent[]; now: number
 const CLAMP_CHARS = 600;
 const CLAMP_LINES = 8;
 
-/** A reply or prompt in full, rendered as markdown; a long one opens clamped. */
-function LogProse({ text, className }: { text: string; className?: string }) {
+/** A reply or prompt in full, rendered as markdown; a long one opens clamped. `files`: a prompt's attachments, by name. */
+function LogProse({ text, files, className }: { text: string; files: Attachment[]; className?: string }) {
   const long = text.length > CLAMP_CHARS || text.split("\n").length > CLAMP_LINES;
   const [open, setOpen] = useState(false);
   const clamped = long && !open;
@@ -142,8 +148,24 @@ function LogProse({ text, className }: { text: string; className?: string }) {
       >
         <MessageResponse>{text}</MessageResponse>
       </div>
+      {files.length > 0 && (
+        // Names only: the chat below shows the files themselves; the full path stays in the hover title.
+        <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground" aria-label="File đính kèm">
+          {files.map((f) => (
+            <li key={f.id} className="inline-flex min-w-0 items-center gap-1" title={f.path}>
+              <PaperclipIcon aria-hidden className="size-3 shrink-0" />
+              <span className="max-w-56 truncate">{f.name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {long && (
-        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="mt-1 text-xs text-primary hover:underline">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="mt-1 inline-flex items-center rounded-sm text-xs text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:min-h-10"
+        >
           {open ? "Thu gọn" : "Xem hết"}
         </button>
       )}
@@ -169,17 +191,20 @@ function LogLine({ ev, now }: { ev: ActivityEvent; now: number }) {
       {ev.status === "error" ? ", lỗi" : ev.status === "pending" ? ", đang chạy" : ""}:{" "}
     </span>
   );
-  if ((ev.kind === "text" || ev.kind === "prompt") && !ev.tool && !ev.error)
+  if ((ev.kind === "text" || ev.kind === "prompt") && !ev.tool && !ev.error) {
+    // A prompt sent with files carries their paths (lib/attachments.ts): markdown would eat the `\` before `.claude`.
+    const { body, files } = ev.kind === "prompt" ? parseAttachments(ev.text) : { body: ev.text, files: [] };
     return (
       <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
         <div className="flex items-start gap-2">
           {icon}
           {label}
-          <LogProse text={ev.text} className={ink} />
+          <LogProse text={body} files={files} className={ink} />
           {time}
         </div>
       </li>
     );
+  }
   return (
     <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
       {long ? (

@@ -104,6 +104,43 @@ export function deliver(got: { text: string; messages: string[] }, typed: (cmd: 
   for (const m of left) send(m);
 }
 
+/** HQ's composer switch (apps/hq-ui/lib/room-model.ts `ompControl`, same prefix): `/8sync-model {"model"?, "thinking"?}`. */
+export const MODEL_CONTROL = "/8sync-model";
+const THINKING = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export type ModelControl = { model?: string; thinking?: string };
+
+/** The switch a message asks for; null when it is not one (then it is delivered like any message). */
+export function parseModelControl(text: string): ModelControl | null {
+  const s = text.trim();
+  if (!s.startsWith(`${MODEL_CONTROL} `)) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(s.slice(MODEL_CONTROL.length + 1));
+  } catch {
+    return null;
+  }
+  if (v === null || typeof v !== "object") return null;
+  const c: ModelControl = {};
+  if ("model" in v && typeof v.model === "string" && /^[^/\s:]+\/[^\s:]+$/.test(v.model)) c.model = v.model;
+  if ("thinking" in v && typeof v.thinking === "string" && THINKING.has(v.thinking)) c.thinking = v.thinking;
+  return c.model || c.thinking ? c : null;
+}
+
+/** Switches apart from the rest; `rest` null = nothing left to deliver, else the delivery without them. */
+export function splitControls(got: { text: string; messages: string[] }): { controls: ModelControl[]; rest: { text: string; messages: string[] } | null } {
+  const parsed = got.messages.map(parseModelControl);
+  const controls = parsed.filter((c): c is ModelControl => c !== null);
+  if (controls.length === 0) return { controls, rest: got };
+  const left = got.messages.filter((_, i) => parsed[i] === null);
+  // The framed prompt quotes every message, the switch too: what is left goes out as itself.
+  return { controls, rest: left.length === 0 ? null : { text: left.join("\n\n"), messages: left } };
+}
+
+/** What `<state>/omp-model/<id>.json` holds: HQ shows it on the room and preselects the picker. */
+export function modelStateJson(s: { model: string | null; thinking: string | null; error: string | null }, at: number): string {
+  return JSON.stringify({ model: s.model, thinking: s.thinking, error: s.error, at });
+}
+
 /** Poll on every n-th 5 s tick after `empty` empty polls: 5 s for a minute, then 15 s, then 30 s. */
 export function pollEvery(empty: number): number {
   if (empty < 12) return 1;
@@ -128,15 +165,57 @@ function isSub(ctx: object): boolean {
 export default function (pi: ExtensionAPI) {
   const id = process.env.EIGHTSYNC_ROOM_ID ?? "";
   if (!ROOM_ID.test(id)) return;
-  const st = { inflight: false, empty: 0, tick: 0 };
+  const st = { inflight: false, empty: 0, tick: 0, model: "", error: null as string | null };
+  const stateDir = path.join(os.homedir(), ".local", "state", "8sync", "hq");
   let tui: Focus | null = null;
+
+  /** Writes what the session runs now when it changed (also after a switch typed in omp itself). */
+  function writeModel(ctx: ExtensionContext): void {
+    const m = ctx.model;
+    const s = { model: m ? `${m.provider}/${m.id}` : null, thinking: pi.getThinkingLevel() ?? null, error: st.error };
+    const key = JSON.stringify(s);
+    if (key === st.model) return;
+    try {
+      const dir = path.join(stateDir, "omp-model");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${id}.json`), modelStateJson(s, Date.now()));
+      st.model = key;
+    } catch {
+      // written again on the next tick
+    }
+  }
+
+  /**
+   * This session only (omp's config is not touched). An unknown model, one without a key, a level the
+   * model clamps, or a throw is recorded in `st.error`, never rethrown: a control must always be acked,
+   * or the same one would be retried on every poll and hold back the messages queued with it.
+   * `setModel` resets the level to the new model's default, so the level goes second.
+   */
+  async function applyModel(ctx: ExtensionContext, c: ModelControl): Promise<void> {
+    st.error = null;
+    try {
+      if (c.model) {
+        const at = c.model.indexOf("/");
+        const model = ctx.modelRegistry.find(c.model.slice(0, at), c.model.slice(at + 1));
+        if (!model) st.error = `omp không có model ${c.model}`;
+        else if (!(await pi.setModel(model))) st.error = `chưa có key hoặc đăng nhập cho ${c.model}`;
+      }
+      if (c.thinking) {
+        pi.setThinkingLevel(c.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
+        const got = pi.getThinkingLevel();
+        if (got && got !== c.thinking) st.error ??= `model này không có mức ${c.thinking}, omp dùng ${got}`;
+      }
+    } catch (e) {
+      st.error = `đổi model lỗi: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    writeModel(ctx);
+  }
 
   pi.on("session_start", async (_event, ctx) => {
     if (isSub(ctx)) return;
     try {
-      const dir = path.join(os.homedir(), ".local", "state", "8sync", "hq");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "omp-commands.json"), commandsJson(pi.getCommands()));
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "omp-commands.json"), commandsJson(pi.getCommands()));
     } catch {
       // HQ's list keeps the last one written
     }
@@ -148,8 +227,10 @@ export default function (pi: ExtensionAPI) {
       });
       ctx.ui.setWidget("8sync-inbox", undefined);
     }
+    writeModel(ctx);
     ctx.setInterval(async () => {
       st.tick += 1;
+      writeModel(ctx);
       if (st.inflight || st.tick % pollEvery(st.empty) !== 0) return;
       st.inflight = true;
       try {
@@ -162,8 +243,10 @@ export default function (pi: ExtensionAPI) {
         st.tick = 0;
         let entered = true;
         try {
+          const { controls, rest } = splitControls(got);
+          for (const c of controls) await applyModel(ctx, c);
           // No `deliverAs`: idle → a new prompt; working → a steer, taken after the running tool.
-          deliver(got, (cmd) => submitTyped(ctx, tui, cmd), (text) => pi.sendUserMessage(text));
+          if (rest !== null) deliver(rest, (cmd) => submitTyped(ctx, tui, cmd), (text) => pi.sendUserMessage(text));
         } catch {
           entered = false;
         }

@@ -84,10 +84,10 @@ describe("ompActivityFrom (omp session JSONL)", () => {
     const dir = fs.mkdtempSync(path.join(tempHome(), "sd-"));
     const f = path.join(dir, "2026-10-20T15-00-00-000Z_x.jsonl");
     fs.writeFileSync(f, OMP.join("\n") + "\n");
-    expect(readOmpActivity(f)).toHaveLength(8);
+    expect(readOmpActivity(f).events).toHaveLength(8);
     fs.appendFileSync(f, msg(12, { role: "user", content: [{ type: "text", text: "update board" }] }) + "\n");
-    expect(readOmpActivity(f).at(-1)?.text).toBe("update board");
-    expect(readOmpActivity(path.join(dir, "missing.jsonl"))).toEqual([]);
+    expect(readOmpActivity(f).events.at(-1)?.text).toBe("update board");
+    expect(readOmpActivity(path.join(dir, "missing.jsonl")).events).toEqual([]);
   });
 });
 

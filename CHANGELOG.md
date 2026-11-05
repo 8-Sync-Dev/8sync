@@ -5,8 +5,6 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
-## [0.123.0] — 2026-11-04
-
 ### Added
 - HQ tab Nội dung: một bài đăng ra nhiều kênh (Facebook, LinkedIn, Threads, YouTube) khi DB content-ai có migration 0064. Sheet có chip "Kênh", một ô caption mỗi kênh (lấy sẵn từ phần `=== FACEBOOK / LINKEDIN / THREADS / YOUTUBE ===` của caption chung cho tới khi viết riêng, đếm ký tự theo giới hạn kênh: LinkedIn 3.000, Threads 500, YouTube 5.000), dòng trạng thái từng kênh bằng chữ (Chờ tới lượt đăng, Đã lên lịch HH:mm dd/MM, Đã đăng + Mở bài, Lỗi / Bị chặn + Thử lại, Đã huỷ lịch). Duyệt vẫn một chạm cho mọi kênh đã chọn; HQ từ chối duyệt (409) khi kênh thiếu caption, quá giới hạn, hoặc YouTube thiếu video/tiêu đề. Bỏ duyệt rồi duyệt lại thì lên lịch lại. Danh sách hiện "FB · LI · TH". Việc lên lịch native trên từng nền tảng do worker `pnpm channels:tick` của content-ai làm qua ego-browser.
 - Nội dung: bấm "Duyệt" là duyệt và gửi luôn việc đăng vào phiên chọn ở ô "Giao việc". Tin gửi có dòng `[Nội dung #id · page]`, tiêu đề, định dạng, giờ đăng, kênh, nhãn AI, `media_path`, caption từng kênh, và lệnh lên lịch cho worker. Item lưu `assignee_session` / `assignee_base` / `assigned_at` và hiện "Đang xử lý: <phiên>" ở đầu khung chi tiết và trong danh sách. Gửi lỗi (phòng đóng, tin quá dài) thì trạng thái giữ nguyên và báo rõ lỗi. Bị từ chối duyệt thì không gửi gì. Chưa chọn phiên thì nút Duyệt không gọi gì, báo "Chọn phiên nhận việc đăng trước khi duyệt" và đưa con trỏ tới ô chọn phiên.
@@ -14,7 +12,119 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - Nội dung, lịch: ô tháng hiện 3 bài, cột tuần hiện 6 bài. Ngày nhiều hơn (5 bài/ngày) hiện "+N bài nữa", bấm vào mở khung của ngày đó. Màu theo định dạng giữ nguyên.
 
 ### Changed
-- Nội dung, luật nhãn AI (owner 04/11): video có giọng clone hoặc lip-sync (khoá C++) được đăng nhưng phải bật khai báo AI khi đăng. Cảnh báo đỏ đổi thành nhắc vàng "Nhớ bật nhãn AI khi đăng". Ô tick xác nhận "không dùng AI" đổi thành lựa chọn bắt buộc: "Có AI: bật nhãn AI khi đăng" hoặc "Không dùng AI". API dùng `ai_label` (lưu vào cột 0064) thay cho `no_ai_confirmed`. Dòng trong danh sách không còn duyệt trực tiếp: bấm "Duyệt trong khung chi tiết" để mở khung, vì duyệt giờ cần chọn phiên.
+- Nội dung: dòng trong danh sách không còn duyệt trực tiếp: bấm "Duyệt trong khung chi tiết" để mở khung, vì duyệt giờ cần chọn phiên. Khung chi tiết có lựa chọn **không bắt buộc** "Có AI: bật nhãn AI khi đăng" / "Không dùng AI" (`ai_label`, lưu vào cột 0064, ghi trong tin giao việc; không chọn thì tin ghi "chủ chưa chọn"). Không có cảnh báo hay chặn duyệt theo AI (giữ quyết định bỏ cổng nhãn AI của 0.122.15).
+
+### Security
+- Nội dung, Chia sẻ: khách (Chỉ xem / Sửa nội dung) không gửi được việc đăng vào phiên agent (`send` là trường chỉ chủ HQ, 403) và không thấy phiên mặc định của chủ (`assign` = null); khung chi tiết của khách chỉ duyệt, không gọi `/api/omp/sessions` hay `/api/content/prefs`.
+
+## [0.122.21] — 2026-11-05
+
+### Changed
+- HQ Chat phòng trên màn rộng: ô nhắn tách khỏi vùng chia, nằm thành một hàng riêng trải hết chiều ngang dưới cả hai cột. Kéo viền giữa chỉ đổi chỗ giữa tin nhắn và Nhật ký, không còn bóp ô nhắn theo cột chat. Màn hẹp/điện thoại giữ như cũ.
+
+## [0.122.20] — 2026-11-05
+
+### Fixed
+- HQ Kết quả: lượt bắt đầu bằng lệnh đã bung (`# /eccx-… — …` rồi `Goal: \`…\``) giờ mang tên là nội dung `Goal:` (bỏ backtick) thay vì tiêu đề lệnh, nên các lượt `/eccx-*` trong mục lục không còn trùng tên nhau.
+- HQ Chat phòng: trạng thái "phòng đang làm" (`working`) giờ vào thẳng `RoomLogProvider`, nên nút dưới tin trong chat và khung Kết quả dùng chung một cờ: lượt mới nhất của phòng đang làm hiện "Đang làm" + vòng xoay ở cả hai chỗ, không còn chat ghi "Kết quả" trỏ vào câu trả lời dở.
+- HQ map tin của anh → lượt: chỉ nhận lượt bắt đầu trong khoảng 1 phút trước đến 30 phút sau tin, nên tin ngắn như "ok" không còn dính vào một lượt muộn hàng giờ sau.
+
+## [0.122.19] — 2026-11-05
+
+### Added
+- HQ Chat phòng, tab **Kết quả** trong Nhật ký: câu trả lời cuối của từng lượt (lời nhắn → việc phòng làm → trả lời) gộp thành một tài liệu markdown, mới nhất ở trên, có mục lục bên cạnh (khung hẹp thì mục lục nằm trên). Bấm mục lục là cuộn tới đúng lượt; mỗi lượt có số bước, subagent, lỗi, nút chép markdown; "Tải .md" tải cả tài liệu. Lượt đang chạy ghi rõ "Đang làm: câu trả lời mới nhất, chưa phải kết quả cuối". Tab "Từng bước" giữ nhật ký cũ.
+- Dưới mỗi tin của anh (và tin phòng trả lời) trong chat có nút agent "Kết quả" / "Đang làm": bấm là khung Kết quả chuyển tab, cuộn tới lượt tin đó sinh ra và nháy sáng. Tin `/lệnh …` cũng khớp (so phần sau tên lệnh, vì phòng nhận lệnh đã bung).
+
+### Changed
+- Chat phòng trên màn rộng chia dọc: chat + ô nhắn bên trái, tóm tắt phòng + Nhật ký bên phải, kéo viền để đổi tỉ lệ (lưu theo trình duyệt, khoá mới `hq-room-columns`). Điện thoại giữ như cũ, khung Kết quả cao tối đa 65% màn.
+- `GET /api/sessions/:name/activity` trả thêm `turns` (tối đa 20 lượt, kết quả ≤ 8 000 ký tự, lời nhắn ≤ 2 000) và `rev`; `?since=<rev>` khi transcript chưa đổi chỉ trả `{same, rev, at}`.
+
+### Performance
+- Một lần poll mỗi phòng cho cả Nhật ký lẫn nút trong chat (context dùng chung, không poll thứ hai). Phòng đang nghỉ: mỗi 4 s chỉ một `stat` + câu trả lời vài byte, client không render lại (đồng hồ "x phút trước" nhích 30 s một lần). Server parse transcript một lần mỗi lần file đổi rồi cắt theo `limit` từ cache. Section ngoài màn hình bỏ layout/paint (`content-visibility: auto`), section và markdown được memo nên poll mới không render lại lượt cũ.
+
+## [0.122.18] — 2026-11-05
+
+### Fixed
+- HQ việc cuối ngày gửi phòng nội dung: đọc thẳng các bài lên lịch từ hôm qua tới ngày mai theo `scheduled_at`. Trước đây nó dùng danh sách của trang (500 bài sửa gần nhất), sổ quá 500 bài thì bài hôm nay ít sửa bị sót, giờ "bài cuối" tính sai và ngày bị đánh dấu đã gửi thiếu bài.
+
+### Docs
+- Hợp đồng API: `DELETE /api/artifacts/:id` và `POST /api/content/metrics` qua link `--public` (chỉ chủ) là cố ý: xoá chỉ gỡ dòng, số liệu chỉ thêm bản ghi; chỉ đăng file mới là phải từ máy.
+
+## [0.122.17] — 2026-11-05
+
+### Security
+- HQ Kết quả: không nhận file `.svg` nữa. Giao diện đọc file thành blob URL; mở ảnh SVG đó ở tab mới thì script trong file chạy với origin của HQ và đọc được token chủ (cùng lý do file đính kèm chat không hiện SVG). SVG đã đăng trước đây hiện "mất file".
+- HQ Kết quả: mỗi lần đọc file kiểm lại cả tên giống file bí mật và thư mục cấm (`.git`, `.ssh`, `node_modules`…), không chỉ lúc đăng. Trước đây đổi file đã đăng thành symlink tới `config/secrets…` trong cùng dự án vẫn đọc được. File đang được ghi thêm chỉ gửi đúng số byte đã stat (không vượt `content-length` và giới hạn cỡ).
+- HQ việc cuối ngày gửi phòng nội dung: tên bài, trang FB (khách "Sửa nội dung" sửa được) gộp thành một dòng có giới hạn độ dài, link bài chỉ giữ khi là `http(s)`. Trước đây khách có thể chèn dòng lệnh vào tin HQ tự gửi cho phòng dưới danh nghĩa chủ.
+
+## [0.122.16] — 2026-11-05
+
+### Fixed
+- HQ Nội dung › Tổng quan: tên bài dài trong bảng từng bài không còn đè lên cột "Số liệu". Cột Bài rộng cố định 21,5rem, tên cắt bằng "…" và hiện đủ khi rê chuột.
+
+## [0.122.15] — 2026-11-05
+
+### Added
+- HQ **Nội dung › kết quả từng bài**: sheet của bài có mục "Kết quả" (ngay dưới "Giờ đăng", chỉ chủ) với nút mở link (Meta Business Suite "đã lên lịch", rồi permalink thật), ảnh bằng chứng xem tại chỗ (bấm để phóng to) và số liệu mới nhất mỗi nền tảng; dòng bài trong lịch/danh sách có dấu số ảnh/link. Thêm kiểu xem **Tổng quan** (cạnh Lịch, Danh sách): 7 ngày / 30 ngày / Tất cả, thẻ cộng reach/reactions/comments/shares/views theo nền tảng, bảng từng bài (giờ, bài → mở sheet, số liệu, link) và trạng thái lần kiểm số cuối ngày gần nhất. API `GET /api/content/results`, `GET/POST /api/content/metrics` (mỗi lần đọc số là một bản ghi mới, không đè; giờ ở tương lai hay không có số nào → 422).
+- HQ **kiểm số cuối ngày**: một lần mỗi ngày, sau giờ đăng cuối + 120 phút, HQ nhắn phòng `cpa-live` (không live thì `core`) của repo sổ nội dung danh sách bài trong ngày để phòng đọc số bằng ego profile "8sync FB" rồi ghi lại; ghi vào bảng `content_digest` nên không gửi trùng. Tắt/đổi trong `~/.config/8sync/hq/content.json`: `"digest": {"off": true, "delay_min": 120, "rooms": [...]}`.
+- `hq.mjs artifact add` thêm `--content 38,16` (gắn vào bài, `""` để bỏ), `--link <https>` (đăng lại cùng file để đổi link), `--for <dự án>` (gom nhóm theo dự án file nói về, khi file nằm ở repo khác); `artifact ls --content N`; lệnh mới `metrics add|ls` và lệnh tắt **`/hq-metrics`** cho Claude Code và omp.
+- HQ: **chọn model + mức suy nghĩ ngay ở ô chat của phòng** (cả ô chat trong phòng và "Gửi cho một phòng"). Nút tròn cạnh tên phòng hiện model đang chạy + mức (vd `Opus 5.5 · cao`); bấm mở popover: hàng bong bóng mức suy nghĩ ở trên (chỉ các mức model đó nhận, omp thêm "tắt"), dưới là danh sách model có ô tìm (theo provider, cuộn sẵn tới model đang dùng). Phòng omp: danh sách từ `omp models --json` (chỉ provider đã có key/đăng nhập, cache 10 phút); HQ xếp một tin điều khiển `/8sync-model {"model","thinking"}` vào inbox, extension `8sync-inbox` gọi `pi.setModel` / `pi.setThinkingLevel` (chỉ phiên đó, `config.yml` giữ nguyên, không thành tin nhắn cho model), rồi ghi model + mức đang chạy ra `~/.local/state/8sync/hq/omp-model/<id>.json` (cả khi chủ đổi bằng `/model` trong omp) để HQ hiện. Model không có / chưa có key → không đổi, popover báo lỗi. Phòng omp mở trước bản này: nút báo "thoát rồi mở lại phòng" thay vì gửi. Phòng Claude Code HQ gõ vào terminal: alias `/model` (opus, sonnet, haiku, opusplan, default) và `/effort` (low … max); phiên Claude mở ngoài HQ (chỉ inbox) không đổi được từ đây. API `GET/POST /api/models` (chỉ chủ). "ultracode" là thiết lập riêng của Claude Code, omp không có nên không có trong danh sách.
+- HQ: ô chat cao theo số dòng tới 40% màn hình rồi mới cuộn; Safari/Firefox (link điện thoại) không có `field-sizing: content` nên đo bằng JS.
+- Lệnh tắt **`/hq-ls`** (các phòng đang làm gì, phòng nào chờ hộp thoại), **`/hq-log <id> [n]`** (nhật ký + tin đã giao), **`/hq-send <id> <tin>`** (nhắn/giao việc cho phòng khác) và **`/hq-artifact [ls|show <id>|add <file>]`** (tab Kết quả) cho Claude Code (`8sync ccc kit`) và omp (`~/.omp/agent/commands`, tên trần như `/eccx-*`), hiện luôn trong danh sách "/" của HQ. Một nguồn `assets/claude/commands/hq-*.md` cho cả hai engine; mỗi lệnh chỉ gọi `scripts/hq.mjs` của skill `hq-control`. Script thêm `artifact show <id>`: dòng thông tin + ghi chú, rồi nội dung md/txt/json/csv/log đọc qua HQ theo id (≤40 000 ký tự); ảnh/video/PDF/HTML in đường dẫn.
+- Skill bundled **`hq-control`** (on-demand, cả omp và kit Claude Code, có trong `/eccx-ai-agent`, `/eccx-workflow`): agent làm việc với các phòng đang mở qua API local của HQ. `scripts/hq.mjs` (Node, không dependency) có `ls` (phòng còn sống: id · nhãn · status · engine · cwd · việc đang làm · `WAITING`), `log <id> [n]`, `msgs <id> [n]`, `send <id> <text>`, `dialog <id> permission|question`, `answer <id> <1-9>`. Token đọc từ `~/.config/8sync/hq/ui-token` và không bao giờ in; POST tự đặt `Origin`. Hộp thoại quyền chỉ đọc (báo chủ, chủ bấm trong HQ); `answer` chỉ cho câu hỏi và chỉ trả lời đúng hộp thoại vừa đọc (HQ trả 409 nếu màn hình đã đổi). Skill không mở hay đóng phòng.
+- HQ tab **Kết quả** (đầu menu "Thêm"): file các phòng đăng cho chủ xem (báo cáo, PDF, ảnh, video, HTML, md/txt/json/csv/yaml). HQ chỉ lưu đường dẫn, tiêu đề, ghi chú, phòng đăng vào SQLite; file vẫn nằm trên máy và được đọc lại mỗi lần mở. Danh sách mới nhất trước, nhóm theo dự án (lọc một dự án, theo dự án đang chọn ở sidebar), mỗi dòng có loại, cỡ, nhánh, thời gian, "mất file" khi file đã bị xoá/dời. Bấm một dòng mở ngay bên cạnh (trên điện thoại thì đè lên danh sách): ảnh/video xem tại chỗ, PDF trong khung, HTML trong iframe `srcdoc` sandbox (không `allow-same-origin`, không chạm token HQ), markdown/text dạng chữ (quá 2 MB thì chỉ "Tải về"); "Bỏ" chỉ gỡ khỏi danh sách, file giữ nguyên. API: `GET/POST /api/artifacts`, `GET /api/artifacts/:id/file`, `DELETE /api/artifacts/:id`. Đăng chỉ từ phía máy (link `--public` bị 403) và chỉ file nằm trong dự án HQ đang biết; từ chối tên giống file bí mật, `.git`/`.ssh`/`node_modules`, file quá 30 MB (video 60 MB); đọc file luôn kiểm lại đường thật còn trong dự án. Skill `hq-control` thêm `artifact add <file> [--title] [--note] [--session]` và `artifact ls [n]`.
+
+### Changed
+- HQ Nội dung: bỏ hẳn cảnh báo và tick "Rủi ro nhãn AI". Mọi bài hiện, duyệt và đăng như nhau (lịch, danh sách, khung chi tiết, API không còn `no_ai_confirmed`). Trigger 0062 của DB vẫn chặn như cũ. Lý do: cảnh báo đỏ ở mọi video làm thành viên duyệt qua loa.
+- HQ Nội dung: ảnh và video trong khung chi tiết to hơn (ô rộng tối thiểu 14rem thay vì 9rem). Bấm ảnh hoặc nút phóng to để xem gần toàn màn hình, video cũng phát ở khung lớn.
+- HQ Nội dung (chủ HQ): nút "Chép lệnh mở omp cpa-live" chép `cd "<checkout content-post-agency>"; 8sync . cpa-live` (`;` chạy được cả PowerShell 5.1 lẫn bash, `&&` thì không). Khi phiên `cpa-live` của checkout đó đã có ở thanh trái thì chỉ ghi "cpa-live ở thanh trái".
+
+### Fixed
+- CI `hq-ui-test` / `package-hq-ui`: test model của hq-ui import extension `8sync-inbox` (kéo type của SDK omp, hq-ui không cài) làm `tsc` và `next build` đỏ; giờ test nạp extension lúc chạy (`import(new URL(…))`), `tsc` của hq-ui không đi theo nó nữa, test round-trip HQ → extension vẫn giữ.
+- HQ: icon xoay của phiên đang chạy ở thanh bên (cả phiên con) không còn mờ: màu xanh "đang chạy" của palette (`--st-running`), nét dày hơn, theme tối có viền sáng neon nhẹ, xoay nhanh hơn chút (1,6 s/vòng); tắt chuyển động thì vẫn đứng yên.
+- HQ Nội dung → Giao việc: menu "Chọn phiên omp" cuộn được tới phiên cuối. Kiểu `item-aligned` của Radix Select đặt sát đáy màn hình thì nuốt lăn chuột (10 lần lăn chỉ đi 24 px trên 1 028 px). Giờ menu dùng `popper`: mở phía trên ô chọn, cao tối đa 20rem, cuộn thường.
+- HQ Nội dung: bài đã "Bỏ" rời lịch và danh sách. Trước đây nó chỉ bị gạch ngang nên trông như chưa xoá. Nút "Đã bỏ (N)" chuyển bộ lọc Trạng thái sang Bỏ để xem lại hoặc mở lại.
+- HQ: phòng omp (không có phòng Claude Code) giờ được tính là dự án HQ biết, nên `hq-control artifact add`, tải file và Preview không còn trả 403 "file không nằm trong dự án nào HQ đang biết".
+
+### Docs
+- Website (get.8syncdev.com) và README có thêm 3 ảnh HQ thật (Văn phòng, Kết quả, Máy; tên phiên của dự án khác được che bằng khối đặc) và mục **Skills** liệt kê 36 skill bundled theo 6 nhóm (gồm `hq-control`), link "Skills" trên nav. `scripts/test_site_skills.py` fail khi danh sách hoặc con số trên site/README lệch với `assets/skills/*/SKILL.md`.
+
+## [0.122.14] — 2026-11-04
+
+### Fixed
+- Hướng dẫn graphify fallback: thêm dạng PowerShell (`$env:GRAPHIFY_MAX_WORKERS=4; …`; `graphify update` không nhận `--max-workers`), tên trùng (như `open`, 7 node) → gọi lại `graphify explain <id>` theo danh sách nó in, và chạy lại `update` sau khi sửa code (incremental ~2 s) để khỏi đọc graph cũ.
+
+## [0.122.13] — 2026-11-04
+
+### Added
+- Harness: graphify làm code graph dự phòng cho trail. `8sync setup` cài `graphifyy==0.9.102` qua `uv tool` (không có uv thì chỉ hướng dẫn, không lỗi); block AGENTS.md/CLAUDE.md, `APPEND_SYSTEM.md` và `00-force-load.md` dạy agent: trail báo `no indexed callers` hoặc cần đường A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` rồi `graphify explain` / `graphify path`, không dùng `graphify query`; `.gitignore` managed thêm `graphify-out/`. Đo trên su-code (1 183 file): callers của `open()` trail 0 file, graphify 49/50; build lạnh 32 worker 2,1 GB RAM → 4 worker 490 MB / 18,7 s; query trail 0,7 s ~150 MB, graphify 1,4 s ~135 MB, ripgrep 0,1 s ~10 MB; `graphify query` ~6,7 KB và bị cắt, `GRAPH_REPORT.md` không có LLM là 160 KB nhãn "Community N" nên không dùng.
+
+## [0.122.12] — 2026-11-04
+
+### Security
+- HQ Chia sẻ: khách "Sửa nội dung" sửa một mục giờ chỉ nhận lại tên thư mục media, không còn đường dẫn đầy đủ trên ổ của chủ; lỗi DB nội dung khách thấy là câu chung, không kèm đường dẫn file (audit #302).
+
+## [0.122.11] — 2026-11-04
+
+### Added
+- HQ "Chia sẻ" (tab Máy): chủ HQ tạo link cho người ngoài xem tab Nội dung, quyền "Chỉ xem" (xem, tải media, chép caption) hoặc "Sửa nội dung" (thêm sửa trạng thái, caption, lịch đăng), hết hạn sau 1/7/30 ngày, có thể buộc thêm một tài khoản GitHub; danh sách link kèm trạng thái và nút Thu hồi. Link chỉ hiện một lần: `~/.config/8sync/hq/invites.json` (0600) chỉ giữ sha256 của token. Mở link → cookie `hq_guest` ký HMAC (tối đa 7 ngày, không bao giờ là ui-token); mỗi request kiểm lại lời mời, thu hồi hoặc hết hạn là 401 ngay, kể cả link media đã ký. Quyền kiểm ở một chỗ (`open()` + bảng `lib/access.ts`): route không mở cho khách là chỉ chủ HQ (403 tiếng Việt), test duyệt mọi `app/api/**/route.ts` nên route mới mặc định khoá. `github.json` `allow` nhận thêm `{"login","role"}`; chuỗi cũ vẫn là chủ HQ. Link ký của file đính kèm chat (ảnh/video trong phòng) cũng chỉ mở được khi trình duyệt đã đăng nhập chủ HQ: khách có cookie `hq_guest` nhận 403, không đăng nhập qua tunnel nhận 401.
+- HQ chat phòng có media: file đính kèm là ảnh thì hiện thumbnail (bấm mở Lightbox, có nút tải), video (mp4/webm/mov) và audio phát ngay trong chat, tua được (stream theo Range 206 qua link ký HMAC 12 h, `<video>` không gửi được `x-hq-token`), file khác hiện chip tên + dung lượng + nút tải (`?dl=1` → `Content-Disposition: attachment` giữ tên gốc). File không phải media luôn tải về dạng `application/octet-stream` nên .html/.svg không chạy trên origin của HQ. Reply của phiên: URL http(s) thành link, URL ảnh/video có preview phía trình duyệt (`referrerPolicy="no-referrer"`, không fetch OG phía server để tránh SSRF), đường dẫn upload nhắc trong reply cũng hiện player/chip. Nhật ký hiện tên file đính kèm thay cho đường dẫn dài.
+
+### Fixed
+- HQ chat phòng trên điện thoại: đường dẫn hay URL dài trong reply không còn bị cắt mất ở mép bong bóng (`wrap-anywhere`). Nút "Mở log đầy đủ", "Xem hết" và "Đường dẫn cho phòng" đủ 40 px trên màn cảm ứng và có focus ring; nút đóng Lightbox lên 40 px.
+
+## [0.122.10] — 2026-11-04
+
+### Added
+- HQ Nội dung: nút chép caption ngay dưới Caption của từng bài. Dòng thu gọn trong khung ngày hiện số file ảnh/video bài đó đã có, nên biết bài nào xem hoặc tải được mà không cần mở từng bài.
+
+### Changed
+- HQ Chat phòng (màn rộng): Nhật ký và chat chia hai khung, kéo đường ranh giữa để Nhật ký cao hơn hoặc chat rộng hơn. Trình duyệt nhớ tỉ lệ. Thanh tên phòng và ô nhắn đứng yên. Trên điện thoại giữ cách cũ: Nhật ký cuộn cùng chat.
+
+### Fixed
+- HQ "Dự án trên máy" không còn hiện thư mục trong %TEMP% (repo test, thư mục nháp): trên PC owner 197/302 dòng là rác đó. Bộ test của `apps/hq-ui` giờ dùng một thư mục tạm cho cả lượt chạy và xoá nó khi xong; trước đây mỗi lượt để lại khoảng 70 thư mục (đã đếm được 5 524 `hq-ui-test-*`).
+- HQ terminal của phòng omp không còn "lag" (không hiện phần mới nhất khi phòng đang làm, hết turn mới thấy đủ): pty của phòng có một cỡ chung cho mọi viewer, trang mở vào bridge đang chạy không gửi cỡ của mình nên pty giữ cỡ của viewer trước (`8sync . <tên>` trên PC, tab/máy khác). Pty cao hơn xterm thì các dòng cuối (omp đang làm gì, spinner, ô nhập) bị dồn vào dòng cuối: đo trên HQ dev, pty 144×50 vs pane 144×38, cả pane chỉ còn hàng chục dòng "Running …" lặp, 21/222 mẫu mất status line; sau khi sửa 0/222, 420/420 marker hiện, trễ p50 0,2 s (loopback) / 0,54 s (poll qua proxy RTT 300 ms). Giờ HQ đặt pty theo cỡ trang khi trang vào bridge (stream, hoặc poll `reset`), và click vào terminal đặt lại cỡ khi viewer khác đổi cỡ sau đó.
+- Bridge terminal không còn bị đóng giữa chừng ("Đã rời phòng") 60 s sau khi một viewer rời đi: stream rời gọi `stop()` hai lần (abort và cancel), lần hai để lại timer idle mồ côi mà `watch()` của viewer kế tiếp không huỷ được.
 
 ## [0.122.9] — 2026-11-04
 

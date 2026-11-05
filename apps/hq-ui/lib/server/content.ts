@@ -8,7 +8,6 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import {
-  aiReason,
   CHANNEL_LABEL,
   channelGate,
   CHANNELS,
@@ -60,6 +59,18 @@ export function contentDbPath(env: Record<string, string | undefined> = process.
   }
   if (!path.isAbsolute(raw)) return { error: `đường dẫn DB nội dung phải tuyệt đối: ${raw}` };
   return { path: raw };
+}
+
+/** The git checkout holding the DB (content-post-agency), where the owner's `cpa-live` omp session runs; null when none. */
+export function contentRepo(env: Record<string, string | undefined> = process.env): string | null {
+  const p = contentDbPath(env);
+  if (!p || "error" in p) return null;
+  for (let dir = path.dirname(p.path); ; ) {
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
 }
 
 export const NO_REGISTRY = "Chưa có sổ nội dung, mở app content-ai một lần để chạy migration.";
@@ -265,18 +276,7 @@ function statusStamps(item: Pick<ContentItem, "checked_at" | "published_at"> | n
   return s;
 }
 
-/**
- * Owner rule 2026-11-04 (revised the same day): an item `aiReason` flags may be approved, a course
- * video with a cloned voice included, but only with the owner's explicit choice `ai_label` (true =
- * the platform's AI label goes on when posting).
- */
-function aiGate(item: Pick<ContentItem, "format" | "media_path">, status: ContentStatus, body: Record<string, unknown>): void {
-  if (status !== "approved" && status !== "published") return;
-  const why = aiReason({ format: item.format, media: mediaFiles(item.media_path) });
-  if (why && typeof body.ai_label !== "boolean") throw new ContentError(`Mục có thể dùng AI (${why}): chọn "Có AI, bật nhãn AI khi đăng" hoặc "Không dùng AI" rồi mới duyệt.`, 409);
-}
-
-/** `ai_label` of a body (boolean, else 422) as its 0064 column; a DB before 0064 takes the choice without keeping it. */
+/** `ai_label` of a body (optional boolean, else 422) as its 0064 column; a DB before 0064 takes the choice without keeping it. No gate: owner 2026-11-05. */
 function aiField(body: Record<string, unknown>, has: boolean): Record<string, number> {
   if (!("ai_label" in body)) return {};
   if (typeof body.ai_label !== "boolean") throw new ContentError("ai_label: true (có AI, bật nhãn) hoặc false (không dùng AI)", 422);
@@ -331,14 +331,12 @@ function channelApproval(it: Pick<ContentItem, "title" | "caption" | "captions_j
   const why = channelGate({ ...it, media: mediaFiles(it.media_path) });
   if (why) throw new ContentError(why, 409);
 }
-
 export function createContent(db: DatabaseSync, body: Record<string, unknown>, now = Date.now()): ContentRow {
   if (!isFormat(body.format)) throw new ContentError("format: một trong text, infographic, course_video, ai_video, asmr, clip, other", 422);
   if (body.status !== undefined && !isStatus(body.status)) throw new ContentError("status: không hợp lệ", 422);
   const t = textFields(body);
   if (!t.title) throw new ContentError("title: không được trống", 422);
   const status: ContentStatus = (body.status as ContentStatus | undefined) ?? "ordered";
-  aiGate({ format: body.format, media_path: t.media_path ?? null }, status, body);
   const has = hasChannels(db);
   const ch = channelFields(body, has, null);
   if (has && status === "approved")
@@ -365,10 +363,8 @@ class DryRun extends Error {}
 /**
  * Edit one item. Body: any text field, `format`, `status`, `scheduled_at`, `assignee_session` (+
  * `assignee_base`), and `approve_source: "<the source URL the owner saw>"` (records who and when;
- * 409 when the row's source has changed since). Approving an item with an AI mark needs the choice
- * `ai_label` (boolean); an approved item edited into AI-risk content without it drops back to
- * `checked`, a published one answers 409. A new `source_url` drops an earlier approval: it approved the old source.
- * 0064: `channels`, `captions_json` (see `channelFields`), `ai_label` (kept) and `retry_channel: "<channel>"`, which
+ * 409 when the row's source has changed since). A new `source_url` drops an earlier approval: it approved the old source.
+ * 0064: `channels`, `captions_json` (see `channelFields`), `ai_label` (optional, kept) and `retry_channel: "<channel>"`, which
  * deletes that channel's failed / blocked / cancelled row so the worker plans it again (409 for any
  * other state: a live or posted one must not be posted twice). Entering approved checks the channel
  * rule and clears the item's cancelled rows (left from an earlier un-approve) so it is scheduled again.
@@ -404,23 +400,7 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
     set.status = body.status;
     Object.assign(set, statusStamps(item, body.status, now));
   }
-  // The AI choice is asked on every entry into approved or published: `aiReason` reads the media
-  // folder as it is now, and a video can land there after approval. The 0062 trigger checks fields,
-  // not the previous status. An approved item edited into AI-risk content lost that check: without
-  // a choice it drops back to checked (re-approve in the sheet). A published post cannot be quietly
-  // changed into AI-risk content: refused.
-  const next = (set.status as ContentStatus | undefined) ?? item.status;
-  const nextFormat = (set.format as ContentItem["format"] | undefined) ?? item.format;
   const nextMedia = "media_path" in set ? (set.media_path as string | null) : item.media_path;
-  const changed = nextFormat !== item.format || nextMedia !== item.media_path;
-  const after = { format: nextFormat, media_path: nextMedia };
-  if (next !== item.status) aiGate(after, next, body);
-  else if (changed && (next === "approved" || next === "published") && typeof body.ai_label !== "boolean") {
-    const why = aiReason({ format: nextFormat, media: mediaFiles(nextMedia) });
-    if (why && item.status === "published") throw new ContentError(`Bài đã đăng không đổi sang nội dung rủi ro nhãn AI (${why}) được.`, 409);
-    if (why && "status" in body) aiGate(after, next, body);
-    if (why) set.status = "checked";
-  }
   if ("source_url" in set && set.source_url !== item.source_url) {
     set.source_approved_by = null;
     set.source_approved_at = null;
@@ -477,9 +457,9 @@ const TASK_CAPTION = 300;
 
 /**
  * "Duyệt" in one tap (owner 2026-11-04): approve the item AND send its posting task to the chosen
- * session. Body: `session` (omp room id or Claude session id), `base` (its label), `ai_label` when
- * the item asks for the AI choice. Order: the whole approval is tried and rolled back first (AI
- * choice, channel rule, the 0062 trigger), so a refusal sends nothing; then the task is delivered,
+ * session. Body: `session` (omp room id or Claude session id), `base` (its label), and the optional
+ * `ai_label` (else the item's stored one, else "not said"). Order: the whole approval is tried and
+ * rolled back first (channel rule, the 0062 trigger), so a refusal sends nothing; then the task is delivered,
  * and a delivery that fails leaves the status as it was; then the approval and the assignee are
  * written, and the session becomes the default for the next approval. No write transaction is held
  * across the delivery.
@@ -496,7 +476,8 @@ export async function approveAndSend(db: DatabaseSync, id: number, body: Record<
   checkUpdate(db, id, change, approver, now);
 
   const item = getContent(db, id)!;
-  const aiLabel = body.ai_label === true;
+  // The 0064 column defaults to 0, so a stored 0 is "not said", not "no AI".
+  const aiLabel = typeof body.ai_label === "boolean" ? body.ai_label : item.ai_label === true ? true : undefined;
   let task = publishTaskText(item, aiLabel);
   if (charCount(task) > TASK_MAX) task = publishTaskText(item, aiLabel, TASK_CAPTION);
   if (charCount(task) > TASK_MAX) throw new ContentError(`Tin giao việc quá ${TASK_MAX} ký tự kể cả khi cắt caption: rút gọn tiêu đề hoặc media_path.`, 422);

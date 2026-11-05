@@ -55,6 +55,7 @@ Scope: plan, build, test, review, refactor, ship — the engineering loop.
 - `git-workflow` — Git workflow patterns including branching strategies, commit conventions, keeping history clean
 - `github-ops` — GitHub repository operations, automation, and management
 - `growth-log` — Write growth log entries that extract reusable patterns from completed work
+- `skill://hq-control` — Làm việc với các phòng Claude Code/omp đang mở qua HQ: xem
 - `inherit-legacy-style` — Prevent AI style drift on legacy projects by scanning the codebase
 - `intent-driven-development` — Turn ambiguous or high-impact product and engineering changes into scoped, verifiable acceptance
 - `jira-integration` — Analyzing requirements, updating ticket status, adding comments, or transitioning issues
