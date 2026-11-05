@@ -7,7 +7,10 @@ Owner 2026-11-05 (tối): báo cáo đăng bài nằm ở sheet ngày của tab 
 - [x] v0.124.0 + v0.124.1 đã release (grant ship chỉ từ trang HQ của chủ)
 - [x] Thứ tự ảnh dán (`useAttach` slot theo lúc dán, `- 1. <path>`), báo cáo trong sheet ngày, nút `#id` → Nội dung, "Xem" → Kết quả, panel "Thư mục" + `/api/files`
 - [x] vitest + next build + smoke UI trên sandbox HQ :8751 (phòng thật qua JSON của HQ live, ghi file chỉ trong worktree)
-- [ ] v0.125.0: PR → CI → squash → tag → release.yml → `8sync up` → curl HQ local + public
+- [x] v0.125.0 đã release (PR #326)
+- [x] v0.125.1: reply media không đánh số · Danh sách hiện trạng thái từng kênh + báo "lịch khi chưa duyệt" · bỏ `/rules` sót; vitest 996/996 + build + smoke sandbox :8752 (#77–80)
+- [ ] v0.125.1: PR → CI → squash → tag → release.yml → `8sync up` → curl HQ local + public
+- [ ] Owner: #77–80 đã lên lịch trên nền tảng khi còn `checked` → huỷ trên nền tảng hoặc Duyệt trước 15:00 06/11
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
 ## Goal: đa kênh cho tab Nội dung (phiên tu-session-marketing-phong-core)
