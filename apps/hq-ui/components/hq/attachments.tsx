@@ -162,38 +162,58 @@ function FileRow({ file, meta, chip }: { file: Attachment; meta: UploadMeta | nu
   );
 }
 
-function FileChip({ token, file }: { token: string; file: Attachment }) {
+function FileChip({ token, file, n }: { token: string; file: Attachment; n?: number }) {
   const [ref, near] = useNearView<HTMLDivElement>();
   const { meta } = useUploadMeta(token, file.id, near);
   return (
-    <div ref={ref} className="min-w-0">
+    <div ref={ref} className="flex min-w-0 items-center gap-1.5">
+      {n != null && <span className="shrink-0 text-xs font-medium text-muted-foreground tabular-nums">{n}.</span>}
       <FileRow file={file} meta={meta} chip />
     </div>
   );
 }
 
-/** Uploads as the chat shows them: images as thumbnails (a tap opens the lightbox), video/audio as players, anything else as a file chip. */
+/** The file's place in the message ("1" = first added), the number the room's path list uses too. */
+export function OrderBadge({ n }: { n: number }) {
+  return (
+    <span aria-hidden className="pointer-events-none absolute top-1 left-1 grid h-4 min-w-4 place-items-center rounded-full bg-background/90 px-1 text-[10px] font-semibold text-foreground tabular-nums shadow-xs ring-1 ring-border">
+      {n}
+    </span>
+  );
+}
+
+/**
+ * Uploads as the chat shows them: images as thumbnails (a tap opens the lightbox), video/audio as players,
+ * anything else as a file chip. With more than one file each carries its number in the message, so
+ * grouping by kind never hides which one the room calls "file 2".
+ */
 function Uploads({ token, files }: { token: string; files: Attachment[] }) {
   const [shown, setShown] = useState<Shown | null>(null);
-  const images = files.filter((f) => mediaKind(f.name) === "image");
-  const players = files.filter((f) => mediaKind(f.name) === "video" || mediaKind(f.name) === "audio");
-  const others = files.filter((f) => mediaKind(f.name) === "file");
+  const numbered = files.map((f, i) => ({ f, n: files.length > 1 ? i + 1 : undefined }));
+  const images = numbered.filter(({ f }) => mediaKind(f.name) === "image");
+  const players = numbered.filter(({ f }) => mediaKind(f.name) === "video" || mediaKind(f.name) === "audio");
+  const others = numbered.filter(({ f }) => mediaKind(f.name) === "file");
   return (
     <>
       {images.length > 0 && (
         <div className="flex flex-wrap gap-1.5" aria-label="Ảnh đính kèm">
-          {images.map((f) => (
-            <UploadThumb key={f.id} token={token} file={f} onOpen={setShown} className="size-24 sm:size-40" />
+          {images.map(({ f, n }) => (
+            <UploadThumb key={f.id} token={token} file={f} onOpen={setShown} className="size-24 sm:size-40">
+              {n != null && <OrderBadge n={n} />}
+            </UploadThumb>
           ))}
         </div>
       )}
-      {players.map((f) => (
-        <UploadPlayer key={f.id} token={token} file={f} />
+      {players.map(({ f, n }) => (
+        <div key={f.id} className="flex min-w-0 items-start gap-1.5">
+          {n != null && <span className="mt-1 shrink-0 text-xs font-medium text-muted-foreground tabular-nums">{n}.</span>}
+          <UploadPlayer token={token} file={f} />
+        </div>
       ))}
       {others.length > 0 && (
         <div className="flex flex-col gap-1.5" aria-label="File đính kèm">
-          {others.map((f) => (
-            <FileChip key={f.id} token={token} file={f} />
+          {others.map(({ f, n }) => (
+            <FileChip key={f.id} token={token} file={f} n={n} />
           ))}
         </div>
       )}
@@ -290,13 +310,14 @@ function AttachmentPaths({ files }: { files: Attachment[] }) {
         <PaperclipIcon className="size-3 shrink-0" aria-hidden />
         Đường dẫn cho phòng ({files.length})
       </summary>
-      <ul className="space-y-0.5 pt-0.5" aria-label="Đường dẫn file đính kèm">
-        {files.map((f) => (
+      <ol className="space-y-0.5 pt-0.5" aria-label="Đường dẫn file đính kèm">
+        {files.map((f, i) => (
           <li key={f.id} className="min-w-0 font-mono break-all">
+            {files.length > 1 && `${i + 1}. `}
             {f.path}
           </li>
         ))}
-      </ul>
+      </ol>
     </details>
   );
 }

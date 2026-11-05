@@ -17,8 +17,9 @@ export const ACCESS_LABEL: Record<AccessRole, string> = { owner: "Chủ HQ", edi
 
 /**
  * The few routes a guest may call, with the least role each needs. Everything else (terminals, shell,
- * sessions, messages, Nhật ký, uploads, keys, omp accounts, machine, invites, any route added later) is
- * owner only: deny by default. Editors change items (PATCH); creating and deleting stay the owner's.
+ * sessions, messages, Nhật ký, uploads, keys, omp accounts, machine, invites, the room "Thư mục" file
+ * panel `/api/files`, `/api/files/file`, `/api/files/raw`, any route added later) is owner only: deny by
+ * default. Editors change items (PATCH); creating and deleting stay the owner's.
  */
 export const GUEST_ROUTES: Readonly<Record<string, Readonly<Partial<Record<string, GuestRole>>>>> = {
   "/api/content": { GET: "viewer", HEAD: "viewer", PATCH: "editor" },

@@ -9,6 +9,7 @@ import { agoVi, spanVi, type RoomNow } from "@/lib/now";
 import { roomModelLabel } from "@/lib/roles";
 import { repoOf } from "@/lib/sidebar";
 import { AskPanel } from "./ask-panel";
+import { FilesButton } from "./files-sheet";
 import { StateTag } from "./now-roster";
 import { RoleIcon } from "./role-badge";
 import { RoomLog } from "./room-log";
@@ -16,9 +17,9 @@ import type { Room } from "./use-office";
 import { openWebTerminal } from "./web-terminal-sheet";
 
 /**
- * The room's title row: name, state, project · branch · model, and the terminal button. Pinned at the
- * top of the room view (TeamView `bar`): the owner switches model or effort and opens the terminal
- * from here, and lost it once the log and chat scrolled (owner 2026-10-20).
+ * The room's title row: name, state, project · branch · model, the repo's "Thư mục" panel and the
+ * terminal button. Pinned at the top of the room view (TeamView `bar`): the owner switches model or
+ * effort and opens the terminal from here, and lost it once the log and chat scrolled (owner 2026-10-20).
  */
 export function RoomBar({ room, n, token, onTerminal }: { room: Room; n: RoomNow; token: string; onTerminal: () => void }) {
   const tmux = room.delivery === "terminal";
@@ -35,6 +36,7 @@ export function RoomBar({ room, n, token, onTerminal }: { room: Room; n: RoomNow
         </h2>
         {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
       </div>
+      <FilesButton room={room} token={token} />
       {n.state !== "needs" && <OpenTerminal term={term} />}
     </div>
   );

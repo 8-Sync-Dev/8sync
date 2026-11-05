@@ -24,7 +24,7 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { KIND_LABEL, TEXT_INLINE_MAX, artifactFileUrl, baseName, extOf, groupArtifacts, officeFamily, officeReadable, safeImageSrc, type ArtifactKind, type ArtifactView } from "@/lib/artifacts";
+import { ARTIFACT_PARAM, KIND_LABEL, TEXT_INLINE_MAX, artifactFileUrl, baseName, extOf, groupArtifacts, officeFamily, officeReadable, safeImageSrc, type ArtifactKind, type ArtifactView } from "@/lib/artifacts";
 import { askRoomFor } from "@/lib/ask-quote";
 import { parseDelimited } from "@/lib/csv";
 import { bytes } from "@/lib/disk";
@@ -91,7 +91,14 @@ export function ArtifactsView({
   const list = usePoll<{ artifacts: ArtifactView[]; at: number }>(api, "/api/artifacts", POLL_MS, active);
   const [pick, setPick] = useState(ALL);
   useFollowRepo(repo, (r) => setPick(rootKey(r)));
-  const [openId, setOpenId] = useState<string | null>(null);
+  // `?artifact=<id>`: another tab (a room's Báo cáo) asked to open this file; read once, then dropped from the URL.
+  const [openId, setOpenId] = useState<string | null>(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get(ARTIFACT_PARAM)));
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    if (!u.searchParams.has(ARTIFACT_PARAM)) return;
+    u.searchParams.delete(ARTIFACT_PARAM);
+    window.history.replaceState(window.history.state, "", u);
+  }, []);
   const groups = useMemo(() => groupArtifacts(list.data?.artifacts ?? []), [list.data]);
   // The sidebar's repo with nothing registered yet: show every project rather than an empty pick.
   const cur = groups.some((g) => g.key === pick) ? pick : ALL;

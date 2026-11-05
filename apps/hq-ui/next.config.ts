@@ -17,7 +17,8 @@ export const securityHeaders = [
 export const playFrameHeaders = Object.entries(PLAY_HEADERS).map(([key, value]) => ({ key, value }));
 
 /**
- * Artifact bytes (app/api/artifacts/[id]/file and /pdf): the strict sandbox CSP of lib/artifact-headers.ts.
+ * Artifact bytes (app/api/artifacts/[id]/file and /pdf) and the room "Thư mục" panel's file bytes
+ * (app/api/files/raw): the strict sandbox CSP of lib/artifact-headers.ts.
  * Must be set here: a config header beats the route's header of the same name on the wire.
  */
 export const artifactFileHeaders = Object.entries(ARTIFACT_HEADERS).map(([key, value]) => ({ key, value }));
@@ -43,6 +44,7 @@ const nextConfig: NextConfig = {
       { source: "/api/play/:key/:path+", headers: playFrameHeaders },
       { source: "/api/artifacts/:id/file", headers: artifactFileHeaders },
       { source: "/api/artifacts/:id/pdf", headers: artifactFileHeaders },
+      { source: "/api/files/raw", headers: artifactFileHeaders },
     ];
   },
 };

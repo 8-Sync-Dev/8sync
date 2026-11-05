@@ -3,7 +3,7 @@
 // What the rooms reported back for the content book (owner 2026-11-05): per item in the day sheet
 // ("Kết quả": the Meta link, the proof images, the newest numbers), and the "Tổng quan" sub-tab that
 // sums the newest numbers per platform over a date range. Data: GET /api/content/results (owner only).
-import { BarChart3Icon, ExternalLinkIcon, FileIcon, ImageIcon } from "lucide-react";
+import { BarChart3Icon, ExternalLinkIcon, EyeIcon, FileIcon, ImageIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -15,7 +15,9 @@ import { cn } from "@/lib/utils";
 import { Lightbox, UploadThumb, type Shown } from "./attachments";
 import { EmptyState } from "./bits";
 import { FORMAT_TONE, STATUS_EDGE, StatusIcon } from "./content-bits";
+import { FolderButton } from "./folder-button";
 import { TOUCH } from "./room-send";
+import type { Api } from "./use-hq";
 
 export type ResultIndex = { arts: Map<number, Artifact[]>; metrics: Map<number, MetricRow[]> };
 export const NO_RESULTS: ResultIndex = { arts: new Map(), metrics: new Map() };
@@ -62,8 +64,55 @@ function MetricLine({ m, now }: { m: MetricRow; now: number }) {
   );
 }
 
-/** "Kết quả" of one item in the day sheet. */
-export function ItemResults({ id, token, arts = [], metrics = [], now }: { id: number; token: string; arts?: Artifact[]; metrics?: MetricRow[]; now: number }) {
+const STRIP_THUMBS = 4;
+
+/**
+ * The report of one item right in the day sheet's collapsed row (owner 2026-11-05: "báo cáo đó ở bên
+ * [lịch]"): its links ("Mở trên Meta") and the first proof images, so a day's posts show what the rooms
+ * reported without opening each one. Nothing when the item has no report.
+ */
+export function ResultStrip({ token, arts = [] }: { token: string; arts?: Artifact[] }) {
+  const [shown, setShown] = useState<Shown | null>(null);
+  const links = linksOf(arts);
+  const images = arts.filter((a) => a.kind === "image" && !a.missing);
+  if (!links.length && !images.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" aria-label="Báo cáo của bài">
+      {links.map((a) => (
+        <Button key={a.link} asChild size="sm" variant="outline" className={cn("h-7 max-w-full text-xs", TOUCH)}>
+          <a href={a.link as string} target="_blank" rel="noopener noreferrer" title={a.link as string}>
+            <ExternalLinkIcon aria-hidden />
+            <span className="truncate">{linkLabel(a.link as string)}</span>
+          </a>
+        </Button>
+      ))}
+      {images.slice(0, STRIP_THUMBS).map((a) => (
+        <UploadThumb key={a.id} token={token} file={{ id: a.id, name: a.title, url: artifactFileUrl(a.id) }} onOpen={setShown} className="size-10" />
+      ))}
+      {images.length > STRIP_THUMBS && <span className="text-xs text-muted-foreground tabular-nums">+{images.length - STRIP_THUMBS} ảnh</span>}
+      <Lightbox token={token} shown={shown} onClose={() => setShown(null)} />
+    </div>
+  );
+}
+
+/** "Kết quả" of one item in the day sheet; a reported file opens in Kết quả ("Xem") or its folder. */
+export function ItemResults({
+  id,
+  token,
+  api,
+  arts = [],
+  metrics = [],
+  now,
+  onOpenFile,
+}: {
+  id: number;
+  token: string;
+  api: Api;
+  arts?: Artifact[];
+  metrics?: MetricRow[];
+  now: number;
+  onOpenFile?: (id: string) => void;
+}) {
   const [shown, setShown] = useState<Shown | null>(null);
   const links = linksOf(arts);
   const images = arts.filter((a) => a.kind === "image" && !a.missing);
@@ -106,8 +155,22 @@ export function ItemResults({ id, token, arts = [], metrics = [], now }: { id: n
           {files.map((a) => (
             <li key={a.id} className="flex min-w-0 items-center gap-1.5">
               <FileIcon aria-hidden className="size-3 shrink-0" />
-              <span className="truncate text-foreground">{a.title}</span>
-              <span className="shrink-0">{a.missing ? "file đã mất" : `${KIND_LABEL[a.kind]}, xem ở tab Kết quả`}</span>
+              <span className="truncate text-foreground" title={a.path}>
+                {a.title}
+              </span>
+              {a.missing ? (
+                <span className="shrink-0">file đã mất</span>
+              ) : (
+                <>
+                  <span className="shrink-0">{KIND_LABEL[a.kind]}</span>
+                  {onOpenFile && (
+                    <Button type="button" size="xs" variant="outline" className={cn("shrink-0", TOUCH)} onClick={() => onOpenFile(a.id)} title="Mở file ở tab Kết quả">
+                      <EyeIcon aria-hidden /> Xem
+                    </Button>
+                  )}
+                </>
+              )}
+              <FolderButton path={a.path} id={a.missing ? undefined : a.id} api={api} className="shrink-0" />
             </li>
           ))}
         </ul>

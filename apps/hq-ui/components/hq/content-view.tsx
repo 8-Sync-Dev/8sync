@@ -125,7 +125,7 @@ function writeSel({ day, item }: Sel) {
 }
 
 /** "Nội dung" tab: content-post-agency's `content_items` (FB ↔ news) as a calendar or a list, read and written in place; the DB's triggers gate approve/publish. */
-export function ContentView({ token, active }: { token: string; active: boolean }) {
+export function ContentView({ token, active, onOpenFile }: { token: string; active: boolean; onOpenFile?: (id: string) => void }) {
   const api = useMemo(() => makeApi(token), [token]);
   const owner = useAccess() === "owner";
   const [status, setStatus] = useState(ALL);
@@ -308,6 +308,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               onClose={() => setSel({ day: null, item: null })}
               onItem={(item) => setSel({ day: sheetDay, item })}
               reload={list.reload}
+              onOpenFile={onOpenFile}
             />
           </>
         )}

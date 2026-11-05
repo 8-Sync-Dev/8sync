@@ -138,6 +138,8 @@ export const dirOf = (p: string): string => {
 
 /** `/api/artifacts/<id>/file`, `?download=1` for an attachment. */
 export const artifactFileUrl = (id: string, download = false) => `/api/artifacts/${id}/file${download ? "?download=1" : ""}`;
+/** `?artifact=<id>`: the Kết quả tab opens with this file shown (a room's Báo cáo → "Xem"). */
+export const ARTIFACT_PARAM = "artifact";
 
 export const KIND_LABEL: Record<ArtifactKind, string> = {
   image: "Ảnh",
