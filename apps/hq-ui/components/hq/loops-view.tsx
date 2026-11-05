@@ -13,12 +13,13 @@ import type { ProjectLoops } from "@/lib/server/loops";
 import { cn } from "@/lib/utils";
 import { ErrorNote } from "./bits";
 import { RoomSend, TOUCH } from "./room-send";
+import { SoloCard } from "./solo-card";
 import { makeApi } from "./use-hq";
 import type { Room } from "./use-office";
 
 export type LoopsState = { data: { projects: ProjectLoops[]; commands?: EccxCommand[] } | null; error: string | null; at: number };
 
-/** "Vòng lặp" tab: each `/ship-loop` of the project in view (`su-code/ship/*`), then the `/eccx-loop-*` and `/eccx-*` commands to copy or send into a room. */
+/** "Vòng lặp" tab: each `/ship-loop` of the project in view (`su-code/ship/*`), its `/solo`, then the `/eccx-loop-*` and `/eccx-*` commands to copy or send into a room. */
 export function LoopsView({ loops, repo = null, token, rooms }: { loops: LoopsState; repo?: string | null; token: string; rooms: Room[] }) {
   const [pick, setPick] = useState<string | null>(repo);
   useFollowRepo(repo, setPick);
@@ -78,6 +79,7 @@ export function LoopsView({ loops, repo = null, token, rooms }: { loops: LoopsSt
           </ul>
         )}
       </section>
+      {cur && <SoloCard root={cur.root} name={cur.name} solo={cur.solo} rooms={rooms} token={token} now={now} />}
       {loops.data && <EccxCommands commands={loops.data.commands ?? []} token={token} rooms={rooms} root={cur?.root ?? repo} />}
     </div>
   );

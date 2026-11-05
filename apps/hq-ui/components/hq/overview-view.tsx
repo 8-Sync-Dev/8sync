@@ -11,7 +11,7 @@ import { roomModelLabel } from "@/lib/roles";
 import { buildTeamThread, partyKey, type ThreadItem } from "@/lib/team-thread";
 import { TREE_WORD, byState, type TreeSession, type TreeState } from "@/lib/session-tree";
 import { cn } from "@/lib/utils";
-import { AskPanel, askRoomOf, type AskRoom } from "./ask-panel";
+import { AskPanel, askRoomOf, pinnedAsk, type AskRoom } from "./ask-panel";
 import { EmptyState, ErrorNote, shortName } from "./bits";
 import { PlayButton } from "./play-view";
 import { PreviewImage } from "./preview-view";
@@ -61,13 +61,14 @@ export function OverviewView({
     () => roster(rooms, now).map((r) => ({ ...r, modelLabel: roomModelLabel(r.room), waiting: askLine(r.room.ask) ?? r.room.waiting })),
     [rooms, now],
   );
-  // Same rule as the office: rooms stopped on the owner.
+  // Same rule as the office: rooms stopped on the owner. Questions and omp rooms are pinned above every tab (pinned-asks.tsx).
   const asking: AskRoom[] = useMemo(
     () =>
       rows.flatMap((n) => {
         const r = rooms.find((x) => x.key === n.key);
         if (!r || n.state !== "needs") return [];
-        return [askRoomOf(r)];
+        const a = askRoomOf(r);
+        return pinnedAsk(a) ? [] : [a];
       }),
     [rows, rooms],
   );

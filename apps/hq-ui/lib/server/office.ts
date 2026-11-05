@@ -9,11 +9,13 @@ import type { Ask } from "../ask";
 import { deliveryOf, sessionLabel } from "../labels";
 import { seatsFor, visitsFrom, type AgentRow, type Limits, type ProjectInfo, type RoomRef, type Seat, type Usage, type Visit } from "../office";
 import type { HiddenProject } from "../sidebar";
+import { mainRoot } from "../preview";
 import { readAsk, transcriptOf } from "./ask";
 import { loadFloor, ompSessions } from "./floor";
 import { inboxLive, pendingInbox } from "./inbox";
 import { stateDir } from "./paths";
 import { mergedSessions, type SessionView } from "./proc";
+import { readSolo, type ProjectSolo } from "./solo";
 
 const projectCache = new Map<string, { at: number; v: ProjectInfo | null }>();
 
@@ -309,11 +311,22 @@ export function readLoops(roots: { root: string; name: string }[]): LoopInfo[] {
   return out.sort((a, b) => (b.started ?? 0) - (a.started ?? 0)).slice(0, 30);
 }
 
+/** `/solo` of every project with a live room, one per repo (a worktree room counts for its main checkout, like the "Vòng lặp" tab). */
+function readSolos(projects: ProjectInfo[]): ProjectSolo[] {
+  const seen = new Map<string, ProjectSolo | null>();
+  for (const p of projects) {
+    const root = mainRoot(p.root);
+    const k = root.toLowerCase();
+    if (!seen.has(k)) seen.set(k, readSolo(root, path.basename(root) || p.name));
+  }
+  return [...seen.values()].filter((s): s is ProjectSolo => s != null);
+}
+
 /**
  * `limits`: plan usage (header). `hidden`: projects the owner closed in the sidebar (lib/sidebar.ts
  * splitClosed decides which still hide).
  */
-export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; limits: Limits | null; hidden: HiddenProject[]; at: number };
+export type Office = { rooms: Room[]; visits: Visit[]; loops: LoopInfo[]; solo: ProjectSolo[]; limits: Limits | null; hidden: HiddenProject[]; at: number };
 
 export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Office> {
   const [merged, floor] = await Promise.all([mergedSessions(db).catch(() => [] as SessionView[]), loadFloor(db)]);
@@ -387,6 +400,7 @@ export async function loadOffice(db: DatabaseSync, now = Date.now()): Promise<Of
     rooms,
     visits: visitsFrom(recent, refs, now),
     loops: readLoops([...projects.values()]),
+    solo: readSolos([...projects.values()]),
     limits: readLimits(),
     hidden: db.prepare("SELECT key, root, name, hidden_at FROM hidden_projects ORDER BY hidden_at DESC").all() as HiddenProject[],
     at: now,

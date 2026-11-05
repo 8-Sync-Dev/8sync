@@ -7,6 +7,7 @@ import path from "node:path";
 import { maskSecrets } from "../mask";
 import type { ProjectInfo } from "../office";
 import { mainRoot } from "../preview";
+import { readSolo, type ProjectSolo } from "./solo";
 
 const LOOPS_MAX = 12;
 const DIRS_MAX = 300;
@@ -26,7 +27,8 @@ export type LoopRow = {
   at: number;
 };
 
-export type ProjectLoops = { root: string; name: string; loops: LoopRow[] };
+/** `solo`: the project's `/solo` (lib/server/solo.ts), null when it never ran there. */
+export type ProjectLoops = { root: string; name: string; loops: LoopRow[]; solo: ProjectSolo | null };
 
 /** The evidence lines of a LOOP.md: under "## Evidence" when that heading exists, else every "iter N |" line. */
 export function parseLoopMd(md: string): { last: string | null; iter: number | null } {
@@ -115,7 +117,10 @@ export function listLoops(projects: ProjectInfo[]): ProjectLoops[] {
   for (const p of projects) {
     const root = mainRoot(p.root);
     const k = root.toLowerCase();
-    if (!seen.has(k)) seen.set(k, { root, name: path.basename(root) || p.name, loops: readProjectLoops(root) });
+    if (!seen.has(k)) {
+      const name = path.basename(root) || p.name;
+      seen.set(k, { root, name, loops: readProjectLoops(root), solo: readSolo(root, name) });
+    }
   }
   return [...seen.values()];
 }

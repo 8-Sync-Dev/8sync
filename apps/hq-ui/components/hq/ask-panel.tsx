@@ -10,6 +10,7 @@ import { agoVi } from "@/lib/now";
 import { flatText } from "@/lib/screen";
 import { ApiError, makeApi } from "./use-hq";
 import type { Room } from "./use-office";
+import { OtherAnswer } from "./other-answer";
 import { openWebTerminal } from "./web-terminal-sheet";
 
 export type AskRoom = {
@@ -23,7 +24,17 @@ export type AskRoom = {
   tmux: boolean;
   /** Opened by hand in the owner's own terminal window: answered there, HQ cannot attach to it. */
   interactive?: boolean;
+  /**
+   * An omp room: HQ reads no transcript for it (its question is unknown here) and the one-tap route
+   * takes Claude Code session ids only; it is answered in its terminal inside HQ.
+   */
+  omp?: boolean;
 };
+
+/** Pinned above every tab (pinned-asks.tsx): a question (AskUserQuestion) or an omp room waiting; permission prompts stay in the panels. */
+export function pinnedAsk(r: Pick<AskRoom, "ask" | "omp">): boolean {
+  return r.ask?.kind === "question" || r.omp === true;
+}
 
 /**
  * "Anh cần trả lời": every room that waits for the owner, with the question it asks and the one way
@@ -61,9 +72,9 @@ export function AskPanel({
   );
 }
 
-function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: string; onOpen: (key: string) => void }) {
+export function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: string; onOpen: (key: string) => void }) {
   const [busy, setBusy] = useState(false);
-  const cmd = r.session_id && !r.tmux ? attachCommand(r.session_id) : null;
+  const cmd = r.session_id && !r.tmux && !r.omp ? attachCommand(r.session_id) : null;
   const tap = oneTapKind(r);
   const a = r.ask;
 
@@ -102,7 +113,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
             {a?.at != null && <span className="text-muted-foreground tabular"> · {agoVi(a.at, now)}</span>}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           {cmd ? (
             <>
               <Button type="button" size="sm" variant={tap ? "outline" : "default"} disabled={busy} onClick={() => void openTerminal()}>
@@ -110,6 +121,15 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void copy(cmd, true)} title={cmd}>
                 <CopyIcon aria-hidden /> Chép lệnh
+              </Button>
+            </>
+          ) : r.omp && r.session_id ? (
+            <>
+              <Button type="button" size="sm" onClick={() => void openTerminal()}>
+                <SquareTerminalIcon aria-hidden /> Mở terminal để trả lời
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => onOpen(r.key)}>
+                Mở phòng
               </Button>
             </>
           ) : (
@@ -159,15 +179,17 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
           {a.what && <span className="ml-2">{a.what}</span>}
         </p>
       ) : !a && !tap ? (
-        <p className="mt-2 text-sm text-muted-foreground">{r.waiting ?? "Claude Code đang chờ một câu trả lời"}: mở terminal để xem câu hỏi.</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {r.omp ? "Phòng omp đang chờ anh: HQ chưa đọc được câu hỏi của omp, mở terminal để xem và trả lời." : `${r.waiting ?? "Claude Code đang chờ một câu trả lời"}: mở terminal để xem câu hỏi.`}
+        </p>
       ) : null}
 
       <p className="mt-3 max-w-[75ch] text-xs text-muted-foreground text-pretty">
         {r.interactive ? (
           interactiveHint(r.label)
         ) : cmd && tap ? (
-          "Bấm một nút: HQ đọc lại màn hình của phòng rồi mới gửi phím, màn hình đã đổi thì không gửi gì. Muốn trả lời khác: mở terminal ngay trong HQ."
-        ) : cmd ? (
+          `Bấm một nút: HQ đọc lại màn hình của phòng rồi mới gửi phím, màn hình đã đổi thì không gửi gì. ${tap === "question" ? "Ý khác: gõ vào ô Khác." : "Muốn trả lời khác: mở terminal ngay trong HQ."}`
+        ) : cmd || r.omp ? (
           <>
             Terminal mở ngay trong HQ: chọn đáp án bằng mũi tên hoặc gõ số, rồi Enter. Trả lời xong, phòng tự làm tiếp và khung này biến mất sau vài giây. Đóng terminal thì phòng vẫn chạy.
           </>
@@ -182,7 +204,7 @@ function AskCard({ r, now, token, onOpen }: { r: AskRoom; now: number; token: st
 /** The panel's view of an office room. `claude agents` reports a background room's dialog ("permission prompt") as its `doing` line. */
 export function askRoomOf(r: Room): AskRoom {
   const waiting = r.waiting ?? (r.status === "needs_input" ? r.doing : null);
-  return { key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting, ask: r.ask, tmux: r.delivery === "terminal", interactive: r.interactive };
+  return { key: r.key, label: r.label, session_id: r.session_id, project: r.project?.name ?? null, waiting, ask: r.ask, tmux: r.delivery === "terminal", interactive: r.interactive, ...(r.engine === "omp" && { omp: true }) };
 }
 
 /**
@@ -236,17 +258,20 @@ export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: s
     };
   }, [key, sid, kind, token]);
 
-  async function send(keys: string[], done: string) {
-    if (typeof screen !== "object") return;
-    setBusy(keys.join(""));
+  /** `other`: the owner's own answer for the question's free-text row (the server types it, then Enter). */
+  async function send(keys: string[], done: string, other?: string): Promise<boolean> {
+    if (typeof screen !== "object") return false;
+    setBusy(other ?? keys.join(""));
     try {
-      await makeApi(token)(`/api/sessions/${encodeURIComponent(sid)}/answer`, { method: "POST", body: { kind, keys, text: screen.text } });
+      await makeApi(token)(`/api/sessions/${encodeURIComponent(sid)}/answer`, { method: "POST", body: { kind, keys, text: screen.text, ...(other && { other }) } });
       toast.success(done);
+      return true;
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         setScreen("moved");
         toast.error(`${r.label}: màn hình đã đổi, mở terminal`);
       } else toast.error((e as Error).message);
+      return false;
     } finally {
       setBusy(null);
     }
@@ -303,6 +328,9 @@ export function OneTap({ r, sid, kind, token, onTerminal }: { r: AskRoom; sid: s
           ))
         )}
       </div>
+      {kind === "question" && (
+        <OtherAnswer label={`Câu trả lời khác cho ${r.label}`} disabled={off} onSend={(t) => send([], `Đã gửi câu trả lời của anh cho ${r.label}`, t)} />
+      )}
     </div>
   );
 }
