@@ -24,6 +24,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - HQ Nội dung → Giao việc: menu "Chọn phiên omp" cuộn được tới phiên cuối. Kiểu `item-aligned` của Radix Select đặt sát đáy màn hình thì nuốt lăn chuột (10 lần lăn chỉ đi 24 px trên 1 028 px). Giờ menu dùng `popper`: mở phía trên ô chọn, cao tối đa 20rem, cuộn thường.
 - HQ Nội dung: bài đã "Bỏ" rời lịch và danh sách. Trước đây nó chỉ bị gạch ngang nên trông như chưa xoá. Nút "Đã bỏ (N)" chuyển bộ lọc Trạng thái sang Bỏ để xem lại hoặc mở lại.
 - HQ: phòng omp (không có phòng Claude Code) giờ được tính là dự án HQ biết, nên `hq-control artifact add`, tải file và Preview không còn trả 403 "file không nằm trong dự án nào HQ đang biết".
+### Docs
+- Website (get.8syncdev.com) và README có thêm 3 ảnh HQ thật (Văn phòng, Kết quả, Máy; tên phiên của dự án khác được che bằng khối đặc) và mục **Skills** liệt kê 35 skill bundled theo 6 nhóm, link "Skills" trên nav. `scripts/test_site_skills.py` fail khi danh sách hoặc con số trên site/README lệch với `assets/skills/*/SKILL.md`.
 
 ## [0.122.14] — 2026-11-04
 
