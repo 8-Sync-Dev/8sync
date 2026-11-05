@@ -2625,6 +2625,43 @@ fn serve_ready(line: &str, host: &str) -> bool {
     line.trim().strip_prefix("https://").and_then(|r| r.strip_suffix('/')) == Some(host)
 }
 
+/// Windows: put `child` in a kill-on-close job whose only handle this process holds (never
+/// closed), so the OS ends `child` whenever this process ends, however it ends. Elsewhere a no-op:
+/// `tailscale serve` there is cleaned up by the normal Ctrl-C / exit path.
+#[cfg(windows)]
+fn die_with_me(child: &std::process::Child) {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+    #[repr(C)]
+    #[derive(Default)]
+    struct Basic { per_process_user_time: i64, per_job_user_time: i64, limit_flags: u32, min_ws: usize, max_ws: usize, active_processes: u32, affinity: usize, priority_class: u32, scheduling_class: u32 }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Extended { basic: Basic, io: [u64; 6], process_memory: usize, job_memory: usize, peak_process_memory: usize, peak_job_memory: usize }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(attrs: *mut c_void, name: *const u16) -> *mut c_void;
+        fn SetInformationJobObject(job: *mut c_void, class: i32, info: *const c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+    }
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: i32 = 9;
+    let info = Extended { basic: Basic { limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, ..Default::default() }, ..Default::default() };
+    // SAFETY: plain Win32 calls on a fresh job handle and the live child's process handle; `info`
+    // is the documented x64/x86 layout of JOBOBJECT_EXTENDED_LIMIT_INFORMATION and outlives the call.
+    let ok = unsafe {
+        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        !job.is_null()
+            && SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, (&info as *const Extended).cast(), std::mem::size_of::<Extended>() as u32) != 0
+            && AssignProcessToJobObject(job, child.as_raw_handle().cast()) != 0
+    };
+    if !ok {
+        ui::warn("không gắn được tailscale serve vào job: nếu HQ bị kill cứng, chạy `tailscale serve --https=443 off`");
+    }
+}
+#[cfg(not(windows))]
+fn die_with_me(_child: &std::process::Child) {}
+
 /// `--tailnet`: `tailscale serve --https=443` in front of the local HQ, then the same `public.json`
 /// and login link as `--public`. Tailscale keeps the `Host` header (no port on 443), so the server's
 /// exact-host check sees `<host>` and asks for the login cookie. Waits up to 5 minutes for Tailscale
@@ -2650,6 +2687,9 @@ fn start_tailnet(port: u16, file: &Path, nonce: &str) -> Result<Option<std::proc
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("start {}", bin.display()))?;
+    // Foreground serve drops its config when it exits; make sure it exits with us, also when this
+    // process is killed hard (Task Manager, `taskkill /F`), or the link stays up with no HQ behind it.
+    die_with_me(&tun);
     let (out, err) = (tun.stdout.take().ok_or_else(|| anyhow!("tailscale stdout"))?, tun.stderr.take().ok_or_else(|| anyhow!("tailscale stderr"))?);
     let last_err: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
     let slot = last_err.clone();
@@ -2718,34 +2758,37 @@ fn publish_link(mut tun: std::process::Child, host: &str, file: &Path, nonce: &s
     Ok(Some(tun))
 }
 
-/// HKCU Run value that starts HQ at sign-in (`--at-login`).
-const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-const RUN_NAME: &str = "8sync-hq";
+/// The logon Scheduled Task of `--at-login`.
+const HQ_TASK: &str = r"\8sync\hq-ui";
 
-/// The sign-in command line: `exe hq ui --tailnet --no-open --port <port>` under a headless conhost
-/// (no console window; the same wrapper the Scheduled Tasks use).
-fn at_login_argv(exe: &Path, port: u16) -> Vec<String> {
-    ["conhost.exe", "--headless"].into_iter().map(String::from).chain([exe.display().to_string()]).chain(["hq", "ui", "--tailnet", "--no-open", "--port"].into_iter().map(String::from)).chain([port.to_string()]).collect()
+/// PowerShell that registers [`HQ_TASK`]: at sign-in, `conhost --headless "<exe>" hq ui --tailnet
+/// --no-open --port <port>` (no console window), on battery too, no time limit, restarted up to 3
+/// times, one instance. ScheduledTasks instead of `schtasks /Create` for those settings (as eco);
+/// an `-AtLogOn` trigger of the user's own account needs no admin. `start` = run it once now.
+fn hq_task_ps(exe: &str, port: u16, start: bool) -> String {
+    let arg = format!("--headless \"{exe}\" hq ui --tailnet --no-open --port {port}").replace('\'', "''");
+    let now = if start { "; Start-ScheduledTask -TaskPath '\\8sync\\' -TaskName 'hq-ui'" } else { "" };
+    format!(
+        "$a = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument '{arg}'; \
+         $t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; \
+         $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew; \
+         Register-ScheduledTask -TaskPath '\\8sync\\' -TaskName 'hq-ui' -Action $a -Trigger $t -Settings $s -Force | Out-Null{now}"
+    )
 }
 
-/// `argv` as one Windows command line (each part quoted when it holds a space).
-fn win_cmdline(argv: &[String]) -> String {
-    argv.iter().map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.clone() }).collect::<Vec<_>>().join(" ")
-}
-
-/// `--at-login` (on) / `--at-login-off`: the HKCU Run value (no admin needed), and on `on` the same
-/// command started now when `port` is free.
+/// `--at-login` (on) / `--at-login-off`: the logon task [`HQ_TASK`]; `on` also runs it now when
+/// `port` is free.
 fn cmd_at_login(port: u16, on: bool, dry: bool) -> Result<()> {
     if !cfg!(windows) {
         bail!("`--at-login` hiện chỉ có trên Windows — Linux/macOS: tự thêm `8sync hq ui --tailnet --no-open` vào systemd --user / launchd");
     }
+    let quiet = |c: &mut Command| c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
     if !on {
         if dry {
-            println!("reg delete {RUN_KEY} /v {RUN_NAME} /f");
+            println!("schtasks /Delete /TN {HQ_TASK} /F");
             return Ok(());
         }
-        let gone = Command::new("reg").args(["delete", RUN_KEY, "/v", RUN_NAME, "/f"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
-        if gone {
+        if quiet(Command::new("schtasks").args(["/Delete", "/TN", HQ_TASK, "/F"])) {
             ui::ok("HQ không còn tự bật khi đăng nhập (HQ đang chạy vẫn chạy tiếp)");
         } else {
             ui::info("HQ chưa được đặt tự bật khi đăng nhập");
@@ -2756,24 +2799,22 @@ fn cmd_at_login(port: u16, on: bool, dry: bool) -> Result<()> {
         bail!("không tìm thấy tailscale — cài https://tailscale.com/download rồi đăng nhập trước");
     }
     let exe = std::env::current_exe().context("đường dẫn 8sync")?;
-    let argv = at_login_argv(&exe, port);
-    let line = win_cmdline(&argv);
+    let exe = exe.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+    let busy = ui_port_busy(port);
+    let ps = hq_task_ps(&exe, port, !busy);
     if dry {
-        println!("reg add {RUN_KEY} /v {RUN_NAME} /t REG_SZ /d {line} /f");
-        println!("start {line}{}", if ui_port_busy(port) { "   # skipped: port busy" } else { "" });
+        println!("powershell -Command \"{ps}\"");
         return Ok(());
     }
-    let st = Command::new("reg").args(["add", RUN_KEY, "/v", RUN_NAME, "/t", "REG_SZ", "/d", &line, "/f"]).stdout(Stdio::null()).status().context("reg add")?;
-    if !st.success() {
-        bail!("không ghi được {RUN_KEY}\\{RUN_NAME}");
+    if !quiet(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &ps])) {
+        bail!("Register-ScheduledTask {HQ_TASK} không thành công");
     }
-    ui::ok("HQ sẽ tự bật (qua Tailscale, không mở cửa sổ) mỗi lần anh đăng nhập máy. Gỡ: `8sync hq ui --at-login-off`");
-    if ui_port_busy(port) {
-        ui::info(&format!("port {port} đang có HQ chạy — để nguyên; lần đăng nhập sau mới bật bản tailnet. Muốn ngay: tắt HQ đó rồi chạy `8sync hq ui --tailnet`"));
-        return Ok(());
+    ui::ok(&format!("Scheduled Task `{HQ_TASK}`: HQ tự bật qua Tailscale mỗi lần anh đăng nhập máy (ẩn cửa sổ, cả khi chạy pin). Gỡ: `8sync hq ui --at-login-off`"));
+    if busy {
+        ui::info(&format!("port {port} đang có HQ chạy — để nguyên; lần đăng nhập sau mới bật bản tailnet. Muốn ngay: tắt HQ đó rồi `schtasks /Run /TN {HQ_TASK}`"));
+    } else {
+        ui::info("đang bật HQ chạy nền; khoảng 20 giây nữa chạy `8sync hq ui --relink` để lấy link đăng nhập cho điện thoại");
     }
-    Command::new(&argv[0]).args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().context("start HQ")?;
-    ui::info("đang bật HQ chạy nền; khoảng 20 giây nữa chạy `8sync hq ui --relink` để lấy link đăng nhập cho điện thoại");
     Ok(())
 }
 
@@ -3748,9 +3789,12 @@ mod tests {
     }
 
     #[test]
-    fn at_login_runs_tailnet_hq_headless_on_the_port() {
-        let argv = at_login_argv(Path::new(r"C:\Users\A B\.local\bin\8sync.exe"), 8741);
-        assert_eq!(win_cmdline(&argv), r#"conhost.exe --headless "C:\Users\A B\.local\bin\8sync.exe" hq ui --tailnet --no-open --port 8741"#);
+    fn at_login_task_runs_tailnet_hq_headless_on_the_port() {
+        let ps = hq_task_ps(r"C:\Users\O'Neil B\.local\bin\8sync.exe", 8741, false);
+        assert!(ps.contains(r#"-Argument '--headless "C:\Users\O''Neil B\.local\bin\8sync.exe" hq ui --tailnet --no-open --port 8741'"#), "{ps}");
+        assert!(ps.contains("-AtLogOn -User $env:USERNAME") && ps.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)") && ps.contains("-AllowStartIfOnBatteries"));
+        assert!(!ps.contains("Start-ScheduledTask"), "port busy: register only");
+        assert!(hq_task_ps("x", 8740, true).ends_with("Start-ScheduledTask -TaskPath '\\8sync\\' -TaskName 'hq-ui'"));
     }
 
     fn tmp(tag: &str) -> PathBuf {
