@@ -89,6 +89,12 @@ pub struct Digest {
     pub tasks: Vec<Task>,
     /// Recently written files (newest first, `detail` scans only).
     pub files: Vec<String>,
+    /// The turn is still going: the model owes a reply (a prompt or tool result after its last
+    /// message, or that message stopped on a tool call / is still streaming). `Some(false)`: its
+    /// last message ended the turn (`stop`/`end_turn`/`aborted`/`error`/`length`…), so the session
+    /// sits at its prompt even while a live process holds it ([`Status::Running`]). `None`: no
+    /// message seen.
+    pub turn_open: Option<bool>,
     pub partial: bool,
 }
 
@@ -635,6 +641,7 @@ pub struct LineScanner {
     tool_ring: VecDeque<Vec<u8>>,
     next_id: usize,
     change_title: Option<String>,
+    turn_open: Option<bool>,
 }
 
 impl LineScanner {
@@ -649,6 +656,7 @@ impl LineScanner {
             tool_ring: VecDeque::new(),
             next_id: 1,
             change_title: None,
+            turn_open: None,
         }
     }
 
@@ -675,21 +683,32 @@ impl LineScanner {
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
                         d.model = v.get("model").and_then(|c| c.as_str()).map(str::to_string);
                     }
+                } else if head.starts_with(r#"{"type":"custom_message""#) {
+                    // A finished background job or launch wakes the agent into a new turn; advisor
+                    // notes and reminders do not (an advisor note after `stop` can sit unanswered).
+                    if head.contains(r#""customType":"async-result""#) || head.contains(r#""customType":"launch-completion""#) {
+                        self.turn_open = Some(true);
+                    }
                 } else if !head.starts_with(r#"{"type":"message""#) {
                     // custom / usage / compaction entries: nothing we show
                 } else if head.contains(r#""role":"user""#) {
+                    self.turn_open = Some(true);
                     if let Ok(v) = serde_json::from_str::<Value>(line) {
                         if let Some(t) = omp_user_text(&v) {
                             push_user(d, t);
                         }
                     }
-                } else if head.contains(r#""role":"toolResult""#) && head.contains(r#""toolName":"todo""#) {
-                    if let Ok(v) = serde_json::from_str::<Value>(line) {
-                        if let Some(t) = omp_tasks(&v) {
-                            d.tasks = t;
+                } else if head.contains(r#""role":"toolResult""#) {
+                    self.turn_open = Some(true);
+                    if head.contains(r#""toolName":"todo""#) {
+                        if let Ok(v) = serde_json::from_str::<Value>(line) {
+                            if let Some(t) = omp_tasks(&v) {
+                                d.tasks = t;
+                            }
                         }
                     }
                 } else if head.contains(r#""role":"assistant""#) {
+                    self.turn_open = Some(asst_turn_open(line, r#""stopReason":"#));
                     keep_assistant(line, buf, r#""type":"toolCall""#, &mut self.last_asst, &mut self.last_text, &mut self.last_tool);
                     if self.detail && line.contains(r#""type":"toolCall""#) {
                         push_ring(&mut self.tool_ring, buf);
@@ -721,11 +740,16 @@ impl LineScanner {
                             }
                         }
                         if let Some(t) = claude_user_text(&v) {
+                            // The harness's interrupt marker ends the turn; a real prompt opens one.
+                            self.turn_open = Some(!t.starts_with("[Request interrupted"));
                             push_user(d, t);
+                        } else if blocks(&v).iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result")) {
+                            self.turn_open = Some(true);
                         }
                     }
                 } else if line.contains(r#""type":"assistant""#) {
                     keep_assistant(line, buf, r#""type":"tool_use""#, &mut self.last_asst, &mut self.last_text, &mut self.last_tool);
+                    self.turn_open = Some(asst_turn_open(line, r#""stop_reason":"#));
                     let has_task = line.contains(r#""name":"TaskCreate""#)
                         || line.contains(r#""name":"TaskUpdate""#)
                         || line.contains(r#""name":"TodoWrite""#);
@@ -745,6 +769,7 @@ impl LineScanner {
     /// The digest of every line fed so far.
     pub fn finish(self) -> Digest {
         let mut d = self.d;
+        d.turn_open = self.turn_open;
         if d.title.is_none() {
             d.title = self.change_title;
         }
@@ -810,6 +835,15 @@ fn keep_assistant(line: &str, raw: &[u8], tool_marker: &str, asst: &mut Vec<u8>,
         tool.clear();
         tool.extend_from_slice(raw);
     }
+}
+
+/// An assistant line leaves its turn open unless its stop reason ends the turn. The message-level
+/// field follows the content, so the last match is it (an escaped copy inside text never matches).
+/// No reason or `null` (still streaming), a tool call (`toolUse`/`tool_use`) or anything unknown: open.
+fn asst_turn_open(line: &str, key: &str) -> bool {
+    let Some(i) = line.rfind(key) else { return true };
+    let reason = line[i + key.len()..].trim_start().strip_prefix('"').and_then(|r| r.split('"').next());
+    !matches!(reason, Some("stop" | "end_turn" | "stop_sequence" | "max_tokens" | "length" | "error" | "aborted" | "refusal"))
 }
 
 /// A prompt worth showing: drops pasted-image placeholders and the harness's
@@ -1066,7 +1100,9 @@ pub fn row_json(row: &Row) -> Value {
         "title": d.title.as_deref().map(|t| clean(t, 200)),
         "branch": row.branch,
         "dirty": row.branch.as_ref().map(|_| row.dirty),
-        "doing": d.current_task().map(|t| t.title.clone()).or_else(|| d.last_activity()).map(|s| clean(&s, 200)),
+        // A finished turn is doing nothing, even while its process stays open (`last_activity` keeps it).
+        "doing": if d.turn_open == Some(false) { None } else { d.current_task().map(|t| t.title.clone()).or_else(|| d.last_activity()).map(|s| clean(&s, 200)) },
+        "turn_open": d.turn_open,
         "last_user": d.last_user().map(|u| clean(u, 200)),
         "last_activity": d.last_activity().map(|s| clean(&s, 200)),
         "last_tool": d.last_tool_name.as_deref().map(|s| clean(s, 60)),
@@ -1403,6 +1439,73 @@ mod tests {
         assert_eq!(scan_file(Path::new("/definitely/not/here.jsonl"), Fmt::Omp, false).user_msgs, 0);
         let d = scan_reader(Cursor::new("not json\n{\"type\":\"message\",\"message\":{\"role\":\"user\"\n\n"), Fmt::Omp, false);
         assert_eq!(d.user_msgs, 0);
+    }
+
+    /// omp transcript lines for the turn tests (`asst(reason)` = an assistant message with that stop reason).
+    const OMP_USER: &str = r#"{"type":"message","id":"u","message":{"role":"user","content":[{"type":"text","text":"distill hp tới đâu rồi"}]}}"#;
+    const OMP_RESULT: &str = r#"{"type":"message","id":"r","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"ok"}]}}"#;
+    fn omp_asst(reason: &str) -> String {
+        // A copy of the field inside text (escaped) must not count: the message-level one follows the content.
+        format!(r#"{{"type":"message","id":"a","message":{{"role":"assistant","content":[{{"type":"text","text":"say \"stopReason\":\"toolUse\""}},{{"type":"toolCall","id":"c1","name":"bash","arguments":{{"command":"ls","i":"Measuring distill coverage"}}}}],"usage":{{"totalTokens":9}},"stopReason":"{reason}","timestamp":1}}}}"#)
+    }
+    fn omp_turn(lines: &[&str]) -> Option<bool> {
+        scan_reader(Cursor::new(lines.join("\n") + "\n"), Fmt::Omp, false).turn_open
+    }
+
+    #[test]
+    fn turn_open_omp_tail() {
+        let (stop, tool, aborted, error, length) = (omp_asst("stop"), omp_asst("toolUse"), omp_asst("aborted"), omp_asst("error"), omp_asst("length"));
+        assert_eq!(omp_turn(&[]), None, "empty: unknown");
+        assert_eq!(omp_turn(&[OMP_USER]), Some(true), "prompt, no reply yet");
+        assert_eq!(omp_turn(&[OMP_USER, &tool]), Some(true), "tool call pending");
+        assert_eq!(omp_turn(&[OMP_USER, &tool, OMP_RESULT]), Some(true), "tool result: the model owes a reply");
+        assert_eq!(omp_turn(&[OMP_USER, &tool, OMP_RESULT, &stop]), Some(false), "stop ends the turn");
+        assert_eq!(omp_turn(&[OMP_USER, &stop, r#"{"type":"custom","customType":"tool_execution_start"}"#]), Some(false), "non-message entries change nothing");
+        assert_eq!(omp_turn(&[OMP_USER, &aborted]), Some(false), "aborted");
+        assert_eq!(omp_turn(&[OMP_USER, &error]), Some(false), "error");
+        assert_eq!(omp_turn(&[OMP_USER, &length]), Some(false), "length");
+        assert_eq!(omp_turn(&[OMP_USER, &stop, OMP_USER]), Some(true), "a new prompt reopens it");
+        let streaming = r#"{"type":"message","id":"a","message":{"role":"assistant","content":[{"type":"text","text":"so far"}]}}"#;
+        assert_eq!(omp_turn(&[OMP_USER, streaming]), Some(true), "no stop reason yet: still streaming");
+        let advisor = r#"{"type":"custom_message","customType":"advisor","content":"x","display":true}"#;
+        assert_eq!(omp_turn(&[OMP_USER, &stop, advisor]), Some(false), "an advisor note does not wake the agent");
+        let woke = r#"{"type":"custom_message","customType":"async-result","content":"Background job done","display":true}"#;
+        assert_eq!(omp_turn(&[OMP_USER, &stop, woke]), Some(true), "a finished background job does");
+    }
+
+    #[test]
+    fn turn_closed_row_drops_doing_keeps_history() {
+        let mut d = scan_reader(Cursor::new([OMP_USER, &omp_asst("toolUse"), OMP_RESULT, &omp_asst("stop")].join("\n")), Fmt::Omp, false);
+        let v = row_json(&row(d.clone()));
+        assert_eq!(v["status"], "running", "a live process still holds it");
+        assert_eq!(v["turn_open"], false);
+        assert_eq!(v["doing"], Value::Null);
+        assert_eq!(v["last_tool"], "bash");
+        assert_eq!(v["last_activity"], "bash: Measuring distill coverage");
+        d.turn_open = Some(true);
+        assert_eq!(row_json(&row(d.clone()))["doing"], "bash: Measuring distill coverage");
+        d.turn_open = None;
+        let v = row_json(&row(d));
+        assert_eq!((v["turn_open"].clone(), v["doing"].clone()), (Value::Null, Value::from("bash: Measuring distill coverage")), "unknown keeps the old behaviour");
+    }
+
+    #[test]
+    fn turn_open_claude_tail() {
+        let t = |lines: &[&str]| scan_reader(Cursor::new(lines.join("\n") + "\n"), Fmt::Claude, false).turn_open;
+        let prompt = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"fix it"},"origin":{"kind":"human"}}"#;
+        let asst = |r: &str| format!(r#"{{"isSidechain":false,"message":{{"model":"claude-x","role":"assistant","content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"ls"}}}}],"stop_reason":{r},"usage":{{"output_tokens":1}}}},"type":"assistant"}}"#);
+        let result = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#;
+        let (tool, end, null) = (asst(r#""tool_use""#), asst(r#""end_turn""#), asst("null"));
+        assert_eq!(t(&[]), None);
+        assert_eq!(t(&[prompt, &tool]), Some(true), "tool_use pending");
+        assert_eq!(t(&[prompt, &tool, result]), Some(true), "tool result: owes a reply");
+        assert_eq!(t(&[prompt, &tool, result, &end]), Some(false), "end_turn");
+        assert_eq!(t(&[prompt, &null]), Some(true), "stop_reason null: still streaming");
+        let meta = r#"{"type":"user","isSidechain":false,"isMeta":true,"message":{"role":"user","content":"<local-command-stdout>ok</local-command-stdout>"}}"#;
+        assert_eq!(t(&[prompt, &end, meta]), Some(false), "slash-command echoes do not open a turn");
+        let interrupt = r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#;
+        assert_eq!(t(&[prompt, &tool, result, interrupt]), Some(false), "interrupted");
+        assert_eq!(t(&[prompt, &end, prompt]), Some(true), "next prompt");
     }
 }
 
