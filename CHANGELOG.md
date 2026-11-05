@@ -5,6 +5,19 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.19] — 2026-11-05
+
+### Added
+- HQ Chat phòng, tab **Kết quả** trong Nhật ký: câu trả lời cuối của từng lượt (lời nhắn → việc phòng làm → trả lời) gộp thành một tài liệu markdown, mới nhất ở trên, có mục lục bên cạnh (khung hẹp thì mục lục nằm trên). Bấm mục lục là cuộn tới đúng lượt; mỗi lượt có số bước, subagent, lỗi, nút chép markdown; "Tải .md" tải cả tài liệu. Lượt đang chạy ghi rõ "Đang làm: câu trả lời mới nhất, chưa phải kết quả cuối". Tab "Từng bước" giữ nhật ký cũ.
+- Dưới mỗi tin của anh (và tin phòng trả lời) trong chat có nút agent "Kết quả" / "Đang làm": bấm là khung Kết quả chuyển tab, cuộn tới lượt tin đó sinh ra và nháy sáng. Tin `/lệnh …` cũng khớp (so phần sau tên lệnh, vì phòng nhận lệnh đã bung).
+
+### Changed
+- Chat phòng trên màn rộng chia dọc: chat + ô nhắn bên trái, tóm tắt phòng + Nhật ký bên phải, kéo viền để đổi tỉ lệ (lưu theo trình duyệt, khoá mới `hq-room-columns`). Điện thoại giữ như cũ, khung Kết quả cao tối đa 65% màn.
+- `GET /api/sessions/:name/activity` trả thêm `turns` (tối đa 20 lượt, kết quả ≤ 8 000 ký tự, lời nhắn ≤ 2 000) và `rev`; `?since=<rev>` khi transcript chưa đổi chỉ trả `{same, rev, at}`.
+
+### Performance
+- Một lần poll mỗi phòng cho cả Nhật ký lẫn nút trong chat (context dùng chung, không poll thứ hai). Phòng đang nghỉ: mỗi 4 s chỉ một `stat` + câu trả lời vài byte, client không render lại (đồng hồ "x phút trước" nhích 30 s một lần). Server parse transcript một lần mỗi lần file đổi rồi cắt theo `limit` từ cache. Section ngoài màn hình bỏ layout/paint (`content-visibility: auto`), section và markdown được memo nên poll mới không render lại lượt cũ.
+
 ## [0.122.18] — 2026-11-05
 
 ### Fixed
