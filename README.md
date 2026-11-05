@@ -261,7 +261,7 @@ Screenshots from a real HQ; other projects' session names are covered.
 
 ## Bundled skills
 
-35 skills ship inside the binary and install into `~/.omp/skills`; the Claude Code kit links them. Four are read in every session; the rest only show the agent a one-line trigger until a task matches. The ECC plugin adds 300+ more skills, agents and commands.
+36 skills ship inside the binary and install into `~/.omp/skills`; the Claude Code kit links them. Four are read in every session; the rest only show the agent a one-line trigger until a task matches. The ECC plugin adds 300+ more skills, agents and commands.
 
 | Group | Skills |
 |---|---|
@@ -269,7 +269,7 @@ Screenshots from a real HQ; other projects' session names are covered.
 | Design & frontend | `impeccable` · `taste-skill` · `taste-redesign` · `taste-minimalist` · `taste-soft` · `taste-brutalist` · `taste-output` · `senior-frontend` · `nextjs-app` · `tauri-v2` |
 | Research | `deep-research-web` · `last30days` · `research-paper` · `autoresearch` · `remote-compute` |
 | Images & vision | `image-gen` · `image-routing` · `locate-anything` · `zai-vision` |
-| Build & ship | `feature` · `full-flow` · `branch-sync` · `encore-deploy` · `encore-eino-go` · `ai-microservice-design` · `senior-security` · `aup-audit` |
+| Build & ship | `feature` · `full-flow` · `branch-sync` · `encore-deploy` · `encore-eino-go` · `ai-microservice-design` · `senior-security` · `aup-audit` · `hq-control` |
 | Docs, brand & reach | `super-pdf` · `assp-skill` · `social-growth` · `ego-zalo-advisor` |
 
 ## Agent HQ on Discord: `8sync hq`

@@ -30,7 +30,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - HQ: phòng omp (không có phòng Claude Code) giờ được tính là dự án HQ biết, nên `hq-control artifact add`, tải file và Preview không còn trả 403 "file không nằm trong dự án nào HQ đang biết".
 
 ### Docs
-- Website (get.8syncdev.com) và README có thêm 3 ảnh HQ thật (Văn phòng, Kết quả, Máy; tên phiên của dự án khác được che bằng khối đặc) và mục **Skills** liệt kê 35 skill bundled theo 6 nhóm, link "Skills" trên nav. `scripts/test_site_skills.py` fail khi danh sách hoặc con số trên site/README lệch với `assets/skills/*/SKILL.md`.
+- Website (get.8syncdev.com) và README có thêm 3 ảnh HQ thật (Văn phòng, Kết quả, Máy; tên phiên của dự án khác được che bằng khối đặc) và mục **Skills** liệt kê 36 skill bundled theo 6 nhóm (gồm `hq-control`), link "Skills" trên nav. `scripts/test_site_skills.py` fail khi danh sách hoặc con số trên site/README lệch với `assets/skills/*/SKILL.md`.
 
 ## [0.122.14] — 2026-11-04
 
