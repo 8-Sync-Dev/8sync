@@ -92,9 +92,11 @@ export function parseAttachments(text: string | null | undefined): { body: strin
   for (const raw of t.slice(at + ATTACH_HEADER.length + 3).split("\n")) {
     const l = raw.trim();
     if (!l) continue;
-    const m = l.startsWith("- ") ? UPLOAD_PATH.exec(l.slice(2).trim()) : null;
+    // "- <path>", or "- 2. <path>" when the message has several files (withFiles).
+    const p = l.startsWith("- ") ? l.slice(2).trim().replace(/^\d{1,2}\.\s+/, "") : "";
+    const m = p ? UPLOAD_PATH.exec(p) : null;
     if (!m) return whole;
-    files.push({ id: m[1], name: m[2], path: l.slice(2).trim() });
+    files.push({ id: m[1], name: m[2], path: p });
   }
   return files.length ? { body: t.slice(0, at), files } : whole;
 }

@@ -51,7 +51,7 @@ import { useAccess } from "./access";
 import { AssignBox, Editable, FORMAT_TONE, sessionLabel, STATUS_EDGE, STATUS_TONE, StatusIcon, useAssignSessions, type Patch } from "./content-bits";
 import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
-import { ItemResults, NO_RESULTS, ResultMark, type ResultIndex } from "./content-results";
+import { ItemResults, NO_RESULTS, ResultMark, ResultStrip, type ResultIndex } from "./content-results";
 import { TOUCH } from "./room-send";
 import type { Api } from "./use-hq";
 
@@ -79,6 +79,7 @@ export function ContentSheet({
   onClose,
   onItem,
   reload,
+  onOpenFile,
 }: {
   /** null = closed. */
   day: string | null;
@@ -98,6 +99,8 @@ export function ContentSheet({
   onClose: () => void;
   onItem: (id: number | null) => void;
   reload: () => void;
+  /** A reported file: shown in the Kết quả tab (owner HQ only; a guest never sees Kết quả). */
+  onOpenFile?: (id: string) => void;
 }) {
   // One item open at a time: the one in the URL, else the only one.
   const shown = item ?? (items.length === 1 ? items[0].id : null);
@@ -131,12 +134,20 @@ export function ContentSheet({
                       assign={assign}
                       onCollapse={items.length > 1 ? () => onItem(null) : undefined}
                       reload={reload}
+                      onOpenFile={onOpenFile}
                     />
                   ) : (
-                    <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
-                      <ItemLine it={it} results={results} />
-                      <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                    </button>
+                    <>
+                      <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
+                        <ItemLine it={it} results={results} />
+                        <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                      </button>
+                      {results.arts.has(it.id) && (
+                        <div className="-mt-1 pr-4 pb-2.5 pl-17">
+                          <ResultStrip token={token} arts={results.arts.get(it.id)} />
+                        </div>
+                      )}
+                    </>
                   )}
                 </li>
               ))}
@@ -193,6 +204,7 @@ function ItemDetail({
   assign,
   onCollapse,
   reload,
+  onOpenFile,
 }: {
   it: ContentRow;
   api: Api;
@@ -205,6 +217,7 @@ function ItemDetail({
   assign: AssignPref | null;
   onCollapse?: () => void;
   reload: () => void;
+  onOpenFile?: (id: string) => void;
 }) {
   const role = useAccess();
   const canEdit = atLeast(role, "editor");
@@ -420,7 +433,7 @@ function ItemDetail({
         </Field>
         {role === "owner" && (
           <Field label="Kết quả">
-            <ItemResults id={it.id} token={token} arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} now={now} />
+            <ItemResults id={it.id} token={token} api={api} arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} now={now} onOpenFile={onOpenFile} />
           </Field>
         )}
         {it.channels !== undefined && (

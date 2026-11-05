@@ -5,22 +5,23 @@
 // (files with the same --link fold together), with the open button, proof thumbnails, note and the
 // Nội dung posts it is about. Wide screen: a bottom split, dragged taller or folded to its title row
 // (the size, folded or not, kept per browser). Phone: a section in the room's scroll.
-import { ChevronDownIcon, ExternalLinkIcon, FileIcon, MegaphoneIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, EyeIcon, FileIcon, MegaphoneIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { usePanelRef, useDefaultLayout } from "react-resizable-panels";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { artifactFileUrl, baseName, KIND_LABEL, openLabel, reportsOf, roomRefs, type ArtifactView, type Report } from "@/lib/artifacts";
-import { STATUS_LABEL, type ContentRow } from "@/lib/content";
+import { dayKey, STATUS_LABEL, whenOf, type ContentRow } from "@/lib/content";
 import { agoVi } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { Lightbox, UploadThumb, type Shown } from "./attachments";
 import { ErrorNote } from "./bits";
 import { StatusIcon, STATUS_TONE } from "./content-bits";
+import { FolderButton } from "./folder-button";
 import { TOUCH } from "./room-send";
 import type { Room } from "./use-office";
-import { makeApi } from "./use-hq";
+import { makeApi, type Api } from "./use-hq";
 import { usePoll } from "./use-poll";
 
 const POLL_MS = 15_000;
@@ -104,7 +105,7 @@ function useFold(): Pane {
 type Scope = "room" | "project";
 
 /** The room's reports, newest first; "Cả dự án" switches to every report about the room's project. */
-export function RoomReport({ room, token }: { room: Room; token: string }) {
+export function RoomReport({ room, token, onOpenPost, onOpenFile }: { room: Room; token: string; onOpenPost: (id: number, day: string | null) => void; onOpenFile: (id: string) => void }) {
   const api = useMemo(() => makeApi(token), [token]);
   const split = useContext(PaneCtx);
   const phone = useFold();
@@ -171,7 +172,7 @@ export function RoomReport({ room, token }: { room: Room; token: string }) {
           ) : (
             <ol aria-label="Báo cáo, mới nhất trước" className="divide-y">
               {reports.map((r) => (
-                <ReportRow key={r.key} r={r} now={now} token={token} posts={posts} onShow={setShown} />
+                <ReportRow key={r.key} r={r} now={now} token={token} api={api} posts={posts} onShow={setShown} onOpenPost={onOpenPost} onOpenFile={onOpenFile} />
               ))}
             </ol>
           )}
@@ -182,7 +183,25 @@ export function RoomReport({ room, token }: { room: Room; token: string }) {
   );
 }
 
-function ReportRow({ r, now, token, posts, onShow }: { r: Report<ArtifactView>; now: number; token: string; posts: Map<number, ContentRow>; onShow: (s: Shown) => void }) {
+function ReportRow({
+  r,
+  now,
+  token,
+  api,
+  posts,
+  onShow,
+  onOpenPost,
+  onOpenFile,
+}: {
+  r: Report<ArtifactView>;
+  now: number;
+  token: string;
+  api: Api;
+  posts: Map<number, ContentRow>;
+  onShow: (s: Shown) => void;
+  onOpenPost: (id: number, day: string | null) => void;
+  onOpenFile: (id: string) => void;
+}) {
   return (
     <li className="space-y-1.5 py-2.5">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
@@ -205,23 +224,34 @@ function ReportRow({ r, now, token, posts, onShow }: { r: Report<ArtifactView>; 
       </div>
       {r.note && <p className="text-xs whitespace-pre-line text-pretty text-foreground/90">{r.note}</p>}
       {r.content.length > 0 && (
-        <ul aria-label="Bài trong Nội dung" className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+        // Each post opens its sheet in Nội dung (owner 2026-11-05: "nút bấm sheet tự chạy vô").
+        <ul aria-label="Bài trong Nội dung" className="flex flex-wrap gap-x-1 gap-y-0.5 text-xs">
           {r.content.map((id) => {
             const it = posts.get(id);
+            if (!it)
+              // Not in the content book HQ reads (no DB, or the post left it): nothing to open.
+              return (
+                <li key={id} className="px-1 py-0.5 text-muted-foreground tabular-nums">
+                  #{id}
+                </li>
+              );
+            const at = whenOf(it);
             return (
-              <li key={id} className="flex min-w-0 items-center gap-1">
-                <span className="text-muted-foreground tabular-nums">#{id}</span>
-                {it ? (
-                  <>
-                    <span className="max-w-64 truncate" title={it.title}>
-                      {it.title}
-                    </span>
-                    <span className={cn("inline-flex items-center gap-0.5", STATUS_TONE[it.status])}>
-                      <StatusIcon status={it.status} />
-                      {STATUS_LABEL[it.status]}
-                    </span>
-                  </>
-                ) : null}
+              <li key={id} className="min-w-0">
+                <button
+                  type="button"
+                  onClick={() => onOpenPost(id, at != null ? dayKey(at) : null)}
+                  title={`Mở #${id} «${it.title}» trong Nội dung`}
+                  className={cn("flex max-w-full min-w-0 items-center gap-1 rounded-md px-1 py-0.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/60", TOUCH)}
+                >
+                  <span className="text-muted-foreground tabular-nums">#{id}</span>
+                  <span className="max-w-64 truncate underline decoration-border underline-offset-2">{it.title}</span>
+                  <span className={cn("inline-flex shrink-0 items-center gap-0.5", STATUS_TONE[it.status])}>
+                    <StatusIcon status={it.status} />
+                    {STATUS_LABEL[it.status]}
+                  </span>
+                  <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                </button>
               </li>
             );
           })}
@@ -239,8 +269,20 @@ function ReportRow({ r, now, token, posts, onShow }: { r: Report<ArtifactView>; 
           {r.files.map((a) => (
             <li key={a.id} className="flex min-w-0 items-center gap-1.5">
               <FileIcon aria-hidden className="size-3 shrink-0" />
-              <span className="truncate text-foreground">{baseName(a.path)}</span>
-              <span className="shrink-0">{a.missing ? "file đã mất" : `${KIND_LABEL[a.kind]}, xem ở tab Kết quả`}</span>
+              <span className="truncate text-foreground" title={a.path}>
+                {baseName(a.path)}
+              </span>
+              {a.missing ? (
+                <span className="shrink-0">file đã mất</span>
+              ) : (
+                <>
+                  <span className="shrink-0">{KIND_LABEL[a.kind]}</span>
+                  <Button type="button" size="xs" variant="outline" className={cn("shrink-0", TOUCH)} onClick={() => onOpenFile(a.id)} title="Mở file ở tab Kết quả">
+                    <EyeIcon aria-hidden /> Xem
+                  </Button>
+                </>
+              )}
+              <FolderButton path={a.path} id={a.missing ? undefined : a.id} api={api} className="shrink-0" />
             </li>
           ))}
         </ul>

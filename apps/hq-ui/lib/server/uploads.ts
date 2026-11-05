@@ -72,10 +72,14 @@ export function placeUploads(ids: string[], root: string, dir = uploadsDir()): s
   });
 }
 
-/** The task text with the attachment paths under it, one per line. */
+/**
+ * The task text with the attachment paths under it, one per line, in the order the owner added them;
+ * more than one file is numbered ("- 2. …") like the thumbnails in HQ, so "ảnh 2" means the same file to both.
+ */
 export function withFiles(text: string, paths: string[]): string {
   if (paths.length === 0) return text;
-  return `${text}\n\nFile đính kèm (mở bằng Read trước khi làm):\n${paths.map((p) => `- ${p}`).join("\n")}`;
+  const n = paths.length > 1;
+  return `${text}\n\nFile đính kèm (mở bằng Read trước khi làm):\n${paths.map((p, i) => `- ${n ? `${i + 1}. ` : ""}${p}`).join("\n")}`;
 }
 
 /**

@@ -37,6 +37,7 @@ import { usePoll } from "./use-poll";
 import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { PinnedAsks } from "./pinned-asks";
 import { rootKey } from "@/lib/preview";
+import { ARTIFACT_PARAM } from "@/lib/artifacts";
 import { MORE_LABEL, isMore, moreLabel, moreTabs } from "@/lib/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Session } from "./types";
@@ -251,6 +252,20 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     setRepo({ root, name });
     setTab("overview");
   };
+  /** Another tab, opened at one thing named in the URL (that tab reads it when it mounts). */
+  const openWith = (to: Tab, params: Record<string, string | null>) => {
+    const u = new URL(window.location.href);
+    for (const [k, v] of Object.entries(params)) {
+      if (v == null) u.searchParams.delete(k);
+      else u.searchParams.set(k, v);
+    }
+    window.history.replaceState(window.history.state, "", u);
+    setTab(to);
+  };
+  /** A post a room reported: its sheet in Nội dung (`?day=&item=`, ContentView). */
+  const openPost = (id: number, day: string | null) => openWith("content", { item: String(id), day });
+  /** A file a room reported: shown in Kết quả. */
+  const openArtifact = (id: string) => openWith("artifacts", { [ARTIFACT_PARAM]: id });
   const roomState = room ? roomNow(room, office.office?.at ?? 0) : null;
   const openTerminal = () => {
     const s = room ? hq.sessions.data.find((x) => x.name === room.name || (room.session_id != null && x.session_id === room.session_id)) : undefined;
@@ -531,7 +546,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   onStartSession={focusStartSession}
                   bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
                   split={room && roomState ? <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} /> : null}
-                  report={room ? <RoomReport key={room.key} room={room} token={token} /> : null}
+                  report={room ? <RoomReport key={room.key} room={room} token={token} onOpenPost={openPost} onOpenFile={openArtifact} /> : null}
                   header={
                     !(room && roomState) && loaded && !liveRooms.length ? (
                       <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />
@@ -554,7 +569,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <KnowView token={token} roots={knowRoots} repo={repo?.root ?? null} active={tab === "know"} />
             </TabsContent>
             <TabsContent value="content" className="h-full">
-              {contentOn && <ContentView token={token} active={tab === "content"} />}
+              {contentOn && <ContentView token={token} active={tab === "content"} onOpenFile={openArtifact} />}
             </TabsContent>
             <TabsContent value="artifacts" className="h-full">
               <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} rooms={officeRooms} onAsk={openRoom} />

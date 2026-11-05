@@ -1,12 +1,13 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-05: auto merge + auto release cho mọi vòng lặp, `/solo` + Critic tự trả lời khi owner im, HQ ghim câu hỏi + thẻ Solo, link HQ cố định (Cloudflare named tunnel), nhãn inbox ngắn, phòng xong việc hết "Đang làm", khung Báo cáo đăng bài dưới mỗi phòng.
+Owner 2026-11-05 (tối): báo cáo đăng bài nằm ở sheet ngày của tab Nội dung; nút từ Báo cáo phòng chạy thẳng vào sheet; file báo cáo có Xem + mở thư mục; panel "Thư mục" kiểu IDE trong phòng (xem, sửa, preview link); ảnh dán giữ đúng thứ tự.
 
 ## Checklist
-- [x] Nhánh agent: solo-auto-release, hq-inbox-tag, hq-named-tunnel, hq-solo, omp-turn-idle, hq-room-report
-- [x] Gộp vào `release/v0.124.0` (worktree `C:/Users/Projects/su-code-rel124`), cargo test + eccx-gen + vitest + next build
-- [ ] PR → CI → squash → tag v0.124.0 → release.yml → `8sync up` → kiểm HQ (không build đè bản đang chạy)
+- [x] v0.124.0 + v0.124.1 đã release (grant ship chỉ từ trang HQ của chủ)
+- [x] Thứ tự ảnh dán (`useAttach` slot theo lúc dán, `- 1. <path>`), báo cáo trong sheet ngày, nút `#id` → Nội dung, "Xem" → Kết quả, panel "Thư mục" + `/api/files`
+- [x] vitest + next build + smoke UI trên sandbox HQ :8751 (phòng thật qua JSON của HQ live, ghi file chỉ trong worktree)
+- [ ] v0.125.0: PR → CI → squash → tag → release.yml → `8sync up` → curl HQ local + public
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
 ## Goal: đa kênh cho tab Nội dung (phiên tu-session-marketing-phong-core)
@@ -19,7 +20,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.124.0 trong `C:/Users/Projects/su-code-rel124` (nhánh `release/v0.124.0`). HQ đang chạy bản cài sẵn (supervisor pid 56696, quick tunnel).
+v0.125.0 trong worktree `C:/Users/Projects/su-code-rsheet` (nhánh `feat/hq-report-sheet`). HQ đang chạy 0.124.1 (supervisor pid 56696, quick tunnel).
 
 ## Next
 - Đa kênh: đưa 0064 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; tới lúc đó HQ chạy như DB chưa có kênh.

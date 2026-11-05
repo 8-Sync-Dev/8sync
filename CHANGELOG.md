@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.125.0] — 2026-11-05
+
+### Added
+- HQ: nút **"Thư mục"** trong phòng (cạnh "Mở terminal") mở cây thư mục của repo: mở từng thư mục, lọc "Tìm file", ẩn `.git`/`node_modules`/`target`. Bấm file để xem: markdown (link mở tab mới, link tương đối mở file trong panel), code/text có số dòng và link bấm được, ảnh/video/audio/PDF, HTML trong khung sandbox kèm mã nguồn. Có nút chép đường dẫn, mở thư mục và tải về.
+- HQ: sửa file chữ dưới 1 MB ngay trong "Thư mục" (tab "Sửa", Ctrl/Cmd+S). File đổi trên máy trong lúc sửa thì báo "file vừa đổi trên máy, tải lại" và không ghi đè. Đóng khi chưa lưu thì hỏi lại. File CRLF vẫn giữ CRLF. API `/api/files` chỉ chủ HQ dùng được, chỉ trong dự án HQ biết (không `.git`, `.ssh`, `node_modules`, file bí mật, không đi theo link ra ngoài), không tạo/xoá/đổi tên file.
+- HQ, Nội dung: sheet của ngày hiện báo cáo ngay trên từng bài (nút "Mở trên Meta"/Facebook, tối đa 4 ảnh chứng minh bấm xem lớn) mà không phải mở từng bài.
+- HQ, Báo cáo của phòng: mỗi bài `#id` là một nút mở thẳng sheet của bài đó ở tab Nội dung (đúng ngày). File báo cáo có nút "Xem" (mở đúng file ở tab Kết quả) và nút thư mục. Ở "Kết quả" trong sheet của bài cũng vậy, thay cho dòng "xem ở tab Kết quả".
+
+### Fixed
+- HQ: ảnh/file dán hoặc chọn liên tiếp giữ đúng thứ tự anh thêm. Trước đây file nào tải lên xong trước thì đứng trước, nên ảnh nhỏ dán sau có thể nhảy lên đầu và câu hỏi đi kèm ảnh sai. Giờ mỗi file giữ chỗ ngay lúc dán (ô chờ có vòng xoay), có số 1, 2, 3… khi nhiều file. Tin gửi phòng ghi `- 1. <path>`, `- 2. <path>` theo đúng thứ tự đó (một file thì vẫn `- <path>`).
+
 ## [0.124.1] — 2026-11-05
 
 ### Security

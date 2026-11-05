@@ -178,4 +178,11 @@ describe("parseAttachments", () => {
     expect(parseAttachments(odd)).toEqual({ body: odd, files: [] });
     expect(parseAttachments(null).body).toBe("");
   });
+
+  it("several files reach the room numbered in the order added, and HQ reads the same order and paths back", () => {
+    const paths = ["c", "a", "b"].map((ch) => `/r/.claude/hq-uploads/${ch.repeat(32)}/image.png`);
+    const t = withFiles("ảnh 2 bị lệch", paths);
+    expect(t.split("\n").slice(-3)).toEqual(paths.map((p, i) => `- ${i + 1}. ${p}`));
+    expect(parseAttachments(t).files.map((f) => f.path)).toEqual(paths);
+  });
 });

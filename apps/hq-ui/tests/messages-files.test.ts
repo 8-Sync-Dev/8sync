@@ -57,8 +57,7 @@ describe("POST /api/messages with files", () => {
     expect(fs.readFileSync(path.join(shop, ".claude", "hq-uploads", ".gitignore"), "utf8")).toContain("*");
     const queued = JSON.parse(fs.readFileSync(inboxFile(SID), "utf8").trim().split("\n").pop()!).text as string;
     expect(queued).toContain("xem ảnh này");
-    expect(queued).toContain(`- ${placed(a.id, "shot.png")}`);
-    expect(queued).toContain(`- ${placed(b.id, "note.txt")}`);
+    expect(queued).toContain(`- 1. ${placed(a.id, "shot.png")}\n- 2. ${placed(b.id, "note.txt")}`);
   });
 
   it("terminal room in a sub folder: files go to its git root, typed text carries the paths", async () => {
