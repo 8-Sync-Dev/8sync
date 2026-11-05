@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- `8sync . [<name>] --mode <engine>` (cả `8sync . new <name>`): chọn engine mở phiên. `omp` (mặc định, như cũ), `claude-code-cli` (`claude`/`ccc`/`claude-code`) chạy y như `8sync ccc . <name>`, `forgecode` (`forge`) chạy y như `8sync forge <name>`, `codex-cli` (`codex`) báo "chưa hỗ trợ" kèm danh sách engine và thoát mã lỗi. Không có flag thì lấy từ env `SUSYNC_MODE`; `8sync . -h` liệt kê engine. `ls`/`mv`/`rm`/`merge` không đổi.
+
 ## [0.122.21] — 2026-11-05
 
 ### Changed
