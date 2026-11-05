@@ -63,7 +63,7 @@ NOTES = {"backend": "Rust (rust-*) sits here: the ECC web catalog has no Rust ca
 # skill fails the run until someone files it.
 BUNDLED_CATS = {
     "8sync-cli": ["core"], "ai-microservice-design": ["ai-agent", "backend"], "assp-skill": ["ads", "content"],
-    "aup-audit": ["security"], "autoresearch": ["research", "ai-agent"], "branch-sync": ["workflow"],
+    "autoresearch": ["research", "ai-agent"], "branch-sync": ["workflow"],
     "deep-research-web": ["research"], "encore-deploy": ["backend", "golang"], "encore-eino-go": ["backend", "golang"],
     "feature": ["workflow"], "full-flow": ["workflow"], "image-gen": ["ads", "game"], "image-routing": ["core"],
     "impeccable": ["frontend"], "karpathy-guidelines": ["core"], "last30days": ["research", "ads"],
@@ -77,7 +77,7 @@ BUNDLED_CATS = {
 }
 KIT_CATS = {  # Claude Code kit only
     "autopilot": ["workflow"], "clean": ["specialized"], "consolidate": ["core"], "do": ["workflow"],
-    "harden": ["security"], "planning": ["workflow"], "remember": ["core"], "rules": ["core", "security"],
+    "harden": ["security"], "planning": ["workflow"], "remember": ["core"], 
     "sec": ["security"], "ship": ["workflow"], "ship-auto": ["workflow"], "ship-loop": ["workflow"],
     "ship-tick": ["workflow"], "solo": ["workflow"], "sysdesign": ["backend", "workflow"], "ui-ux": ["frontend"],
 }
@@ -483,7 +483,7 @@ def loop_body(c):
             "   - **Stuck** (same digest twice, or the same check red after a fix): research before retrying (`/ship-tick` §3), "
             "then re-Select: add skipped members that fit the failure, `ecc:agent-introspection-debugging` when the loop itself "
             "misbehaves; record the change in `Members:`.\n"
-            "5. **Close** as `/ship-loop` D: all green → review + `8sync ccc risk` + skills `sec`, `rules`, `aup-audit` on the diff "
+            "5. **Close** as `/ship-loop` D: all green → review + `8sync ccc risk` + skill `sec` on the diff "
             "→ CHANGELOG + commit on the feature branch → Auto-ship, no Ship question: PR, CI green on Windows, macOS and Linux, "
             "squash-merge, then the repo's own release path (`Release: no` stops at merge; never on red CI), remove worktree + branch. "
             "Only irreversible, prod-data, billing, security-policy or prod-deploy choices go to the owner (ONE AskUserQuestion). "

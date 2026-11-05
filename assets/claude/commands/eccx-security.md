@@ -36,7 +36,6 @@ Scope: security review, scanning, hardening, compliance, crypto.
 - `ecc:nodejs-keccak256` — Prevent Ethereum hashing bugs in JavaScript and TypeScript
 - `ecc:perl-security` — Perl security patterns, taint checking, and input validation
 - `ecc:repo-scan` — Bootstrap pointer that installs the external repo-scan skill from a pinned, reviewable
-- `rules` — Luật Anthropic + quy tắc 8 Sync
 - `ecc:safety-guard` — Guard against destructive operations with three modes: Careful intercepts dangerous commands
 - `sec` — Quét bảo mật diff hoặc repo hiện tại
 - `ecc:security-bounty-hunter` — Hunt for exploitable, bounty-worthy security issues in repositories
