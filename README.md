@@ -61,7 +61,7 @@ Pick the engine with `--mode`; set `SUSYNC_MODE` to change your default.
 
 ## 8 Sync HQ
 
-`8sync hq ui` serves a local web dashboard on `127.0.0.1:8740`: which session is working and which waits on you, each room's log and chat, the reports sessions post, a web terminal, and the machine's RAM, CPU and GPU. `--public` prints a login link through a Cloudflare quick tunnel (needs `cloudflared`); anyone with the link controls your sessions, so keep it to yourself.
+`8sync hq ui` serves a local web dashboard on `127.0.0.1:8740`: which session is working and which waits on you, each room's log and chat, the reports sessions post, a web terminal, and the machine's RAM, CPU and GPU. `--public` prints a login link through a Cloudflare quick tunnel (needs `cloudflared`); anyone with the link controls your sessions, so keep it to yourself. For a fixed address on your own Cloudflare domain, run `8sync hq ui --tunnel-setup hq.example.com` once; `--public` then always uses `https://hq.example.com` (`--tunnel-off` goes back to the quick tunnel).
 
 | Office | A room's log |
 |---|---|

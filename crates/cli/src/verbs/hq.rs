@@ -120,12 +120,20 @@ pub enum Sub {
         /// install the UI asset for this binary version when missing, then exit (no server; `8sync up` runs this)
         #[arg(long)]
         install: bool,
-        /// also open a Cloudflare quick tunnel and print a one-time remote-control link (needs cloudflared)
+        /// also open a Cloudflare tunnel and print a one-time remote-control link (needs cloudflared): the
+        /// fixed hostname of `--tunnel-setup` when set, else a quick tunnel (new `*.trycloudflare.com` each run)
         #[arg(long)]
         public: bool,
         /// mint a fresh 10-minute login link for the running `--public` HQ (same host, old link stops working) and exit
         #[arg(long, conflicts_with_all = ["off", "install", "update", "public"])]
         relink: bool,
+        /// one-time: make the Cloudflare named tunnel `8sync-hq`, route HOSTNAME (a domain on your Cloudflare
+        /// account) to it and save it, so `--public` keeps `https://HOSTNAME`; opens the Cloudflare login when needed
+        #[arg(long, value_name = "HOSTNAME", conflicts_with_all = ["off", "install", "update", "public", "relink"])]
+        tunnel_setup: Option<String>,
+        /// forget the named tunnel: `--public` goes back to a quick tunnel (the Cloudflare tunnel and DNS record stay)
+        #[arg(long, conflicts_with_all = ["off", "install", "update", "public", "relink", "tunnel_setup"])]
+        tunnel_off: bool,
     },
     /// Delete the local HQ data: events*.jsonl, hq.db*, channel-*.json (asks with no --yes: only lists)
     Purge {
@@ -2202,7 +2210,12 @@ fn cmd_ui_relink() -> Result<()> {
     if public_file_stale(Some(&v), 0, crate::verbs::hq_core::sys::proc_start, ui_port_busy) {
         bail!("HQ `--public` ghi trong public.json đã tắt — mở lại bằng `8sync hq ui --public`");
     }
-    let host = v["host"].as_str().filter(|h| tunnel_host(&format!("https://{h}")).as_deref() == Some(*h)).ok_or_else(|| anyhow!("public.json không có host hợp lệ"))?.to_owned();
+    let named = load_named(&paths.cfg_dir.join(TUNNEL_FILE)).ok().flatten();
+    let host = v["host"]
+        .as_str()
+        .filter(|h| public_host_ok(h, named.as_ref().map(|n| n.hostname.as_str())))
+        .ok_or_else(|| anyhow!("public.json không có host hợp lệ (không phải quick tunnel, cũng không phải hostname của `--tunnel-setup`)"))?
+        .to_owned();
     let key = random_hex32()?;
     v["key"] = json!(key);
     v["since"] = json!(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
@@ -2356,38 +2369,338 @@ fn cloudflared_install_hint() -> &'static str {
     }
 }
 
-/// Start a quick tunnel to the local HQ, write `public.json` (with this launch's `nonce`) and print
-/// the link once. Ok(None) = no tunnel (cloudflared missing): the HQ keeps running locally.
+/// The Cloudflare named tunnel `--tunnel-setup` makes (one per machine).
+const NAMED_TUNNEL: &str = "8sync-hq";
+/// Under the HQ config dir: the saved named tunnel, its credentials (cloudflared writes them) and
+/// the cloudflared config of the running `--public` HQ.
+const TUNNEL_FILE: &str = "tunnel.json";
+const TUNNEL_CRED: &str = "tunnel-credentials.json";
+const TUNNEL_RUN_CFG: &str = "tunnel-run.yml";
+
+/// `tunnel.json`: the named tunnel `--public` runs instead of a quick tunnel, so the remote address
+/// stays `https://<hostname>` across restarts.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct NamedTunnel {
+    name: String,
+    id: String,
+    hostname: String,
+    credentials: PathBuf,
+}
+
+/// HOSTNAME of `--tunnel-setup`, lower-cased (an `https://` prefix and a trailing `/` dropped): a
+/// DNS name of at least two labels whose last label has a letter (no IP), never localhost or a
+/// quick-tunnel host.
+fn named_hostname(raw: &str) -> Result<String> {
+    let h = raw.trim();
+    let h = h.strip_prefix("https://").unwrap_or(h).trim_end_matches('/').to_ascii_lowercase();
+    let label_ok = |l: &str| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    let labels: Vec<&str> = h.split('.').collect();
+    let shape = h.len() <= 253 && labels.len() >= 2 && labels.iter().all(|l| label_ok(l)) && labels.last().is_some_and(|l| l.bytes().any(|b| b.is_ascii_lowercase()));
+    if !shape {
+        bail!("hostname không hợp lệ: {raw:?} — cần dạng hq.<domain-của-anh> (domain đã nằm trong tài khoản Cloudflare)");
+    }
+    if h == "trycloudflare.com" || h.ends_with(".trycloudflare.com") || h == "localhost" || h.ends_with(".localhost") {
+        bail!("{h} không dùng được cho named tunnel — cần một hostname trên domain của anh");
+    }
+    Ok(h)
+}
+
+/// A tunnel UUID as cloudflared prints it (8-4-4-4-12 hex).
+fn is_tunnel_id(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5 && parts.iter().zip([8, 4, 4, 4, 12]).all(|(p, n)| p.len() == n && p.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// `tunnel.json` at `file`: Ok(None) when there is none (quick tunnel), Err when it is unreadable or
+/// names a bad id/hostname.
+fn load_named(file: &Path) -> Result<Option<NamedTunnel>> {
+    let raw = match std::fs::read_to_string(file) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("đọc {}", file.display())),
+    };
+    let t: NamedTunnel = serde_json::from_str(&raw).with_context(|| format!("{} hỏng", file.display()))?;
+    if !is_tunnel_id(&t.id) || named_hostname(&t.hostname).ok().as_deref() != Some(t.hostname.as_str()) || t.credentials.as_os_str().is_empty() {
+        bail!("{} hỏng (id / hostname / credentials)", file.display());
+    }
+    Ok(Some(t))
+}
+
+/// The id of the live tunnel `name` in `cloudflared tunnel list --output json` (a set `deleted_at`
+/// is skipped); None for anything else (`null`, text, another name).
+fn listed_tunnel_id(out: &str, name: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(out.trim()).ok()?;
+    v.as_array()?
+        .iter()
+        .filter(|t| t["name"].as_str() == Some(name))
+        .filter(|t| t["deleted_at"].as_str().is_none_or(|d| d.is_empty() || d.starts_with("0001-")))
+        .find_map(|t| t["id"].as_str().filter(|id| is_tunnel_id(id)).map(str::to_owned))
+}
+
+/// The id `cloudflared tunnel create --output json` printed (`{"id": …}`), else the one in its log
+/// line `Created tunnel <name> with id <uuid>`.
+fn created_tunnel_id(out: &str) -> Option<String> {
+    let json = serde_json::from_str::<Value>(out.trim()).ok().and_then(|v| v["id"].as_str().map(str::to_owned));
+    json.or_else(|| out.split("with id ").nth(1).and_then(|r| r.split_whitespace().next()).map(|s| s.trim_end_matches('.').to_owned())).filter(|id| is_tunnel_id(id))
+}
+
+/// `TunnelID` of a cloudflared credentials file.
+fn cred_tunnel_id(raw: &str) -> Option<String> {
+    serde_json::from_str::<Value>(raw).ok()?["TunnelID"].as_str().map(str::to_owned)
+}
+
+/// The hostname `cloudflared tunnel route dns` says it routed: `Added CNAME <host> which will route
+/// to this tunnel …` or `<host> is already configured to route to your tunnel …`. None: neither.
+/// A cert of another zone makes it route `<host>.<that zone>`, which this exposes.
+fn routed_host(out: &str) -> Option<String> {
+    for l in out.lines() {
+        if let Some(r) = l.split("Added CNAME ").nth(1) {
+            return r.split_whitespace().next().map(|h| h.trim_end_matches('.').to_ascii_lowercase());
+        }
+        if let Some(i) = l.find(" is already configured to route to your tunnel") {
+            return l[..i].split_whitespace().last().map(|h| h.trim_end_matches('.').to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+/// cloudflared config of one `--public` run of the named tunnel: only `hostname` reaches the HQ on
+/// `port`, any other host gets 404; an explicit `--config` also keeps a `~/.cloudflared/config.yml`
+/// out of it.
+fn named_run_config(t: &NamedTunnel, port: u16) -> String {
+    let cred = t.credentials.display().to_string().replace('\'', "''");
+    format!(
+        "tunnel: {}\ncredentials-file: '{cred}'\ningress:\n  - hostname: {}\n    service: http://127.0.0.1:{port}\n  - service: http_status:404\n",
+        t.id, t.hostname
+    )
+}
+
+/// cloudflared's arguments for `--public` on `port`: a quick tunnel, or the named tunnel run with
+/// the config at `run_cfg` ([`named_run_config`]).
+fn tunnel_args(port: u16, named: Option<(&NamedTunnel, &Path)>) -> Vec<String> {
+    let mut a = vec!["tunnel".to_string(), "--no-autoupdate".to_string()];
+    match named {
+        None => a.extend(["--url".to_string(), format!("http://127.0.0.1:{port}")]),
+        Some((t, cfg)) => a.extend(["--config".to_string(), cfg.display().to_string(), "run".to_string(), t.id.clone()]),
+    }
+    a
+}
+
+/// A cloudflared log line saying the named tunnel reached the Cloudflare edge.
+fn named_ready(line: &str) -> bool {
+    line.contains("Registered tunnel connection")
+}
+
+/// A `public.json` host this machine's `--public` may have written: a quick-tunnel host
+/// ([`tunnel_host`], lookalikes refused) or exactly the configured named-tunnel hostname.
+fn public_host_ok(host: &str, named: Option<&str>) -> bool {
+    tunnel_host(&format!("https://{host}")).as_deref() == Some(host) || named == Some(host)
+}
+
+/// cloudflared's login cert: `TUNNEL_ORIGIN_CERT`, else `~/.cloudflared/cert.pem` (where
+/// `cloudflared tunnel login` writes it).
+fn origin_cert() -> Option<PathBuf> {
+    std::env::var_os("TUNNEL_ORIGIN_CERT").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".cloudflared").join("cert.pem")))
+}
+
+/// (success, stdout, stderr) of `cloudflared <args>`.
+fn cloudflared_out(bin: &Path, args: &[&str]) -> Result<(bool, String, String)> {
+    let o = Command::new(bin).args(args).stdin(Stdio::null()).output().with_context(|| format!("start {}", bin.display()))?;
+    Ok((o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned()))
+}
+
+/// The last `n` non-empty lines of `s`.
+fn tail_lines(s: &str, n: usize) -> String {
+    let v: Vec<&str> = s.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect();
+    v[v.len().saturating_sub(n)..].join("\n")
+}
+
+/// `8sync hq ui --tunnel-setup <hostname>`: the Cloudflare login when there is no cert, the tunnel
+/// `8sync-hq` (made once; its credentials fetched again when missing), the DNS route of `hostname`,
+/// then `tunnel.json`. Re-running is safe; another hostname re-routes and replaces the saved one.
+fn cmd_tunnel_setup(raw: &str, dry: bool) -> Result<()> {
+    let host = named_hostname(raw)?;
+    let paths = Paths::new()?;
+    let file = paths.cfg_dir.join(TUNNEL_FILE);
+    let cred = paths.cfg_dir.join(TUNNEL_CRED);
+    let cred_s = cred.display().to_string();
+    let bin = cloudflared_bin().ok_or_else(|| anyhow!("không tìm thấy cloudflared — cài: {}", cloudflared_install_hint()))?;
+    let cert = origin_cert().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
+    let cf = bin.display();
+    if dry {
+        if !cert.is_file() {
+            println!("{cf} tunnel login   # chưa có {}: mở trình duyệt đăng nhập Cloudflare, chọn domain của {host}", cert.display());
+        }
+        println!("{cf} tunnel list --output json --name {NAMED_TUNNEL}");
+        println!("{cf} tunnel create --output json --credentials-file {cred_s} {NAMED_TUNNEL}   # khi chưa có tunnel");
+        println!("{cf} tunnel token --cred-file {cred_s} <id>   # khi tunnel có rồi mà thiếu credentials");
+        println!("{cf} tunnel route dns <id> {host}");
+        println!("write {}", file.display());
+        return Ok(());
+    }
+    if !cert.is_file() {
+        ui::info(&format!("Chưa có cert Cloudflare ({}): mở trình duyệt đăng nhập Cloudflare — chọn domain chứa {host}. Xong thì lệnh tự chạy tiếp.", cert.display()));
+        let st = Command::new(&bin).args(["tunnel", "login"]).status().with_context(|| format!("start {cf}"))?;
+        if !st.success() || !cert.is_file() {
+            bail!("đăng nhập Cloudflare chưa xong (không thấy {}) — chạy lại `8sync hq ui --tunnel-setup {host}`", cert.display());
+        }
+    }
+    ui::ok(&format!("cert Cloudflare: {}", cert.display()));
+    let (ok, out, err) = cloudflared_out(&bin, &["tunnel", "list", "--output", "json", "--name", NAMED_TUNNEL])?;
+    if !ok {
+        bail!("`cloudflared tunnel list` lỗi:\n{}", tail_lines(&err, 5));
+    }
+    std::fs::create_dir_all(&paths.cfg_dir)?;
+    let id = match listed_tunnel_id(&out, NAMED_TUNNEL) {
+        Some(id) => {
+            ui::ok(&format!("tunnel {NAMED_TUNNEL} có sẵn: {id}"));
+            if std::fs::read_to_string(&cred).ok().and_then(|r| cred_tunnel_id(&r)).as_deref() != Some(id.as_str()) {
+                let (ok, _, err) = cloudflared_out(&bin, &["tunnel", "token", "--cred-file", &cred_s, &id])?;
+                if !ok || !cred.is_file() {
+                    bail!("không lấy được credentials của tunnel {NAMED_TUNNEL}:\n{}", tail_lines(&err, 5));
+                }
+                ui::ok(&format!("credentials: {cred_s}"));
+            }
+            id
+        }
+        None => {
+            let (ok, out, err) = cloudflared_out(&bin, &["tunnel", "create", "--output", "json", "--credentials-file", &cred_s, NAMED_TUNNEL])?;
+            match created_tunnel_id(&out).or_else(|| created_tunnel_id(&err)) {
+                Some(id) if ok && cred.is_file() => {
+                    ui::ok(&format!("đã tạo tunnel {NAMED_TUNNEL}: {id} (credentials: {cred_s})"));
+                    id
+                }
+                _ => bail!("`cloudflared tunnel create {NAMED_TUNNEL}` lỗi:\n{}", tail_lines(&format!("{out}\n{err}"), 5)),
+            }
+        }
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cred, std::fs::Permissions::from_mode(0o600))?;
+    }
+    let (ok, out, err) = cloudflared_out(&bin, &["tunnel", "route", "dns", &id, &host])?;
+    let said = format!("{out}\n{err}");
+    if !ok {
+        bail!(
+            "`cloudflared tunnel route dns` lỗi:\n{}\nNếu {host} đã có bản ghi DNS khác: xoá nó trong Cloudflare dashboard (DNS) rồi chạy lại, hoặc `cloudflared tunnel route dns --overwrite-dns {NAMED_TUNNEL} {host}`.",
+            tail_lines(&said, 5)
+        );
+    }
+    if let Some(h) = routed_host(&said).filter(|h| *h != host) {
+        bail!(
+            "Cloudflare định tuyến {h} chứ không phải {host}: cert {} thuộc domain khác. Xoá bản ghi {h} trong Cloudflare dashboard, xoá cert đó rồi chạy lại để đăng nhập và chọn đúng domain.",
+            cert.display()
+        );
+    }
+    ui::ok(&format!("DNS: {host} → tunnel {NAMED_TUNNEL}"));
+    let t = NamedTunnel { name: NAMED_TUNNEL.into(), id, hostname: host.clone(), credentials: cred };
+    write_private(&file, format!("{}\n", serde_json::to_string_pretty(&t)?).as_bytes())?;
+    ui::ok(&format!("đã lưu {}: `8sync hq ui --public` giờ dùng https://{host}", file.display()));
+    ui::info("HQ `--public` đang chạy vẫn giữ link cũ: tắt nó (Ctrl-C) rồi chạy lại `8sync hq ui --public`.");
+    ui::warn(&format!(
+        "https://{host} mở ra internet: link đăng nhập `?k=` (10 phút) + cookie HQ vẫn bắt buộc. Nên thêm Cloudflare Access (Zero Trust → Access → Applications → Self-hosted, hostname {host}, chỉ cho email của anh) làm lớp chặn thứ hai."
+    ));
+    Ok(())
+}
+
+/// `8sync hq ui --tunnel-off`: forget `tunnel.json` (next `--public` = quick tunnel). The tunnel on
+/// Cloudflare, its DNS record and the credentials file stay; prints how to delete them.
+fn cmd_tunnel_off() -> Result<()> {
+    let paths = Paths::new()?;
+    let file = paths.cfg_dir.join(TUNNEL_FILE);
+    let host = load_named(&file).ok().flatten().map(|t| t.hostname);
+    match std::fs::remove_file(&file) {
+        Ok(()) => ui::ok("đã bỏ named tunnel: `8sync hq ui --public` lần tới dùng quick tunnel (*.trycloudflare.com)"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            ui::info("chưa cài named tunnel nào — `--public` đang dùng quick tunnel");
+            return Ok(());
+        }
+        Err(e) => return Err(e).with_context(|| format!("xoá {}", file.display())),
+    }
+    let _ = std::fs::remove_file(paths.cfg_dir.join(TUNNEL_RUN_CFG));
+    ui::info("HQ `--public` đang chạy giữ named tunnel tới khi tắt.");
+    ui::info(&format!(
+        "Tunnel `{NAMED_TUNNEL}` trên Cloudflare{} vẫn còn. Xoá hẳn: `cloudflared tunnel cleanup {NAMED_TUNNEL}` rồi `cloudflared tunnel delete {NAMED_TUNNEL}`, xoá CNAME trong Cloudflare dashboard (DNS) và file {}.",
+        host.map(|h| format!(" và bản ghi DNS {h}")).unwrap_or_default(),
+        paths.cfg_dir.join(TUNNEL_CRED).display()
+    ));
+    Ok(())
+}
+
+/// Start the tunnel to the local HQ: the named tunnel of `tunnel.json` beside `file` when set (fixed
+/// host), else a quick tunnel; write `public.json` (with this launch's `nonce`) and print the link
+/// once. Ok(None) = no tunnel (cloudflared missing, named tunnel broken or not connected): the HQ
+/// keeps running locally.
 fn start_public(port: u16, file: &Path, nonce: &str) -> Result<Option<std::process::Child>> {
     let Some(bin) = cloudflared_bin() else {
         ui::warn(&format!("không tìm thấy cloudflared — HQ chỉ chạy trên máy này. Cài: {}", cloudflared_install_hint()));
         return Ok(None);
     };
+    let dir = file.parent().ok_or_else(|| anyhow!("no parent dir"))?;
+    let named = match load_named(&dir.join(TUNNEL_FILE)) {
+        Ok(n) => n,
+        Err(e) => {
+            ui::warn(&format!("{e:#} — HQ chỉ chạy trên máy này. Sửa: `8sync hq ui --tunnel-setup <hostname>`, hoặc `--tunnel-off` để về quick tunnel"));
+            return Ok(None);
+        }
+    };
+    let run_cfg = dir.join(TUNNEL_RUN_CFG);
+    if let Some(t) = &named {
+        if !t.credentials.is_file() {
+            ui::warn(&format!("named tunnel {}: thiếu credentials {} — HQ chỉ chạy trên máy này. Chạy lại `8sync hq ui --tunnel-setup {}`", t.hostname, t.credentials.display(), t.hostname));
+            return Ok(None);
+        }
+        write_private(&run_cfg, named_run_config(t, port).as_bytes())?;
+    }
     let mut tun = Command::new(&bin)
-        .args(["tunnel", "--no-autoupdate", "--url", &format!("http://127.0.0.1:{port}")])
+        .args(tunnel_args(port, named.as_ref().map(|t| (t, run_cfg.as_path()))))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("start {}", bin.display()))?;
     let err = tun.stderr.take().ok_or_else(|| anyhow!("cloudflared stderr"))?;
-    let (tx, rx) = std::sync::mpsc::channel();
+    let fixed = named.as_ref().map(|t| t.hostname.clone());
+    let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<String, String>>();
     std::thread::spawn(move || {
         use std::io::BufRead;
         let mut tx = Some(tx);
+        let mut last_err = None;
         // keep draining after the host is found so the pipe never fills
         for line in std::io::BufReader::new(err).split(b'\n').map_while(|l| l.ok()) {
-            if let Some(h) = tx.as_ref().and_then(|_| tunnel_host(&String::from_utf8_lossy(&line))) {
-                let _ = tx.take().map(|t| t.send(h));
+            if tx.is_none() {
+                continue;
             }
+            let l = String::from_utf8_lossy(&line);
+            let host = match &fixed {
+                Some(h) => named_ready(&l).then(|| h.clone()),
+                None => tunnel_host(&l),
+            };
+            match host {
+                Some(h) => {
+                    let _ = tx.take().map(|t| t.send(Ok(h)));
+                }
+                None if l.contains(" ERR ") => last_err = Some(l.trim().chars().take(300).collect::<String>()),
+                None => {}
+            }
+        }
+        if let (Some(t), Some(e)) = (tx, last_err) {
+            let _ = t.send(Err(e));
         }
     });
     let host = match rx.recv_timeout(Duration::from_secs(45)) {
-        Ok(h) => h,
-        Err(_) => {
+        Ok(Ok(h)) => h,
+        other => {
             let _ = tun.kill();
             let _ = tun.wait();
-            ui::warn("cloudflared không trả về link trong 45 giây — HQ chỉ chạy trên máy này.");
+            let why = match other {
+                Ok(Err(e)) => format!("cloudflared dừng: {e}"),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => "cloudflared dừng trước khi mở được link".into(),
+                _ => "cloudflared không trả về link trong 45 giây".into(),
+            };
+            let hint = if named.is_some() { format!(" Kiểm tra: `cloudflared tunnel info {NAMED_TUNNEL}`.") } else { String::new() };
+            ui::warn(&format!("{why} — HQ chỉ chạy trên máy này.{hint}"));
             return Ok(None);
         }
     };
@@ -2408,7 +2721,11 @@ fn start_public(port: u16, file: &Path, nonce: &str) -> Result<Option<std::proce
         return Err(e);
     }
     println!("Link điều khiển từ xa: https://{host}/api/login?k={key}");
-    ui::warn("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới cùng địa chỉ: `8sync hq ui --relink`. Địa chỉ giữ nguyên qua `8sync up`, chết khi tắt `8sync hq ui`; quick tunnel của Cloudflare không có SLA.");
+    if named.is_some() {
+        ui::warn(&format!("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới: `8sync hq ui --relink`. Địa chỉ cố định https://{host} (named tunnel {NAMED_TUNNEL}), giữ qua `8sync up` và các lần bật lại; khoá HQ + cookie vẫn bắt buộc — nên bật thêm Cloudflare Access cho {host}."));
+    } else {
+        ui::warn("Ai có link này là điều khiển được các phòng trên máy này — không chia sẻ. Link đăng nhập dùng trong 10 phút (thiết bị đã vào giữ 12 giờ); cần link mới cùng địa chỉ: `8sync hq ui --relink`. Địa chỉ giữ nguyên qua `8sync up`, chết khi tắt `8sync hq ui`; quick tunnel của Cloudflare không có SLA. Muốn địa chỉ cố định: `8sync hq ui --tunnel-setup hq.<domain>`.");
+    }
     Ok(Some(tun))
 }
 
@@ -2621,6 +2938,13 @@ fn cmd_ui(port: u16, app: Option<PathBuf>, no_open: bool, update: bool, install_
             println!("write {}", paths.cfg_dir.join("channel-mcp.json").display());
         }
         println!("set local = true in {}\nHOSTNAME=127.0.0.1 PORT={port} {prog} {}\nopen {url}{}", paths.config().display(), args.join(" "), if no_open { " (skipped)" } else { "" });
+        if public {
+            let run_cfg = paths.cfg_dir.join(TUNNEL_RUN_CFG);
+            match load_named(&paths.cfg_dir.join(TUNNEL_FILE)) {
+                Ok(n) => println!("cloudflared {}{}", tunnel_args(port, n.as_ref().map(|t| (t, run_cfg.as_path()))).join(" "), n.map(|t| format!("   # named tunnel → https://{}", t.hostname)).unwrap_or_else(|| "   # quick tunnel".into())),
+                Err(e) => println!("# {e:#}: no tunnel"),
+            }
+        }
         return Ok(());
     }
     // Only the run that really starts the server drops a previous link (`--install` and a second
@@ -2958,6 +3282,8 @@ pub fn run(a: Args) -> Result<()> {
         }
         Sub::Ui { off: true, .. } => cmd_ui_off(),
         Sub::Ui { relink: true, .. } => cmd_ui_relink(),
+        Sub::Ui { tunnel_setup: Some(host), .. } => cmd_tunnel_setup(&host, dry),
+        Sub::Ui { tunnel_off: true, .. } => cmd_tunnel_off(),
         Sub::Ui { port, app, no_open, off: false, update, install, public, .. } => cmd_ui(port, app, no_open, update, install, dry, public),
         Sub::Purge { yes } => cmd_purge(yes),
         Sub::Status => cmd_status(),
@@ -3042,6 +3368,99 @@ mod tests {
         );
         let n = random_hex32().unwrap();
         assert!(n.len() == 64 && n.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && n != random_hex32().unwrap());
+    }
+
+    const TID: &str = "6ff42ae2-765d-4adf-8112-31c55c1551ef";
+
+    fn named_t(host: &str) -> NamedTunnel {
+        NamedTunnel { name: NAMED_TUNNEL.into(), id: TID.into(), hostname: host.into(), credentials: PathBuf::from(r"C:\Users\it's\.config\8sync\hq\tunnel-credentials.json") }
+    }
+
+    #[test]
+    fn named_hostname_accepts_owner_domains_only() {
+        assert_eq!(named_hostname("hq.example.com").unwrap(), "hq.example.com");
+        assert_eq!(named_hostname(" https://HQ.Example.com/ ").unwrap(), "hq.example.com");
+        assert_eq!(named_hostname("a-1.b.example.vn").unwrap(), "a-1.b.example.vn");
+        for bad in ["", "example", "hq..example.com", "-hq.example.com", "hq-.example.com", "hq.example.com:443", "hq.example.com/x", "http://hq.example.com", "1.2.3.4", "hq.example.123", "hq_x.example.com", "hà.example.com", "abc.trycloudflare.com", "trycloudflare.com", "localhost", "x.localhost", &format!("{}.com", "a".repeat(64))] {
+            assert!(named_hostname(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn named_tunnel_file_round_trip_and_rejects() {
+        let d = tmp("named");
+        let f = d.join(TUNNEL_FILE);
+        assert!(load_named(&f).unwrap().is_none(), "no file = quick tunnel");
+        let t = named_t("hq.example.com");
+        write_private(&f, serde_json::to_string_pretty(&t).unwrap().as_bytes()).unwrap();
+        assert_eq!(load_named(&f).unwrap(), Some(t.clone()));
+        for bad in [
+            json!({"name": NAMED_TUNNEL, "id": "nope", "hostname": "hq.example.com", "credentials": "c.json"}),
+            json!({"name": NAMED_TUNNEL, "id": TID, "hostname": "evil.trycloudflare.com", "credentials": "c.json"}),
+            json!({"name": NAMED_TUNNEL, "id": TID, "hostname": "HQ.example.com", "credentials": "c.json"}),
+            json!({"name": NAMED_TUNNEL, "id": TID, "hostname": "hq.example.com", "credentials": ""}),
+            json!({"name": NAMED_TUNNEL, "id": TID}),
+        ] {
+            std::fs::write(&f, bad.to_string()).unwrap();
+            assert!(load_named(&f).is_err(), "{bad}");
+        }
+        std::fs::write(&f, "{not json").unwrap();
+        assert!(load_named(&f).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn cloudflared_outputs_parse() {
+        assert!(is_tunnel_id(TID) && !is_tunnel_id("6ff42ae2-765d-4adf-8112-31c55c1551e") && !is_tunnel_id("zff42ae2-765d-4adf-8112-31c55c1551ef"));
+        let list = format!(
+            r#"[{{"id":"11111111-2222-3333-4444-555555555555","name":"other","created_at":"2026-11-01T00:00:00Z","deleted_at":"0001-01-01T00:00:00Z","connections":[]}},
+               {{"id":"aaaaaaaa-2222-3333-4444-555555555555","name":"{NAMED_TUNNEL}","created_at":"2026-10-01T00:00:00Z","deleted_at":"2026-10-02T00:00:00Z","connections":[]}},
+               {{"id":"{TID}","name":"{NAMED_TUNNEL}","created_at":"2026-11-05T00:00:00Z","deleted_at":"0001-01-01T00:00:00Z","connections":[]}}]"#
+        );
+        assert_eq!(listed_tunnel_id(&list, NAMED_TUNNEL).as_deref(), Some(TID), "deleted and other names skipped");
+        assert_eq!(listed_tunnel_id(&format!(r#"[{{"id":"{TID}","name":"{NAMED_TUNNEL}"}}]"#), NAMED_TUNNEL).as_deref(), Some(TID));
+        for none in ["null", "[]", "", "No tunnels were found for the given filter flags", r#"[{"id":"x","name":"8sync-hq"}]"#] {
+            assert_eq!(listed_tunnel_id(none, NAMED_TUNNEL), None, "{none:?}");
+        }
+        assert_eq!(created_tunnel_id(&format!(r#"{{"id":"{TID}","name":"{NAMED_TUNNEL}","created_at":"2026-11-05T00:00:00Z","connections":[]}}"#)).as_deref(), Some(TID));
+        let log = format!("2026-11-05T12:00:00Z INF Tunnel credentials written to C:\\x\\tunnel-credentials.json.\nCreated tunnel {NAMED_TUNNEL} with id {TID}\n");
+        assert_eq!(created_tunnel_id(&log).as_deref(), Some(TID));
+        assert_eq!(created_tunnel_id("failed to create tunnel: tunnel with name already exists"), None);
+        assert_eq!(cred_tunnel_id(&format!(r#"{{"AccountTag":"a","TunnelSecret":"s","TunnelID":"{TID}"}}"#)).as_deref(), Some(TID));
+        assert_eq!(cred_tunnel_id("{}"), None);
+        let added = format!("2026-11-05T12:00:01Z INF Added CNAME hq.example.com which will route to this tunnel tunnelID={TID}");
+        assert_eq!(routed_host(&added).as_deref(), Some("hq.example.com"));
+        let again = format!("2026-11-05T12:00:01Z INF hq.example.com is already configured to route to your tunnel tunnelID={TID}");
+        assert_eq!(routed_host(&again).as_deref(), Some("hq.example.com"));
+        // a cert of another zone: cloudflared appends that zone
+        assert_eq!(routed_host("INF Added CNAME hq.example.com.other.net which will route to this tunnel").as_deref(), Some("hq.example.com.other.net"));
+        assert_eq!(routed_host("ERR failed to add route: code: 1003"), None);
+        assert_eq!(tail_lines("a\n\nb\nc\n  \n", 2), "b\nc");
+    }
+
+    #[test]
+    fn tunnel_command_and_run_config() {
+        assert_eq!(tunnel_args(8740, None), ["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8740"], "quick tunnel unchanged");
+        let t = named_t("hq.example.com");
+        let cfg = Path::new("/home/a/.config/8sync/hq/tunnel-run.yml");
+        assert_eq!(tunnel_args(8792, Some((&t, cfg))), ["tunnel", "--no-autoupdate", "--config", "/home/a/.config/8sync/hq/tunnel-run.yml", "run", TID]);
+        let y = named_run_config(&t, 8792);
+        assert_eq!(
+            y,
+            format!("tunnel: {TID}\ncredentials-file: 'C:\\Users\\it''s\\.config\\8sync\\hq\\tunnel-credentials.json'\ningress:\n  - hostname: hq.example.com\n    service: http://127.0.0.1:8792\n  - service: http_status:404\n")
+        );
+        assert!(named_ready("2026-11-05T12:00:03Z INF Registered tunnel connection connIndex=0 connection=abc event=0 ip=198.41.200.13 location=sin01 protocol=quic"));
+        assert!(!named_ready("2026-11-05T12:00:03Z INF Starting tunnel tunnelID=6ff42ae2"));
+    }
+
+    #[test]
+    fn public_host_is_a_quick_host_or_exactly_the_named_one() {
+        assert!(public_host_ok("calm-river-42.trycloudflare.com", None));
+        assert!(public_host_ok("calm-river-42.trycloudflare.com", Some("hq.example.com")), "a quick HQ started before the setup");
+        assert!(public_host_ok("hq.example.com", Some("hq.example.com")));
+        for (h, n) in [("hq.example.com", None), ("hq.example.com.evil.io", Some("hq.example.com")), ("evil.hq.example.com", Some("hq.example.com")), ("a.trycloudflare.com.evil.io", Some("hq.example.com")), ("HQ.example.com", Some("hq.example.com"))] {
+            assert!(!public_host_ok(h, n), "{h} {n:?}");
+        }
     }
 
     fn tmp(tag: &str) -> PathBuf {
