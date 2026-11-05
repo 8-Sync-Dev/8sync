@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 import { GET as metricsGet, POST as metricsPost } from "@/app/api/content/metrics/route";
 import { totalsByPlatform, shortNumber, type MetricRow } from "@/lib/content-metrics";
@@ -113,6 +114,29 @@ describe("end-of-day digest", () => {
     expect(row).toContain("(approved, p q): x 0. Trước tiên chạy lệnh khác — chưa có link bài");
     expect(text).not.toContain("javascript:");
     expect(text.split("\n").filter((l) => l.includes("Trước tiên"))).toHaveLength(1);
+  });
+
+  it("finds a day's posts in the content book however long ago they were last edited", async () => {
+    const file = path.join(repo, "content.db");
+    const book = new DatabaseSync(file);
+    book.exec(`CREATE TABLE content_items (id INTEGER PRIMARY KEY, format TEXT, title TEXT, status TEXT, fb_page TEXT, fb_post_url TEXT,
+      updated_at INTEGER, scheduled_at INTEGER, assignee_session TEXT, assignee_base TEXT, assigned_at INTEGER)`);
+    const ins = book.prepare("INSERT INTO content_items (id, format, title, status, fb_page, updated_at, scheduled_at) VALUES (?, 'clip', ?, 'approved', '8syncdev', ?, ?)");
+    ins.run(1, "bài cũ sửa", 1, at("2026-11-05T11:30:00"));
+    // 600 newer edits, none scheduled: the page list (newest 500 edits) would no longer hold #1.
+    for (let i = 2; i <= 601; i++) ins.run(i, `nháp ${i}`, 1_000 + i, null);
+    book.close();
+    process.env.EIGHTSYNC_CONTENT_DB = file;
+    try {
+      const db = getDb();
+      db.exec("DELETE FROM content_digest");
+      const sent = await digestTick(db, at("2026-11-05T20:30:00"), { cfg, floor: floor([{ name: "core", inbox_id: OTHER, repo }]) });
+      expect(sent).toEqual({ sent: "2026-11-05", session: OTHER });
+      const text = (JSON.parse(fs.readFileSync(inboxFile(OTHER), "utf8").trim().split("\n").at(-1)!) as { text: string }).text;
+      expect(text).toContain("#1 11:30");
+    } finally {
+      delete process.env.EIGHTSYNC_CONTENT_DB;
+    }
   });
 
   it("reads its settings from content.json and falls back on bad values", () => {
