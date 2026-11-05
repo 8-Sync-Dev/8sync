@@ -31,7 +31,7 @@ mod fence;
 mod gate;
 mod grant;
 mod guard;
-mod help;
+pub(crate) mod help;
 mod hint;
 mod looper;
 mod know;
@@ -50,6 +50,7 @@ mod room;
 mod statusline;
 mod urgent;
 mod goal;
+mod trail_hint;
 mod verify;
 
 #[derive(ClapArgs, Debug)]
@@ -754,7 +755,7 @@ const CLAUDE_MD_END: &str = "<!-- 8sync:kit:end -->";
 /// file and writing a real secret anywhere (see RETIRED_DENY).
 /// The HQ owner files (UI token, public-link key, Discord secrets, usage snapshots, permit
 /// answers, inbox) back the guard's Bash/Write check for the Read tool, which the guard does not see.
-const DENY: [&str; 22] = [
+const DENY: [&str; 23] = [
     "Read(**/.env)",
     "Read(**/.env.*)",
     "Read(**/*.pem)",
@@ -770,6 +771,7 @@ const DENY: [&str; 22] = [
     "Bash(git push * --force*)",
     "Bash(git push * -f*)",
     "Read(~/.config/8sync/hq/ui-token)",
+    "Read(~/.config/8sync/web-token)",
     "Read(~/.config/8sync/hq/public.json)",
     "Edit(~/.config/8sync/hq/public.json)",
     "Read(~/.config/8sync/hq/secrets.json)",
@@ -1214,6 +1216,12 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
                 "onFailure": "block"
             }]
         }),
+    );
+    // Repo with a trail index → one cheap "use trail first" note per session (never blocks).
+    upsert_hook_group(
+        hooks,
+        "PreToolUse",
+        json!({ "matcher": "Grep|Glob", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "trail-hint"], "timeout": 5 }] }),
     );
     // Watchdog alerts -> additionalContext (shape per https://code.claude.com/docs/en/hooks:
     // `hookSpecificOutput.{hookEventName, additionalContext}`). Synchronous: it must land before the
@@ -2004,12 +2012,16 @@ fn hook(rest: &[String]) -> Result<()> {
             let state = ecc_pick::state_dir(home.as_deref());
             ecc_pick::claude_dir().zip(state).and_then(|(claude, state)| ecc_pick::run(&input, &claude, checkout.as_deref(), &state, now))
         }
+        Some("trail-hint") => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            trail_hint::state_dir(dirs::home_dir().as_deref()).and_then(|state| trail_hint::run(&input, &state, now))
+        }
         Some("session-start") => {
             let home = std::env::var_os("HOME").map(PathBuf::from);
             session_start_output(&input, home.as_deref())
         }
 
-        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ecc-pick|ship-grant   (run by the kit's Claude Code hooks)"),
+        _ => bail!("usage: 8sync ccc hook verify|verify-stop|guard|trail-hint|watchdog|session-start|stop-failure|resume-note|ecc-pick|ship-grant   (run by the kit's Claude Code hooks)"),
     };
     if let Some(out) = out {
         println!("{out}");
@@ -2277,7 +2289,8 @@ mod tests {
         assert!(allow.iter().any(|r| r == "EnterWorktree"), "rooms open a card worktree without stopping on a prompt");
         assert!(!allow.iter().any(|r| r.as_str().is_some_and(|s| s.contains("git push"))), "pushes stay reviewed");
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(pre.len(), 3, "ask gate replaced in place, user hook kept, guard appended");
+        assert_eq!(pre.len(), 4, "ask gate replaced in place, user hook kept, guard + trail-hint appended");
+        assert_eq!(pre.iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "trail-hint"])).count(), 1);
         assert_eq!(pre[0]["hooks"][0]["prompt"], format!("{ASK_GATE}{ASK_POLICY}"));
         // Claude Code echoes the whole prompt in the hook-error line when the gate denies
         // (owner 2026-10-16: "chữ vỡ"); keep it short enough to read in a terminal.
@@ -2294,6 +2307,18 @@ mod tests {
         assert!(deny.iter().any(|r| r == "Read(**/.env)") && !deny.iter().any(|r| r.as_str().is_some_and(|s| s.starts_with("Write(") || s.starts_with("Edit(**/.env"))));
         assert_eq!(v["permissions"]["defaultMode"], "auto");
         assert_eq!(v["permissions"]["disableBypassPermissionsMode"], "disable", "a launcher's bypass flag must not win");
+    }
+
+    #[test]
+    fn kit_upgrade_narrows_the_trail_hint_group_in_place() {
+        // An earlier kit registered trail-hint on Bash too; upgrading must replace that group, not add one.
+        let old = json!({ "matcher": "Grep|Glob|Bash", "hooks": [{ "type": "command", "command": "/old/8sync", "args": ["ccc", "hook", "trail-hint"], "timeout": 5 }] });
+        let mut v = json!({ "hooks": { "PreToolUse": [old] } });
+        apply_kit_settings(&mut v, "/new/8sync", &[]).unwrap();
+        let hint: Vec<&Value> = v["hooks"]["PreToolUse"].as_array().unwrap().iter().filter(|g| g["hooks"][0]["args"] == json!(["ccc", "hook", "trail-hint"])).collect();
+        assert_eq!(hint.len(), 1);
+        assert_eq!(hint[0]["matcher"], "Grep|Glob");
+        assert_eq!(hint[0]["hooks"][0]["command"], "/new/8sync");
     }
 
     #[test]

@@ -9,7 +9,10 @@ import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ErrorNote } from "./bits";
+import { CopyButton } from "./copy-button";
+import { FolderButton } from "./folder-button";
 import { RoomOutputs, useRoomLog } from "./room-outputs";
+import { SelectionAsk } from "./selection-ask";
 
 /** A line longer than this folds; the rest opens on demand. */
 const FOLD = 140;
@@ -107,6 +110,7 @@ export function LogLines({ events, now, fill }: { events: ActivityEvent[]; now: 
     );
   }
   return (
+    <SelectionAsk fallbackRef="Nhật ký phòng" className={cn(fill && "md:flex md:min-h-0 md:flex-1 md:flex-col")}>
     <ol
       ref={box}
       tabIndex={0}
@@ -124,6 +128,7 @@ export function LogLines({ events, now, fill }: { events: ActivityEvent[]; now: 
         <LogLine key={`${ev.at ?? 0}-${i}`} ev={ev} now={now} />
       ))}
     </ol>
+    </SelectionAsk>
   );
 }
 
@@ -131,8 +136,9 @@ export function LogLines({ events, now, fill }: { events: ActivityEvent[]; now: 
 const CLAMP_CHARS = 600;
 const CLAMP_LINES = 8;
 
-/** A reply or prompt in full, rendered as markdown; a long one opens clamped. `files`: a prompt's attachments, by name. */
+/** A reply or prompt in full, rendered as markdown; a long one opens clamped. `files`: a prompt's attachments, by name, each with its folder. */
 function LogProse({ text, files, className }: { text: string; files: Attachment[]; className?: string }) {
+  const ctx = useRoomLog();
   const long = text.length > CLAMP_CHARS || text.split("\n").length > CLAMP_LINES;
   const [open, setOpen] = useState(false);
   const clamped = long && !open;
@@ -153,7 +159,7 @@ function LogProse({ text, files, className }: { text: string; files: Attachment[
         <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground" aria-label="File đính kèm">
           {files.map((f) => (
             <li key={f.id} className="inline-flex min-w-0 items-center gap-1" title={f.path}>
-              <PaperclipIcon aria-hidden className="size-3 shrink-0" />
+              {ctx ? <FolderButton path={f.path} api={ctx.api} className="-my-1 size-6" /> : <PaperclipIcon aria-hidden className="size-3 shrink-0" />}
               <span className="max-w-56 truncate">{f.name}</span>
             </li>
           ))}
@@ -195,12 +201,15 @@ function LogLine({ ev, now }: { ev: ActivityEvent; now: number }) {
     // A prompt sent with files carries their paths (lib/attachments.ts): markdown would eat the `\` before `.claude`.
     const { body, files } = ev.kind === "prompt" ? parseAttachments(ev.text) : { body: ev.text, files: [] };
     return (
-      <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")}>
+      <li className={cn("px-3 py-1.5", ev.kind === "prompt" && "bg-owner/60")} data-ask-ref={ev.at ? `${KIND_VI[ev.kind]} lúc ${new Date(ev.at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}` : KIND_VI[ev.kind]}>
         <div className="flex items-start gap-2">
           {icon}
           {label}
           <LogProse text={body} files={files} className={ink} />
-          {time}
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            {ev.kind === "text" && <CopyButton value={body} label="Chép câu trả lời" className="-my-1 text-muted-foreground" />}
+            {time}
+          </div>
         </div>
       </li>
     );

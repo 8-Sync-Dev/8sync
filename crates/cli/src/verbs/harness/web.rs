@@ -1,6 +1,9 @@
 //! `8sync harness web` — local dashboard. axum serves the embedded Vite FE
 //! (web/dist via rust-embed) + a JSON API over the harness state. Bound to
-//! 127.0.0.1 only (single-user local tool). The API reuses the same data fns
+//! 127.0.0.1 only (single-user local tool). Every request passes [`guard`]:
+//! Host must be this loopback port (blocks DNS rebinding), writes need a
+//! same-host or absent Origin, and `/api/*` needs the per-launch token, which the
+//! FE gets by trading the launch URL's one-time nonce at `/api/session`. The API reuses the same data fns
 //! as the CLI (`bench_metrics`, `eval_project_data`) and the skill registry
 //! helpers (`discover::read_registry`/`write_registry`).
 use std::net::SocketAddr;
@@ -8,8 +11,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query, State},
-    http::{header, StatusCode, Uri},
+    extract::{Path, Query, Request, State},
+    http::{header, Method, StatusCode, Uri},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -18,25 +22,72 @@ use serde::Deserialize;
 
 use crate::{assets, ui, verbs::skill::discover::{self, detect_current_project_root}};
 
-#[derive(Clone)]
 struct Ctx {
     home: std::path::PathBuf,
+    port: u16,
+    /// The API token and the launch nonce, under one lock so a rotation is atomic.
+    auth: std::sync::Mutex<Auth>,
 }
+
+struct Auth {
+    /// Random per launch; `/api/*` requires it (`x-8sync-token`). Never on a command line or
+    /// in a page: the FE gets it from [`api_session`]. Rotated when a spent nonce comes back.
+    token: String,
+    /// The launch URL's one-time nonce ([`redeem`]).
+    launch: Option<Launch>,
+}
+
+struct Launch {
+    nonce: String,
+    minted: std::time::Instant,
+    /// Kept after use (until [`NONCE_TTL`] + [`SPENT_KEEP`]) so a replay is recognised.
+    spent: bool,
+}
+
+impl Ctx {
+    fn auth(&self) -> std::sync::MutexGuard<'_, Auth> {
+        self.auth.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Header the FE sends the per-launch token in.
+const TOKEN_HEADER: &str = "x-8sync-token";
+/// Where the FE trades the launch nonce for the token (no token needed, same-origin POST only).
+const SESSION_PATH: &str = "/api/session";
+/// How long the launch nonce stays redeemable.
+const NONCE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long a spent nonce is remembered past its TTL, to catch a replay of the launch link.
+const SPENT_KEEP: std::time::Duration = std::time::Duration::from_secs(600);
 
 const MEMORY_ALLOWLIST: &[&str] = &["STATE", "KNOWLEDGE", "PLAYBOOKS", "DECISIONS", "PROJECT", "NOTES"];
 
+fn random_hex() -> Result<String> {
+    let mut raw = [0u8; 16];
+    getrandom::getrandom(&mut raw).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
+    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 pub(crate) fn harness_web(home: &std::path::Path, port: u16, no_open: bool) -> Result<()> {
-    let ctx = Arc::new(Ctx { home: home.to_path_buf() });
+    let token = random_hex()?;
+    let nonce = random_hex()?;
+    // For the Vite dev proxy (web/vite.config.ts), which has no launch URL to read it from.
+    let token_file = crate::brand::config_dir(home).join("web-token");
+    if let Err(e) = write_private(&token_file, &token) {
+        ui::warn(&format!("could not write {} ({e}); the Vite dev proxy will get 401s", token_file.display()));
+    }
+    let launch = Launch { nonce: nonce.clone(), minted: std::time::Instant::now(), spent: false };
+    let ctx = Arc::new(Ctx { home: home.to_path_buf(), port, auth: std::sync::Mutex::new(Auth { token, launch: Some(launch) }) });
     apply_active_project(home); // honor last-activated project across restarts
-    let app = api_routes()
-        .merge(Router::new().fallback(static_handler))
-        .with_state(ctx);
+    let app = app(ctx);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     ui::ok(&format!("8sync harness web → http://127.0.0.1:{}  (Ctrl+C to stop)", port));
-    if !no_open {
-        let _ = std::process::Command::new("xdg-open")
-            .arg(format!("http://127.0.0.1:{}", port))
-            .spawn();
+    // The browser gets a one-time nonce in the fragment (browsers never send fragments, and the
+    // argv / shell history only ever see a nonce that dies on first use or after a minute); the
+    // FE trades it at `/api/session` for the token and keeps that in sessionStorage.
+    let launch = format!("http://127.0.0.1:{port}/#n={nonce}");
+    let opened = !no_open && browser_command(&launch).spawn().is_ok();
+    if !opened {
+        ui::info(&format!("open this URL within {} s (works once): {launch}", NONCE_TTL.as_secs()));
     }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -47,6 +98,168 @@ pub(crate) fn harness_web(home: &std::path::Path, port: u16, no_open: bool) -> R
         Ok::<(), anyhow::Error>(())
     })?;
     Ok(())
+}
+
+/// The OS browser opener, argv only (no shell, so `#` and `&` reach the browser intact).
+/// Windows: `rundll32 url.dll,FileProtocolHandler` keeps the fragment (`cmd /c start` and
+/// `explorer` are not argv-safe or drop it).
+fn browser_command(url: &str) -> std::process::Command {
+    let mut c = if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    c.arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c
+}
+
+/// Write `body` readable by the owner only: a fresh `<name>.<pid>.tmp` (created new, 0600 on
+/// unix; the profile dir ACL on Windows) renamed over `path`, so the file is never briefly
+/// world-readable or half-written, and a planted symlink at the tmp name is not followed.
+fn write_private(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("token");
+    let tmp = path.with_file_name(format!("{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp); // a stale tmp from a crashed run with the same pid
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let res = opts.open(&tmp).and_then(|mut f| f.write_all(body.as_bytes())).and_then(|_| std::fs::rename(&tmp, path));
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// The dashboard app: API + SPA behind [`guard`].
+fn app(ctx: Arc<Ctx>) -> Router {
+    api_routes()
+        .merge(Router::new().fallback(static_handler))
+        .layer(middleware::from_fn_with_state(ctx.clone(), guard))
+        .with_state(ctx)
+}
+
+/// Byte compare without an early exit, so timing does not leak the token prefix.
+fn same_secret(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// The request policy, pure so it is testable: loopback Host on our port only (a
+/// DNS-rebound name like `evil.test:8731` is refused), Origin absent or same-host
+/// for anything but GET/HEAD, and the launch token on every `/api/*` call.
+fn check_request(
+    port: u16,
+    token: &str,
+    method: &Method,
+    path: &str,
+    host: Option<&str>,
+    origin: Option<&str>,
+    sent_token: Option<&str>,
+) -> Result<(), (StatusCode, &'static str)> {
+    let host = host.unwrap_or("");
+    let allowed = [format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}")];
+    if !allowed.iter().any(|h| h.eq_ignore_ascii_case(host)) {
+        return Err((StatusCode::FORBIDDEN, "host not allowed"));
+    }
+    if method != Method::GET && method != Method::HEAD {
+        if let Some(o) = origin {
+            if !o.eq_ignore_ascii_case(&format!("http://{host}")) {
+                return Err((StatusCode::FORBIDDEN, "cross-origin request refused"));
+            }
+        }
+    }
+    if path == SESSION_PATH {
+        // The nonce trade carries no token; only the dashboard page itself may make it.
+        let same = origin.is_some_and(|o| o.eq_ignore_ascii_case(&format!("http://{host}")));
+        return if method == Method::POST && same { Ok(()) } else { Err((StatusCode::FORBIDDEN, "session must be a same-origin POST")) };
+    }
+    if path.starts_with("/api/") || path == "/api" {
+        if !sent_token.is_some_and(|t| same_secret(t, token)) {
+            return Err((StatusCode::UNAUTHORIZED, "missing or wrong dashboard token"));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+enum Redeem {
+    /// First use of the right nonce in time: hand out the token.
+    Token,
+    /// Wrong, expired or no nonce.
+    Refused,
+    /// The right nonce again after it was spent: someone else has the launch link.
+    Replay,
+}
+
+/// Spend the launch nonce. A wrong guess leaves it for the real page; the right one is marked
+/// spent and remembered until [`NONCE_TTL`] + [`SPENT_KEEP`], then forgotten.
+fn redeem(slot: &mut Option<Launch>, sent: &str, now: std::time::Instant) -> Redeem {
+    let Some(l) = slot.as_mut() else { return Redeem::Refused };
+    let age = now.saturating_duration_since(l.minted);
+    if age > NONCE_TTL + SPENT_KEEP {
+        *slot = None;
+        return Redeem::Refused;
+    }
+    if !same_secret(&l.nonce, sent) {
+        return Redeem::Refused;
+    }
+    if l.spent {
+        return Redeem::Replay;
+    }
+    if age > NONCE_TTL {
+        return Redeem::Refused;
+    }
+    l.spent = true;
+    Redeem::Token
+}
+
+#[derive(Deserialize)]
+struct SessionBody {
+    nonce: String,
+}
+
+async fn api_session(State(ctx): State<Arc<Ctx>>, Json(body): Json<SessionBody>) -> Response {
+    let mut auth = ctx.auth();
+    match redeem(&mut auth.launch, &body.nonce, std::time::Instant::now()) {
+        Redeem::Token => ([(header::CACHE_CONTROL, "no-store")], Json(serde_json::json!({ "token": auth.token }))).into_response(),
+        Redeem::Refused => (StatusCode::UNAUTHORIZED, "launch link used or expired; restart `8sync harness web`").into_response(),
+        Redeem::Replay => {
+            // Every holder of the old token (the real tab included) is cut off. A NUL can never
+            // arrive in a header, so a failed RNG still locks everyone out rather than in.
+            auth.token = random_hex().unwrap_or_else(|_| "\0".into());
+            let fresh = auth.token.clone();
+            drop(auth);
+            ui::warn("launch link dùng 2 lần — đã đổi token, mở lại `8sync harness web`");
+            let _ = write_private(&crate::brand::config_dir(&ctx.home).join("web-token"), &fresh);
+            (StatusCode::UNAUTHORIZED, "launch link used twice; the token was rotated").into_response()
+        }
+    }
+}
+
+/// Every response, refusals included, refuses to be framed (clickjacking).
+async fn guard(State(ctx): State<Arc<Ctx>>, req: Request, next: Next) -> Response {
+    let h = req.headers();
+    let get = |n: &str| h.get(n).and_then(|v| v.to_str().ok());
+    let token = ctx.auth().token.clone();
+    let mut resp = match check_request(ctx.port, &token, req.method(), req.uri().path(), get("host"), get("origin"), get(TOKEN_HEADER)) {
+        Err((code, msg)) => (code, msg).into_response(),
+        Ok(()) => next.run(req).await,
+    };
+    let hs = resp.headers_mut();
+    hs.insert(header::X_FRAME_OPTIONS, header::HeaderValue::from_static("DENY"));
+    hs.insert(header::CONTENT_SECURITY_POLICY, header::HeaderValue::from_static("frame-ancestors 'none'"));
+    resp
 }
 
 /// Honor the last-activated project (web-session.json) by chdir-ing into it, so
@@ -69,6 +282,7 @@ type ApiErr = (StatusCode, String);
 
 fn api_routes() -> Router<Arc<Ctx>> {
     Router::new()
+        .route(SESSION_PATH, post(api_session))
         .route("/api/state", get(api_state))
         .route("/api/skills", get(api_skills))
         .route("/api/skills/toggle", post(api_skill_toggle))
@@ -310,11 +524,13 @@ async fn api_eval(State(ctx): State<Arc<Ctx>>) -> Result<Json<super::eval::EvalD
 async fn static_handler(uri: Uri) -> Response {
     let p = uri.path().trim_start_matches('/');
     let p = if p.is_empty() { "index.html" } else { p };
-    if let Some(bytes) = assets::web_asset(p) {
-        return ([(header::CONTENT_TYPE, mime_for(p))], bytes).into_response();
+    if p != "index.html" {
+        if let Some(bytes) = assets::web_asset(p) {
+            return ([(header::CONTENT_TYPE, mime_for(p))], bytes).into_response();
+        }
     }
     if let Some(bytes) = assets::web_asset("index.html") {
-        return ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], bytes).into_response();
+        return ([(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], bytes).into_response();
     }
     (StatusCode::NOT_FOUND, "8sync web FE not built — run `pnpm --dir web build`").into_response()
 }
@@ -562,9 +778,9 @@ async fn api_context(State(ctx): State<Arc<Ctx>>) -> Json<serde_json::Value> {
     let (window, assumed) = model_window(&model);
     let cfg_raw = std::fs::read_to_string(home.join(".omp/agent/config.yml")).unwrap_or_default();
     let threshold_pct = parse_threshold(&cfg_raw);
-    let (used, last_compact_at, session, session_age) = match (&root, session_slug(home, root.as_deref())) {
-        (Some(_r), Some(slug)) => {
-            let dir = home.join(format!(".omp/agent/sessions/{}", slug));
+    let (used, last_compact_at, session, session_age) = match &root {
+        Some(r) => {
+            let dir = super::sessions::session_dir(home, r);
             let newest = newest_session(&dir);
             let (used, last_compact) = newest.as_ref().and_then(|p| analyze_context(p)).unwrap_or((0, None));
             let session = newest.as_ref().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("").to_string();
@@ -577,7 +793,7 @@ async fn api_context(State(ctx): State<Arc<Ctx>>) -> Json<serde_json::Value> {
                 .unwrap_or(0);
             (used, last_compact, session, age)
         }
-        _ => (0u64, None, String::new(), 0u64),
+        None => (0u64, None, String::new(), 0u64),
     };
     let pct = if window > 0 { used * 100 / window } else { 0 };
     let compact_at = window * threshold_pct / 100;
@@ -673,12 +889,6 @@ fn parse_token_count(s: &str) -> Option<u64> {
         return None;
     }
     Some((f * mult) as u64)
-}
-
-fn session_slug(home: &std::path::Path, root: Option<&std::path::Path>) -> Option<String> {
-    let r = root?;
-    let rel = r.strip_prefix(home).ok()?;
-    Some(format!("-{}", rel.to_string_lossy().replace('/', "-")))
 }
 
 fn newest_session(dir: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -806,6 +1016,9 @@ async fn api_rule_add(
         Some("global") => ctx.home.join(".omp/agent/rules"),
         _ => root.join(".omp/rules"),
     };
+    if is_link(&dir) {
+        return Err((StatusCode::BAD_REQUEST, "the rules dir is a symlink; refusing to write through it".into()));
+    }
     std::fs::create_dir_all(&dir).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut name = body.name.trim().to_string();
     if name.is_empty() {
@@ -827,17 +1040,36 @@ struct RuleDelBody {
 }
 
 async fn api_rule_delete(
-    State(_ctx): State<Arc<Ctx>>,
+    State(ctx): State<Arc<Ctx>>,
     Json(body): Json<RuleDelBody>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
-    let p = std::path::Path::new(&body.path);
-    // Only allow deleting files under a rules dir (defensive).
-    let ok = p.to_string_lossy().contains("/.omp/rules/") || p.to_string_lossy().contains("/rules/");
-    if !ok {
-        return Err((StatusCode::BAD_REQUEST, "path not under a rules dir".into()));
+    let mut dirs = vec![ctx.home.join(".omp/agent/rules")];
+    if let Some(root) = detect_current_project_root() {
+        dirs.push(root.join(".omp/rules"));
     }
-    std::fs::remove_file(p).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let target = rule_delete_target(std::path::Path::new(&body.path), &dirs)?;
+    std::fs::remove_file(&target).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// A symlink (or Windows junction) at `p` itself. A rules dir that is one could point the
+/// dashboard's writes and deletes anywhere, so both refuse it.
+fn is_link(p: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// The file `path` names, if it is a `.md`/`.mdc` rule directly inside one of the
+/// rule `dirs` after resolving `..` and symlinks (a link or `../` that leaves the
+/// dir is refused, and so is a rules dir that is itself a symlink).
+fn rule_delete_target(path: &std::path::Path, dirs: &[std::path::PathBuf]) -> Result<std::path::PathBuf, ApiErr> {
+    let refuse = || (StatusCode::BAD_REQUEST, "path not under a rules dir".to_string());
+    let real = std::fs::canonicalize(path).map_err(|_| refuse())?;
+    let inside = dirs.iter().filter(|d| !is_link(d)).filter_map(|d| std::fs::canonicalize(d).ok()).any(|d| real.parent() == Some(d.as_path()));
+    let is_rule = real.extension().is_some_and(|x| x == "md" || x == "mdc") && real.is_file();
+    if !inside || !is_rule {
+        return Err(refuse());
+    }
+    Ok(real)
 }
 // ---- Workflow viz (react-flow) + export → omp extension tool ----
 //
@@ -1136,16 +1368,25 @@ async fn api_models_set(
 
 // ---- Projects (omp session directories) ----
 
-/// Invert `session_slug`'s encoding (`-<rel-with-/replaced-by-->`) back to an
-/// absolute project path under `home`. The encoding is lossy (a literal `-` in a
-/// dir name is indistinguishable from a `/` separator), so resolve greedily
-/// against the filesystem: at each level take the longest run of `-`-joined
-/// tokens that names an existing directory. Returns None if it can't be resolved
-/// to an existing path.
+/// Invert `sessions::session_slug` back to an absolute project path. Two forms:
+/// `-<rel>` (under `home`) and `--<abs>--` (elsewhere; `C--x` = `C:\x` on
+/// Windows, otherwise rooted at `/`). The encoding is lossy (a literal `-` in a
+/// dir name is indistinguishable from a separator), so resolve greedily against
+/// the filesystem: at each level take the longest run of `-`-joined tokens that
+/// names an existing directory. Returns None if it can't be resolved.
 fn slug_to_path(home: &std::path::Path, slug: &str) -> Option<std::path::PathBuf> {
-    let body = slug.strip_prefix('-')?;
+    let (base, body) = if let Some(abs) = slug.strip_prefix("--").and_then(|s| s.strip_suffix("--")) {
+        let b = abs.as_bytes();
+        if cfg!(windows) && b.len() >= 3 && b[0].is_ascii_alphabetic() && &b[1..3] == b"--" {
+            (std::path::PathBuf::from(format!("{}:\\", b[0] as char)), &abs[3..])
+        } else {
+            (std::path::PathBuf::from("/"), abs)
+        }
+    } else {
+        (home.to_path_buf(), slug.strip_prefix('-')?)
+    };
     let tokens: Vec<&str> = body.split('-').collect();
-    let mut cur = home.to_path_buf();
+    let mut cur = base;
     let mut i = 0;
     while i < tokens.len() {
         let mut advanced = false;
@@ -1708,7 +1949,9 @@ impl Drop for TmpDir {
 
 #[cfg(test)]
 mod tests {
-    use super::{session_slug, slug_to_path};
+    use super::super::sessions::session_slug;
+    use super::{app, check_request, is_link, redeem, rule_delete_target, slug_to_path, write_private, Auth, Ctx, Launch, Redeem, NONCE_TTL, SPENT_KEEP};
+    use axum::http::{Method, StatusCode};
     use std::path::PathBuf;
 
     /// Unique scratch home under the OS temp dir; cleaned on drop.
@@ -1737,7 +1980,7 @@ mod tests {
         let home = TmpHome::new("dash");
         // Project dir whose name contains a literal '-' (the lossy case).
         let root = home.mkdirs("Projects/tools/su-code");
-        let slug = session_slug(&home.0, Some(root.as_path())).unwrap();
+        let slug = session_slug(&home.0, root.as_path());
         assert_eq!(slug, "-Projects-tools-su-code");
         assert_eq!(slug_to_path(&home.0, &slug), Some(root));
     }
@@ -1747,7 +1990,7 @@ mod tests {
         let home = TmpHome::new("nested");
         for rel in ["foo", "a/b/c"] {
             let root = home.mkdirs(rel);
-            let slug = session_slug(&home.0, Some(root.as_path())).unwrap();
+            let slug = session_slug(&home.0, root.as_path());
             assert_eq!(slug_to_path(&home.0, &slug), Some(root), "rel={}", rel);
         }
     }
@@ -1758,5 +2001,182 @@ mod tests {
         assert_eq!(slug_to_path(&home.0, "-does-not-exist"), None);
         // Missing leading '-' is not a valid slug.
         assert_eq!(slug_to_path(&home.0, "Projects"), None);
+    }
+
+    #[test]
+    fn slug_roundtrip_outside_home() {
+        // Project outside home uses the `--<abs>--` form (Windows: `--C--…--`).
+        let home = TmpHome::new("outhome");
+        let other = TmpHome::new("outroot");
+        let root = other.mkdirs("proj-x/sub");
+        let slug = session_slug(&home.0, root.as_path());
+        assert!(slug.starts_with("--") && slug.ends_with("--"), "slug={}", slug);
+        assert_eq!(slug_to_path(&home.0, &slug), Some(root));
+    }
+
+    const TOK: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn guard_refuses_foreign_host_like_dns_rebinding() {
+        for host in [Some("evil.test:8731"), Some("127.0.0.1:9999"), Some("127.0.0.1"), None] {
+            let r = check_request(8731, TOK, &Method::GET, "/", host, None, None);
+            assert_eq!(r.map_err(|e| e.0), Err(StatusCode::FORBIDDEN), "host={host:?}");
+        }
+        for host in ["127.0.0.1:8731", "localhost:8731", "[::1]:8731"] {
+            assert!(check_request(8731, TOK, &Method::GET, "/", Some(host), None, None).is_ok(), "host={host}");
+        }
+    }
+
+    #[test]
+    fn guard_refuses_api_without_the_launch_token() {
+        let h = Some("127.0.0.1:8731");
+        for sent in [None, Some(""), Some("0123456789abcdef0123456789abcdee"), Some("short")] {
+            let r = check_request(8731, TOK, &Method::GET, "/api/state", h, None, sent);
+            assert_eq!(r.map_err(|e| e.0), Err(StatusCode::UNAUTHORIZED), "sent={sent:?}");
+        }
+        assert!(check_request(8731, TOK, &Method::GET, "/api/state", h, None, Some(TOK)).is_ok());
+        // The page shell itself needs no token (it carries none; the FE reads the URL fragment).
+        assert!(check_request(8731, TOK, &Method::GET, "/", h, None, None).is_ok());
+    }
+
+    #[test]
+    fn guard_refuses_cross_origin_writes_even_with_token() {
+        let h = Some("127.0.0.1:8731");
+        let r = check_request(8731, TOK, &Method::POST, "/api/mcp/add", h, Some("http://evil.test"), Some(TOK));
+        assert_eq!(r.map_err(|e| e.0), Err(StatusCode::FORBIDDEN));
+        assert!(check_request(8731, TOK, &Method::POST, "/api/mcp/add", h, Some("http://127.0.0.1:8731"), Some(TOK)).is_ok());
+        assert!(check_request(8731, TOK, &Method::POST, "/api/mcp/add", h, None, Some(TOK)).is_ok());
+    }
+
+    /// One raw HTTP/1.1 exchange; returns the whole response text.
+    fn http(port: u16, req: &str) -> String {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        s.write_all(req.as_bytes()).unwrap();
+        let mut out = String::new();
+        let _ = s.read_to_string(&mut out);
+        out
+    }
+
+    #[test]
+    fn served_pages_carry_no_token_and_every_response_refuses_framing() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let home = TmpHome::new("serve");
+        const NONCE: &str = "fedcba9876543210fedcba9876543210";
+        let launch = Launch { nonce: NONCE.into(), minted: std::time::Instant::now(), spent: false };
+        let ctx = std::sync::Arc::new(Ctx { home: home.0.clone(), port, auth: std::sync::Mutex::new(Auth { token: TOK.into(), launch: Some(launch) }) });
+        rt.spawn(async move { axum::serve(listener, app(ctx)).await });
+        let host = format!("127.0.0.1:{port}");
+        let page = http(port, &format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"));
+        let api = http(port, &format!("GET /api/state HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"));
+        let rebound = http(port, "GET / HTTP/1.1\r\nHost: evil.test\r\nConnection: close\r\n\r\n");
+        assert!(api.starts_with("HTTP/1.1 401"), "{api}");
+        assert!(rebound.starts_with("HTTP/1.1 403"), "{rebound}");
+        for r in [&page, &api, &rebound] {
+            let lower = r.to_ascii_lowercase();
+            assert!(!r.contains(TOK), "the token never leaves the server in a response");
+            assert!(lower.contains("x-frame-options: deny") && lower.contains("content-security-policy: frame-ancestors 'none'"), "{r}");
+        }
+        if page.starts_with("HTTP/1.1 200") {
+            assert!(page.to_ascii_lowercase().contains("cache-control: no-store"), "{page}");
+        }
+        // The page trades the launch nonce for the token once; a replay or a cross-site POST gets nothing.
+        let session = |origin: &str, nonce: &str| {
+            let body = format!("{{\"nonce\":\"{nonce}\"}}");
+            http(port, &format!("POST /api/session HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()))
+        };
+        let same = format!("http://{host}");
+        let foreign = session("http://evil.test", NONCE);
+        assert!(foreign.starts_with("HTTP/1.1 403") && !foreign.contains(TOK), "{foreign}");
+        let wrong = session(&same, "00000000000000000000000000000000");
+        assert!(wrong.starts_with("HTTP/1.1 401") && !wrong.contains(TOK), "{wrong}");
+        let first = session(&same, NONCE);
+        assert!(first.starts_with("HTTP/1.1 200") && first.contains(TOK), "{first}");
+        let state = |tok: &str| http(port, &format!("GET /api/state HTTP/1.1\r\nHost: {host}\r\nx-8sync-token: {tok}\r\nConnection: close\r\n\r\n"));
+        assert!(!state(TOK).starts_with("HTTP/1.1 401"), "the token works before a replay");
+        // A replay of the right nonce means someone else has the launch link: the token rotates.
+        let replay = session(&same, NONCE);
+        assert!(replay.starts_with("HTTP/1.1 401") && !replay.contains(TOK), "{replay}");
+        let after = state(TOK);
+        assert!(after.starts_with("HTTP/1.1 401"), "old token is dead after a replay: {after}");
+        let rotated = std::fs::read_to_string(crate::brand::config_dir(&home.0).join("web-token")).unwrap();
+        assert!(rotated.len() == 32 && rotated != TOK && !replay.contains(&rotated), "new token only in the owner-only file");
+        assert!(!state(&rotated).starts_with("HTTP/1.1 401"));
+    }
+
+    #[test]
+    fn launch_nonce_is_single_use_expires_and_flags_replays() {
+        let t0 = std::time::Instant::now();
+        let secs = std::time::Duration::from_secs;
+        let fresh = || Some(Launch { nonce: "n0nce".into(), minted: t0, spent: false });
+        let mut slot = fresh();
+        assert_eq!(redeem(&mut slot, "guess", t0), Redeem::Refused, "wrong nonce");
+        assert_eq!(redeem(&mut slot, "n0nce", t0), Redeem::Token, "a wrong guess does not burn it for the real page");
+        assert_eq!(redeem(&mut slot, "n0nce", t0 + secs(5)), Redeem::Replay, "single use; a second use is a replay");
+        assert_eq!(redeem(&mut slot, "guess", t0 + secs(5)), Redeem::Refused, "a wrong value is never a replay");
+        assert_eq!(redeem(&mut slot, "n0nce", t0 + NONCE_TTL + secs(30)), Redeem::Replay, "spent nonce remembered past its TTL");
+        assert_eq!(redeem(&mut slot, "n0nce", t0 + NONCE_TTL + SPENT_KEEP + secs(1)), Redeem::Refused);
+        assert!(slot.is_none(), "forgotten after the keep window");
+        let mut slot = fresh();
+        assert_eq!(redeem(&mut slot, "n0nce", t0 + NONCE_TTL + secs(1)), Redeem::Refused, "expired unused nonce");
+        let mut slot = fresh();
+        assert_eq!(redeem(&mut slot, "n0nce", t0 + NONCE_TTL - secs(1)), Redeem::Token);
+    }
+
+    #[test]
+    fn token_file_is_replaced_whole_and_owner_only() {
+        let home = TmpHome::new("tokfile");
+        let f = home.0.join("cfg/web-token");
+        write_private(&f, "first").unwrap();
+        write_private(&f, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "second");
+        let left: Vec<_> = std::fs::read_dir(home.0.join("cfg")).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("web-token")], "no tmp file left behind");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn symlinked_rules_dir_is_refused() {
+        let home = TmpHome::new("rulelink");
+        let real = home.mkdirs("elsewhere");
+        std::fs::write(real.join("victim.md"), "x").unwrap();
+        let link = home.0.join("rules");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&real, &link).is_ok();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_dir(&real, &link).is_ok();
+        if !made {
+            eprintln!("skip: this account cannot create symlinks");
+            return;
+        }
+        assert!(is_link(&link), "rule add refuses this dir");
+        assert!(!is_link(&real));
+        assert!(rule_delete_target(&link.join("victim.md"), &[link.clone()]).is_err());
+        assert!(std::fs::metadata(real.join("victim.md")).is_ok());
+    }
+
+    #[test]
+    fn rule_delete_refuses_escapes_and_non_rules() {
+        let home = TmpHome::new("rules");
+        let rules = home.mkdirs("rules");
+        let other = home.mkdirs("other");
+        std::fs::write(rules.join("ok.md"), "x").unwrap();
+        std::fs::write(other.join("secret.md"), "x").unwrap();
+        std::fs::write(rules.join("notes.txt"), "x").unwrap();
+        let dirs = vec![rules.clone()];
+        // `../` out of the rules dir, a file elsewhere, a non-rule file, a missing file.
+        for p in [rules.join("../other/secret.md"), other.join("secret.md"), rules.join("notes.txt"), rules.join("gone.md")] {
+            assert_eq!(rule_delete_target(&p, &dirs).map_err(|e| e.0), Err(StatusCode::BAD_REQUEST), "p={}", p.display());
+        }
+        assert!(other.join("secret.md").exists());
+        let ok = rule_delete_target(&rules.join("ok.md"), &dirs).unwrap();
+        assert_eq!(ok, std::fs::canonicalize(rules.join("ok.md")).unwrap());
     }
 }

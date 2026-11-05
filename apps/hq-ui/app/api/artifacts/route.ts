@@ -1,10 +1,13 @@
 import { bad, json, limitParam, localOnly, open, readBody } from "@/lib/server/http";
 import { knownRoots } from "@/lib/server/in-view";
-import { ARTIFACT_LIST_MAX, listArtifacts, registerArtifact } from "@/lib/server/artifacts";
+import { ARTIFACT_LIST_MAX, listArtifacts, registerArtifact, withSrc } from "@/lib/server/artifacts";
 
 export const runtime = "nodejs";
 
-/** Artifacts, newest first. `?root=` one project (worktrees folded in), `?session=` one room, `?content=` one content item's results, `?limit=` 1..500. */
+/**
+ * Artifacts, newest first, each with `src` (a signed URL for media elements and downloads). `?root=` one
+ * project (worktrees folded in), `?session=` one room, `?content=` one content item's results, `?limit=` 1..500.
+ */
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
@@ -13,8 +16,9 @@ export async function GET(req: Request) {
   if (limit === null) return bad("limit must be 1-500");
   const c = url.searchParams.get("content");
   if (c !== null && !/^\d{1,12}$/.test(c)) return bad("content must be a content item id");
-  const artifacts = listArtifacts(o.db, { root: url.searchParams.get("root"), session: url.searchParams.get("session"), content: c ? Number(c) : null, limit });
-  return json({ artifacts, at: Date.now() });
+  const now = Date.now();
+  const artifacts = listArtifacts(o.db, { root: url.searchParams.get("root"), session: url.searchParams.get("session"), content: c ? Number(c) : null, limit }).map((a) => withSrc(a, now));
+  return json({ artifacts, at: now });
 }
 
 /**

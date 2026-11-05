@@ -64,9 +64,10 @@ const SessionsView = dynamic(() => import("./sessions-view").then((m) => m.Sessi
 const ActivityView = dynamic(() => import("./activity-view").then((m) => m.ActivityView), { loading: ViewLoading });
 const ContentView = dynamic(() => import("./content-view").then((m) => m.ContentView), { loading: ViewLoading });
 const ArtifactsView = dynamic(() => import("./artifacts-view").then((m) => m.ArtifactsView), { loading: ViewLoading });
+const CodemapView = dynamic(() => import("./codemap-view").then((m) => m.CodemapView), { loading: ViewLoading });
 
 /** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens · artifacts: files rooms posted. */
-type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
+type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "codemap" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -518,7 +519,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   }}
                 />
               ) : (
-              <RoomLogProvider sessionId={room?.session_id ?? null} token={token} working={roomState?.state === "working"}>
+              <RoomLogProvider sessionId={room?.session_id ?? null} cwd={room?.cwd ?? null} token={token} working={roomState?.state === "working"}>
                 <TeamView
                   hq={hq}
                   messages={view.messages}
@@ -553,7 +554,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               {contentOn && <ContentView token={token} active={tab === "content"} />}
             </TabsContent>
             <TabsContent value="artifacts" className="h-full">
-              <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} />
+              <ArtifactsView token={token} repo={repo?.root ?? null} active={tab === "artifacts"} rooms={officeRooms} onAsk={openRoom} />
+            </TabsContent>
+            <TabsContent value="codemap" className="h-full">
+              <CodemapView token={token} projects={hq.projects.data} others={wsProjects} onAdded={hq.reload.projects} repo={repo?.root ?? null} active={tab === "codemap"} />
             </TabsContent>
             <TabsContent value="preview" className="h-full">
               <PreviewView state={previews} token={token} rooms={officeRooms} repo={repo?.root ?? null} />

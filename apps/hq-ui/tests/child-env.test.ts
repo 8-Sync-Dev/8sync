@@ -15,6 +15,8 @@ describe("childEnv", () => {
       __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:8740",
       TURBOPACK: "1",
       NEXT_DEPLOYMENT_ID: "",
+      SUSYNC_MODE: "forge",
+      susync_mode: "claude",
       Path: "C:\\bin",
       HOME: "/home/u",
       EIGHTSYNC_HQ_SESSION: "hq-a",

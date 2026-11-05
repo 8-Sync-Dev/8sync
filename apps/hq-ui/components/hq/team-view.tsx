@@ -9,7 +9,7 @@ import {
   SendHorizontalIcon,
   SquareIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message as ChatMessage, MessageContent, MessageResponse } from "@/components/ai-elements/message";
@@ -21,12 +21,14 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useDefaultLayout } from "react-resizable-panels";
 import { AttachButton, AttachList, useAttach } from "./attach";
 import { MessageText, ReplyMedia } from "./attachments";
-import { ComposerDock } from "./composer-dock";
+import { ComposerDock, openDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
 import { TurnLink } from "./room-outputs";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
+import { withQuote } from "@/lib/ask-quote";
+import { onAsk, takeAsk } from "@/lib/ask-store";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
 import type { Hq } from "./use-hq";
@@ -350,6 +352,33 @@ function Composer({
   const att = useAttach(hq.api);
   /** Folds the phone's bottom sheet after a send (ComposerDock); a no-op on desktop. */
   const closeDock = useRef<() => void>(() => {});
+  // "Hỏi về đoạn này" (a room's Kết quả, the Kết quả tab): the quote lands at the end of the draft, the
+  // phone's sheet opens and the caret waits under the quote for the question.
+  useEffect(() => {
+    let timer = 0;
+    const take = () => {
+      const p = takeAsk();
+      if (!p) return;
+      setText((t) => withQuote(t, p.quote));
+      openDock("room");
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const el = area.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+        el.scrollTop = el.scrollHeight;
+      }, 60);
+    };
+    // A quote put just before this room opened (the Kết quả tab switches here) is waiting already.
+    const first = requestAnimationFrame(take);
+    const off = onAsk(take);
+    return () => {
+      cancelAnimationFrame(first);
+      window.clearTimeout(timer);
+      off();
+    };
+  }, []);
   const targets = messageTargets(sessions);
   // Default to the first live session until the owner picks one.
   const current = targets.find((s) => s.name === target || s.session_id === target) ?? targets[0] ?? null;

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { clampText, isTmuxName, toTmuxName, validateProjectPath } from "@/lib/server/validate";
 
 describe("tmux name validation", () => {
@@ -45,6 +45,42 @@ describe("project path validation", () => {
     if (!r.ok) expect(r.error).toContain(msg);
   });
   it("rejects non-strings", () => expect(validateProjectPath({}).ok).toBe(false));
+
+  it.each(["\\\\server\\share\\repo", "//server/share/repo", "\\\\?\\C:\\repo", "\\\\.\\pipe\\x", "\\\\?\\UNC\\server\\share"])("refuses the network or device path %j before touching it", (p) => {
+    const spy = vi.spyOn(fs, "realpathSync");
+    const r = validateProjectPath(p);
+    expect(r.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("refuses a filesystem root, the home folder itself and a link to either; takes a folder inside home", () => {
+    const savedHome = process.env.HOME;
+    const savedProfile = process.env.USERPROFILE;
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hq-home-")));
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      const root = path.parse(process.cwd()).root;
+      expect(validateProjectPath(root).ok).toBe(false);
+      if (process.platform === "win32") expect(validateProjectPath(root.replace(/\\$/, "")).ok).toBe(false);
+      expect(validateProjectPath(home).ok).toBe(false);
+      expect(validateProjectPath(`${home}${path.sep}`).ok).toBe(false);
+      if (process.platform === "win32") expect(validateProjectPath(home.toUpperCase()).ok).toBe(false);
+      fs.mkdirSync(path.join(home, "repo"));
+      expect(validateProjectPath(path.join(home, "repo"))).toEqual({ ok: true, value: path.join(home, "repo") });
+      const links = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hq-links-")));
+      fs.symlinkSync(home, path.join(links, "to-home"), "junction");
+      fs.symlinkSync(root, path.join(links, "to-root"), "junction");
+      expect(validateProjectPath(path.join(links, "to-home")).ok).toBe(false);
+      expect(validateProjectPath(path.join(links, "to-root")).ok).toBe(false);
+    } finally {
+      for (const [k, v] of [["HOME", savedHome], ["USERPROFILE", savedProfile]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });
 
 describe("clampText", () => {

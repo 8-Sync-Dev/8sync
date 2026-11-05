@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  CHANNEL_LABEL,
+  CHANNEL_SHORT,
   byDay,
   CONTENT_FORMATS,
   CONTENT_STATUSES,
@@ -17,6 +19,8 @@ import {
   cpaCommand,
   dayKey,
   FORMAT_LABEL,
+  GUEST_DROPBACK_FIELDS,
+  GUEST_DROPBACK_NOTE,
   nextStatuses,
   stepHint,
   parseDay,
@@ -31,7 +35,7 @@ import {
   type ContentRow,
   type ContentTextField,
 } from "@/lib/content";
-import { atLeast } from "@/lib/access";
+import { atLeast, GUEST_AWAITS_APPROVAL } from "@/lib/access";
 import type { OmpTreeRow } from "@/lib/session-tree";
 import type { ContentResults } from "@/lib/content-metrics";
 import { agoShort } from "@/lib/now";
@@ -294,6 +298,7 @@ export function ContentView({ token, active }: { token: string; active: boolean 
               item={sel.item}
               items={sheetItems}
               schedule={data.schedule}
+              assign={data.assign}
               api={api}
               token={token}
               results={results}
@@ -476,11 +481,19 @@ function Items({
         <tbody className="divide-y">
           {items.map((it) => {
             const warn = contentWarning(it);
-            const steps = nextStatuses(it.status);
+            // "Duyệt" lives in the sheet: it also sends the posting task to a session picked there.
+            // Only the owner approves or marks published (a guest gets 403): it sees "Chờ chủ HQ duyệt".
+            const steps = nextStatuses(it.status).filter((s) => s !== "approved" && (role === "owner" || s !== "published"));
+            const toApprove = canEdit && nextStatuses(it.status).includes("approved");
             const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
             const who = assigneeShort(it);
-            const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
+            // A guest's edit of what an approved item posts sends it back to "checked" on the server; say so.
+            const edit = (field: ContentTextField) => async (v: string) => {
+              const ok = await patch(it.id, { [field]: v });
+              if (ok && role !== "owner" && it.status === "approved" && (GUEST_DROPBACK_FIELDS as readonly string[]).includes(field)) toast.info(GUEST_DROPBACK_NOTE);
+              return ok;
+            };
             return (
               <tr key={it.id} className={cn("align-top", warn && "bg-destructive/5")}>
                 <td className="px-2 py-2 font-mono text-muted-foreground tabular">{it.id}</td>
@@ -490,7 +503,10 @@ function Items({
                   </div>
                   <div className="mt-1.5 flex items-center gap-1">
                     {canEdit ? (
-                      <Select value={it.format} onValueChange={(v) => void patch(it.id, { format: v })}>
+                      <Select
+                        value={it.format}
+                        onValueChange={(v) => void patch(it.id, { format: v }).then((ok) => ok && role !== "owner" && it.status === "approved" && v !== it.format && toast.info(GUEST_DROPBACK_NOTE))}
+                      >
                         <SelectTrigger size="sm" className={cn("h-7 text-xs", FORMAT_TONE[it.format])} aria-label={`Định dạng #${it.id}`}>
                           <SelectValue />
                         </SelectTrigger>
@@ -514,10 +530,16 @@ function Items({
                       </Button>
                     )}
                   </div>
-                  {who && <p className="mt-1 text-[11px] text-muted-foreground">đang xử lý: {it.assignee_base ?? who}</p>}
+                  {who && <p className="mt-1 text-[11px] text-muted-foreground">Đang xử lý: {it.assignee_base ?? who}</p>}
                 </td>
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
+                  {it.channels && (
+                    <p className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground" title={it.channels.map((c) => CHANNEL_LABEL[c]).join(", ")}>
+                      {it.channels.map((c) => CHANNEL_SHORT[c]).join(" · ")}
+                      {it.channel_posts?.some((p) => p.state === "failed" || p.state === "blocked") && <span className="ml-1 font-medium text-destructive">· có kênh lỗi</span>}
+                    </p>
+                  )}
                   <div className="mt-1 flex flex-col items-start gap-1">
                     {canEdit &&
                       steps
@@ -539,9 +561,16 @@ function Items({
                         );
                       })}
                     {note && <span className="text-[11px] text-muted-foreground">{note}</span>}
+                    {toApprove && role === "owner" && (
+                      <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px] whitespace-nowrap", TOUCH)} onClick={() => onOpen(it)}>
+                        <CheckIcon aria-hidden /> Duyệt trong khung chi tiết
+                      </Button>
+                    )}
+                    {toApprove && role !== "owner" && <span className="text-[11px] font-medium text-muted-foreground">{GUEST_AWAITS_APPROVAL}</span>}
                   </div>
                 </td>
                 <td className="w-44 min-w-36 px-2 py-2">
+
                   {warn && (
                     <p className="flex items-start gap-1 font-medium text-destructive">
                       <AlertTriangleIcon aria-hidden className="mt-px size-3.5 shrink-0" /> {warn}

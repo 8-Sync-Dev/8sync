@@ -143,8 +143,34 @@ export class EndpointMissingError extends Error {
   }
 }
 
+// Per-launch dashboard token. `8sync harness web` opens `/#n=<nonce>`: a one-time nonce
+// (single use, 60 s) in the fragment, which the browser never sends. Strip it from the
+// address bar at once, trade it at /api/session for the token, keep that in sessionStorage
+// (this tab only, survives reloads). Every /api call must echo the token (the server refuses
+// the call otherwise). Under `vite dev` there is no nonce: the dev proxy adds the token.
+const TOKEN_KEY = "8sync-token";
+async function launchToken(): Promise<string> {
+  if (typeof window === "undefined") return "";
+  const nonce = /^#n=([0-9a-f]+)$/.exec(window.location.hash)?.[1];
+  if (!nonce) return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+  const r = await fetch("/api/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ nonce }),
+  });
+  if (!r.ok) return sessionStorage.getItem(TOKEN_KEY) ?? "";
+  const { token } = (await r.json()) as { token: string };
+  sessionStorage.setItem(TOKEN_KEY, token);
+  return token;
+}
+const TOKEN: Promise<string> = launchToken().catch(() => "");
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
+  const headers = new Headers(init?.headers);
+  const token = await TOKEN;
+  if (token) headers.set("x-8sync-token", token);
+  const r = await fetch(url, { ...init, headers });
   // SPA fallback: backend returns 200 + index.html for unknown /api paths. A
   // missing endpoint therefore looks like a successful HTML response.
   const ct = r.headers.get("content-type") ?? "";

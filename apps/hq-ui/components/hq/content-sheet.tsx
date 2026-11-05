@@ -1,18 +1,31 @@
 "use client";
 
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
-// approve, inline caption / time edits and "Giao việc". Esc or a click outside
-// closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, Maximize2Icon, PlayIcon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+// approve (the owner's also sends the posting task to the chosen session), inline caption / time
+// edits, the channels (0064) with a caption and a post status each, the optional AI-label answer and
+// "Giao việc". Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner
+// can share or come back.
+import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, Maximize2Icon, PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import {
+  AI_CHOICES,
+  CAPTION_LIMIT,
+  captionFor,
+  CHANNEL_LABEL,
+  channelLine,
+  CHANNELS,
+  charCount,
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
+  GUEST_DROPBACK_FIELDS,
+  GUEST_DROPBACK_NOTE,
   NO_SCHEDULE,
   nextStatuses,
   stepHint,
@@ -21,17 +34,21 @@ import {
   timeOf,
   toLocalInput,
   whenOf,
+  type Channel,
+  type ChannelLine,
+  type ChannelPost,
   type ContentMedia,
   type ContentStatus,
   type ContentRow,
   type ContentTextField,
+  type AssignPref,
 } from "@/lib/content";
-import { atLeast } from "@/lib/access";
+import { atLeast, GUEST_AWAITS_APPROVAL } from "@/lib/access";
 import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { useAccess } from "./access";
-import { AssignBox, Editable, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, type Patch } from "./content-bits";
+import { AssignBox, Editable, FORMAT_TONE, sessionLabel, STATUS_EDGE, STATUS_TONE, StatusIcon, useAssignSessions, type Patch } from "./content-bits";
 import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
 import { ItemResults, NO_RESULTS, ResultMark, type ResultIndex } from "./content-results";
@@ -52,6 +69,7 @@ export function ContentSheet({
   item,
   items,
   schedule,
+  assign,
   api,
   token,
   results = NO_RESULTS,
@@ -68,6 +86,8 @@ export function ContentSheet({
   /** That day's items, in time order. */
   items: ContentRow[];
   schedule: boolean;
+  /** The saved default session for "Duyệt" (GET /api/content `assign`). */
+  assign: AssignPref | null;
   api: Api;
   token: string;
   /** What the rooms reported back (owner only; empty for a guest). */
@@ -99,7 +119,19 @@ export function ContentSheet({
               {items.map((it) => (
                 <li key={it.id}>
                   {shown === it.id ? (
-                    <ItemDetail it={it} api={api} token={token} results={results} now={now} patch={patch} error={errors[it.id]} schedule={schedule} onCollapse={items.length > 1 ? () => onItem(null) : undefined} reload={reload} />
+                    <ItemDetail
+                      it={it}
+                      api={api}
+                      token={token}
+                      results={results}
+                      now={now}
+                      patch={patch}
+                      error={errors[it.id]}
+                      schedule={schedule}
+                      assign={assign}
+                      onCollapse={items.length > 1 ? () => onItem(null) : undefined}
+                      reload={reload}
+                    />
                   ) : (
                     <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
                       <ItemLine it={it} results={results} />
@@ -158,6 +190,7 @@ function ItemDetail({
   patch,
   error,
   schedule,
+  assign,
   onCollapse,
   reload,
 }: {
@@ -169,24 +202,105 @@ function ItemDetail({
   patch: Patch;
   error: string | undefined;
   schedule: boolean;
+  assign: AssignPref | null;
   onCollapse?: () => void;
   reload: () => void;
 }) {
   const role = useAccess();
   const canEdit = atLeast(role, "editor");
   const warn = contentWarning(it);
+  // The owner's optional AI answer, sent as `ai_label` with "Duyệt" (no gate: owner 2026-11-05).
+  const [aiChoice, setAiChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
-  const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
+  // A guest's edit of what an approved item posts sends it back to "checked" on the server; say so.
+  const guestDropped = () => {
+    if (role !== "owner" && it.status === "approved") toast.info(GUEST_DROPBACK_NOTE);
+  };
+  const edit = (field: ContentTextField) => async (v: string) => {
+    const ok = await patch(it.id, { [field]: v });
+    if (ok && (GUEST_DROPBACK_FIELDS as readonly string[]).includes(field)) guestDropped();
+    return ok;
+  };
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
   // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
-  const steps = nextStatuses(it.status);
+  // "Đã đăng" is the owner's (403 for a guest); "Duyệt" stays so a guest sees "Chờ chủ HQ duyệt" there.
+  const steps = nextStatuses(it.status).filter((s) => role === "owner" || s !== "published");
   const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
+  // An approved item whose posts already sit on a platform scheduler: they keep the text they were
+  // given. Editing captions or channels here says so, next to approve.
+  const live = (it.channel_posts ?? []).some((p) => p.state === "scheduled" || p.state === "scheduling");
+  const [stale, setStale] = useState(false);
+  const channelEdited = () => {
+    guestDropped();
+    if (it.status === "approved" && live) setStale(true);
+  };
+
+  // Where "Duyệt" sends the posting task (owner only: a guest's "Duyệt" only approves): the pick in
+  // "Giao việc", else the item's holder, else the saved default; a session gone from the list is
+  // skipped (and a gone default is forgotten).
+  const owner = role === "owner";
+  const sessions = useAssignSessions(api, owner);
+  const known = (s: string | null | undefined): s is string => !!s && (!sessions.loaded || sessions.list.some((r) => r.id === s));
+  const [picked, setPicked] = useState<string | null>(null);
+  const session = picked ?? [it.assignee_session, assign?.session].find(known) ?? it.assignee_session ?? "";
+  const labelOf = (id: string) => {
+    const row = sessions.list.find((r) => r.id === id);
+    if (row) return sessionLabel(row);
+    if (id === it.assignee_session && it.assignee_base) return it.assignee_base;
+    if (id === assign?.session && assign.base) return assign.base;
+    return id;
+  };
+  const [need, setNeed] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const forgotten = useRef<string | null>(null);
+  const goneDefault = owner && sessions.loaded && assign != null && !sessions.list.some((r) => r.id === assign.session) ? assign.session : null;
+  useEffect(() => {
+    if (!goneDefault || forgotten.current === goneDefault) return;
+    forgotten.current = goneDefault;
+    api("/api/content/prefs", { method: "PUT", body: { assign: null } })
+      .then(reload)
+      .catch(() => {});
+  }, [goneDefault, api, reload]);
+
+  async function pick(id: string) {
+    setPicked(id);
+    setNeed(false);
+    try {
+      await api("/api/content/prefs", { method: "PUT", body: { assign: { session: id, base: labelOf(id) } } });
+      reload();
+    } catch (e) {
+      toast.error(`Chưa lưu được phiên mặc định: ${(e as Error).message}`);
+    }
+  }
 
   async function setStatus(status: ContentStatus) {
     setBusy(true);
     try {
       await patch(it.id, { status });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * One tap (owner 2026-11-04, owner only): approve AND send the posting task; nothing changes when
+   * either fails. `seen` (the `updated_at` on screen) makes an edit made meanwhile answer 409 instead
+   * of riding along. A guest never approves (403): it sees "Chờ chủ HQ duyệt" instead.
+   */
+  async function approve() {
+    const seen = it.updated_at;
+    const ai = aiChoice === null ? {} : { ai_label: aiChoice };
+    const to = known(session) ? session : "";
+    if (!to) {
+      setNeed(true);
+      trigger.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      const ok = await patch(it.id, { status: "approved", seen, send: { session: to, base: labelOf(to) }, ...ai });
+      if (ok) toast.success(`Đã duyệt #${it.id} và gửi việc đăng cho ${labelOf(to)}`);
     } finally {
       setBusy(false);
     }
@@ -212,7 +326,7 @@ function ItemDetail({
           {it.assignee_session && (
             <>
               {" "}
-              · đang xử lý: <span className="font-medium text-foreground">{it.assignee_base ?? it.assignee_session}</span>
+              · Đang xử lý: <span className="font-medium text-foreground">{it.assignee_base ?? it.assignee_session}</span>
             </>
           )}
         </p>
@@ -220,6 +334,7 @@ function ItemDetail({
 
       {(warn || error) && (
         <div className="space-y-2">
+
           {warn && (
             <p className="flex items-start gap-1.5 text-sm font-medium text-destructive">
               <AlertTriangleIcon aria-hidden className="mt-0.5 size-4 shrink-0" /> {warn}
@@ -237,9 +352,15 @@ function ItemDetail({
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
-              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || stepHint(it, s) != null} onClick={() => void setStatus(s)}>
-                <CheckIcon aria-hidden /> Duyệt
-              </Button>
+              owner ? (
+                <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || stepHint(it, s) != null} onClick={() => void approve()}>
+                  {busy ? <Loader2Icon aria-hidden className="animate-spin" /> : <CheckIcon aria-hidden />} Duyệt
+                </Button>
+              ) : (
+                <span key={s} className="text-xs font-medium text-muted-foreground">
+                  {GUEST_AWAITS_APPROVAL}
+                </span>
+              )
             ) : s === "rejected" ? (
               <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy} onClick={() => void setStatus(s)}>
                 <XIcon aria-hidden /> Bỏ
@@ -255,6 +376,35 @@ function ItemDetail({
               {h}.
             </span>
           ))}
+          {owner && steps.includes("approved") && hints.length === 0 && (
+            <span className="text-xs text-muted-foreground">Duyệt sẽ gửi việc đăng cho {known(session) ? labelOf(session) : "phiên chọn ở Giao việc"}.</span>
+          )}
+          {owner && steps.includes("approved") && (
+            <fieldset className="w-full space-y-1 text-xs">
+              <legend className="text-muted-foreground">Nhãn AI khi đăng (không bắt buộc)</legend>
+              {AI_CHOICES.map((c) => (
+                <label key={String(c.value)} className="flex cursor-pointer items-start gap-2 max-sm:min-h-11">
+                  <input
+                    type="radio"
+                    name={`ai-${it.id}`}
+                    checked={aiChoice === c.value}
+                    onChange={() => setAiChoice(c.value)}
+                    className="mt-0.5 size-4 shrink-0 accent-primary max-sm:size-5"
+                  />
+                  <span>{c.label}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+          {stale && it.status === "approved" && (
+            <span className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
+              <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0 text-destructive" />
+              Bài đã lên lịch không tự cập nhật caption: bỏ duyệt rồi duyệt lại.
+              <Button type="button" size="sm" variant="outline" className={cn("h-7 text-xs", TOUCH)} disabled={busy} onClick={() => void setStatus("checked")}>
+                Bỏ duyệt
+              </Button>
+            </span>
+          )}
         </div>
       )}
 
@@ -273,8 +423,22 @@ function ItemDetail({
             <ItemResults id={it.id} token={token} arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} now={now} />
           </Field>
         )}
-        <Field label="Caption">
-          <Editable value={it.caption} label={`Caption #${it.id}`} onSave={edit("caption")} multiline />
+        {it.channels !== undefined && (
+          <Field label="Kênh">
+            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} canRetry={owner} />
+          </Field>
+        )}
+        <Field label={it.channels !== undefined ? "Caption chung" : "Caption"}>
+          <Editable
+            value={it.caption}
+            label={`Caption #${it.id}`}
+            onSave={async (v) => {
+              const ok = await patch(it.id, { caption: v });
+              if (ok) channelEdited();
+              return ok;
+            }}
+            multiline
+          />
           {it.caption && (
             <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
               <CopyButton value={it.caption} label={`Chép caption #${it.id}`} />
@@ -325,12 +489,188 @@ function ItemDetail({
         )}
       </dl>
 
-      {role === "owner" && (
+      {owner && (
         <div className="rounded-lg border p-3">
-          <AssignBox it={it} api={api} now={now} canSave={schedule} onSaved={reload} />
+          <AssignBox
+            it={it}
+            api={api}
+            now={now}
+            canSave={schedule}
+            onSaved={reload}
+            sessions={sessions}
+            session={session}
+            label={session ? labelOf(session) : ""}
+            onPick={(id) => void pick(id)}
+            need={need}
+            triggerRef={trigger}
+          />
         </div>
       )}
     </article>
+  );
+}
+
+/** "Kênh": which platforms get the item, each with its caption and how its post stands. */
+function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean }) {
+  const selected = it.channels ?? [];
+  const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
+  const [busy, setBusy] = useState(false);
+  async function toggle(ch: Channel) {
+    const next = selected.includes(ch) ? selected.filter((c) => c !== ch) : CHANNELS.filter((c) => c === ch || selected.includes(c));
+    setBusy(true);
+    try {
+      if (await patch(it.id, { channels: next })) onEdit();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="space-y-3">
+      <div role="group" aria-label={`Kênh đăng #${it.id}`} className="flex flex-wrap gap-1.5">
+        {CHANNELS.map((ch) => {
+          const on = selected.includes(ch);
+          const last = on && selected.length === 1;
+          return (
+            <button
+              key={ch}
+              type="button"
+              aria-pressed={on}
+              disabled={!canEdit || busy || last}
+              title={last ? "Cần ít nhất một kênh" : undefined}
+              onClick={() => void toggle(ch)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed max-sm:min-h-11 motion-reduce:transition-none",
+                on ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent/50",
+              )}
+            >
+              {on && <CheckIcon aria-hidden className="size-3" />}
+              {CHANNEL_LABEL[ch]}
+            </button>
+          );
+        })}
+      </div>
+      {selected.map((ch) => (
+        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} canRetry={canRetry} />
+      ))}
+    </div>
+  );
+}
+
+const LINE_TONE: Record<ChannelLine["tone"], string> = {
+  muted: "text-muted-foreground",
+  busy: "text-foreground",
+  ok: "text-st-running",
+  bad: "text-destructive",
+};
+
+/**
+ * One channel's caption: its own text (`captions_json`) or, until edited, what `captionFor` reads from
+ * the shared caption. Saving the shared text back keeps it shared; clearing an own caption returns to it.
+ */
+function ChannelCaption({ it, ch, post, patch, onEdit, canEdit, canRetry }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean }) {
+  const own = it.captions_json?.[ch]?.trim() || null;
+  const shared = captionFor({ caption: it.caption, captions_json: null }, ch);
+  const value = own ?? shared ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  const saving = useRef(false);
+  const [retrying, setRetrying] = useState(false);
+  const text = draft ?? value;
+  const count = charCount(text.trim());
+  const limit = CAPTION_LIMIT[ch];
+  const line = channelLine(it, post);
+  const id = `cap-${it.id}-${ch}`;
+
+  async function save(body: string) {
+    saving.current = true;
+    try {
+      if (await patch(it.id, { captions_json: { [ch]: body } })) {
+        setDraft(null);
+        onEdit();
+      }
+    } finally {
+      saving.current = false;
+    }
+  }
+  async function commit() {
+    if (draft === null || saving.current) return;
+    const v = draft.trim();
+    // Same as the shared text: keep reading it (no own copy to drift); an emptied box drops the own copy.
+    const body = v === (shared ?? "") ? "" : v;
+    if (v === value || (body === "" && !own)) return setDraft(null);
+    await save(body);
+  }
+  async function retry() {
+    setRetrying(true);
+    try {
+      await patch(it.id, { retry_channel: ch });
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby={`${id}-h`} className="space-y-1.5 border-t pt-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h4 id={`${id}-h`} className="text-xs font-semibold">
+          {CHANNEL_LABEL[ch]}
+        </h4>
+        <p className={cn("flex min-w-0 items-center gap-1 text-xs", LINE_TONE[line.tone])}>
+          {line.tone === "busy" && <Loader2Icon aria-hidden className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />}
+          <span className="min-w-0 break-words">{line.text}</span>
+        </p>
+        {line.link && (
+          <a href={line.link} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-0.5 text-xs text-primary underline-offset-2 hover:underline">
+            Mở bài <ExternalLinkIcon aria-hidden className="size-3" />
+          </a>
+        )}
+        {line.retry && canRetry && (
+          <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px]", TOUCH)} disabled={retrying} onClick={() => void retry()}>
+            <RotateCcwIcon aria-hidden /> Thử lại
+          </Button>
+        )}
+      </div>
+      <Textarea
+        id={id}
+        value={text}
+        readOnly={!canEdit}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void commit();
+          }
+          if (e.key === "Escape") {
+            // Inside the sheet, Esc cancels the edit only (not the sheet).
+            e.stopPropagation();
+            setDraft(null);
+          }
+        }}
+        aria-label={`Caption ${CHANNEL_LABEL[ch]} #${it.id}`}
+        aria-describedby={`${id}-meta`}
+        placeholder={`Chưa có caption cho ${CHANNEL_LABEL[ch]}: viết ở đây, hoặc thêm phần === ${ch.toUpperCase()} === vào caption chung`}
+        className="max-h-72 min-h-20 text-sm"
+      />
+      <div id={`${id}-meta`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+        <span className="min-w-0 flex-1">
+          {draft !== null && draft.trim() !== value
+            ? "Chưa lưu: Ctrl+Enter hoặc bấm ra ngoài để lưu, Esc để huỷ"
+            : own
+              ? `Caption riêng cho ${CHANNEL_LABEL[ch]}`
+              : shared
+                ? "Lấy từ caption chung; sửa ở đây để viết riêng cho kênh này"
+                : "Chưa có caption"}
+        </span>
+        {own && draft === null && canEdit && (
+          <button type="button" className="rounded px-1 underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11" onClick={() => void save("")}>
+            Dùng caption chung
+          </button>
+        )}
+        <span className={cn("tabular-nums", count > limit && "font-medium text-destructive")}>
+          {count.toLocaleString("vi-VN")}/{limit.toLocaleString("vi-VN")} ký tự{count > limit ? ", quá giới hạn" : ""}
+        </span>
+      </div>
+    </section>
   );
 }
 

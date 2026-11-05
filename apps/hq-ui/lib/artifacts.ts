@@ -4,7 +4,7 @@
 
 import { rootKey } from "./preview";
 
-export type ArtifactKind = "image" | "video" | "pdf" | "html" | "markdown" | "text";
+export type ArtifactKind = "image" | "video" | "audio" | "pdf" | "office" | "html" | "markdown" | "text";
 
 export type Artifact = {
   /** 32 hex, random; the only handle the file route takes. */
@@ -36,28 +36,75 @@ export type Artifact = {
   mtime: number | null;
 };
 
-/** Extension → kind and the type it is served with. Anything else is refused at registration. */
+/** What the list route hands the view: the row plus `src`, a signed URL `<video>`, `<audio>`, `<img>` and "Tải về" load without the token header. */
+export type ArtifactView = Artifact & { src: string };
+
+const text = "text/plain; charset=utf-8";
+/** Source code and config: shown as text, always served as text/plain (never run, never rendered as XML/HTML). */
+const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".sh", ".ps1", ".bat", ".sql", ".xml", ".css", ".scss", ".ini", ".cfg", ".conf", ".diff", ".patch", ".srt", ".vtt"];
+
+/**
+ * Extension → kind and the type it is served with. Anything else is refused at registration. SVG is an
+ * image shown through `<img>` (no script runs there) and served with a CSP sandbox (lib/server/artifacts.ts).
+ */
 export const ARTIFACT_TYPES: Record<string, { kind: ArtifactKind; type: string }> = {
   ".png": { kind: "image", type: "image/png" },
   ".jpg": { kind: "image", type: "image/jpeg" },
   ".jpeg": { kind: "image", type: "image/jpeg" },
   ".webp": { kind: "image", type: "image/webp" },
   ".gif": { kind: "image", type: "image/gif" },
+  ".avif": { kind: "image", type: "image/avif" },
+  ".bmp": { kind: "image", type: "image/bmp" },
+  ".ico": { kind: "image", type: "image/x-icon" },
+  ".svg": { kind: "image", type: "image/svg+xml" },
   ".mp4": { kind: "video", type: "video/mp4" },
+  ".m4v": { kind: "video", type: "video/mp4" },
   ".webm": { kind: "video", type: "video/webm" },
+  ".mov": { kind: "video", type: "video/quicktime" },
+  ".mkv": { kind: "video", type: "video/x-matroska" },
+  ".ogv": { kind: "video", type: "video/ogg" },
+  ".mp3": { kind: "audio", type: "audio/mpeg" },
+  ".wav": { kind: "audio", type: "audio/wav" },
+  ".ogg": { kind: "audio", type: "audio/ogg" },
+  ".oga": { kind: "audio", type: "audio/ogg" },
+  ".opus": { kind: "audio", type: "audio/ogg" },
+  ".m4a": { kind: "audio", type: "audio/mp4" },
+  ".flac": { kind: "audio", type: "audio/flac" },
+  ".aac": { kind: "audio", type: "audio/aac" },
+  ".weba": { kind: "audio", type: "audio/webm" },
   ".pdf": { kind: "pdf", type: "application/pdf" },
+  ".docx": { kind: "office", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+  ".xlsx": { kind: "office", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+  ".pptx": { kind: "office", type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+  ".doc": { kind: "office", type: "application/msword" },
+  ".xls": { kind: "office", type: "application/vnd.ms-excel" },
+  ".ppt": { kind: "office", type: "application/vnd.ms-powerpoint" },
+  ".odt": { kind: "office", type: "application/vnd.oasis.opendocument.text" },
+  ".ods": { kind: "office", type: "application/vnd.oasis.opendocument.spreadsheet" },
+  ".odp": { kind: "office", type: "application/vnd.oasis.opendocument.presentation" },
   ".html": { kind: "html", type: "text/html; charset=utf-8" },
   ".htm": { kind: "html", type: "text/html; charset=utf-8" },
   ".md": { kind: "markdown", type: "text/markdown; charset=utf-8" },
-  ".txt": { kind: "text", type: "text/plain; charset=utf-8" },
-  ".log": { kind: "text", type: "text/plain; charset=utf-8" },
+  ".txt": { kind: "text", type: text },
+  ".log": { kind: "text", type: text },
   ".json": { kind: "text", type: "application/json; charset=utf-8" },
   ".csv": { kind: "text", type: "text/csv; charset=utf-8" },
   ".tsv": { kind: "text", type: "text/tab-separated-values; charset=utf-8" },
   ".yaml": { kind: "text", type: "text/yaml; charset=utf-8" },
   ".yml": { kind: "text", type: "text/yaml; charset=utf-8" },
-  ".toml": { kind: "text", type: "text/plain; charset=utf-8" },
+  ".toml": { kind: "text", type: text },
+  ...Object.fromEntries(CODE_EXTS.map((e) => [e, { kind: "text" as const, type: text }])),
 };
+
+/** Kind and served type of a file by its extension (case-insensitive), or null when HQ does not show it. */
+export const fileType = (p: string): { kind: ArtifactKind; type: string } | null => ARTIFACT_TYPES[extOf(p)] ?? null;
+
+/** Which Office family a file is: what the preview parses it as. Old binary formats (doc/xls/ppt) only convert through LibreOffice. */
+export type OfficeFamily = "doc" | "sheet" | "slides";
+const OFFICE_FAMILY: Record<string, OfficeFamily> = { ".docx": "doc", ".doc": "doc", ".odt": "doc", ".xlsx": "sheet", ".xls": "sheet", ".ods": "sheet", ".pptx": "slides", ".ppt": "slides", ".odp": "slides" };
+export const officeFamily = (p: string): OfficeFamily | null => OFFICE_FAMILY[extOf(p)] ?? null;
+/** The zip-based formats the browser can read itself when LibreOffice is not installed. */
+export const officeReadable = (p: string): boolean => [".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"].includes(extOf(p));
 
 /** ".pdf" from "C:\\x\\Báo cáo.PDF". */
 export const extOf = (p: string): string => {
@@ -68,11 +115,17 @@ export const extOf = (p: string): string => {
 /** "Báo cáo.pdf" from either slash style. */
 export const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 
-/** Videos are bigger than the rest; a text file past TEXT_INLINE_MAX is offered as a download only. */
+/** Media streams with Range (no whole-file fetch), so it may be big; a text file past TEXT_INLINE_MAX is offered as a download only. */
 export const ARTIFACT_MAX_BYTES = 30 * 1024 * 1024;
-export const ARTIFACT_VIDEO_MAX_BYTES = 60 * 1024 * 1024;
+export const ARTIFACT_MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const TEXT_INLINE_MAX = 2 * 1024 * 1024;
-export const maxArtifactBytes = (kind: ArtifactKind): number => (kind === "video" ? ARTIFACT_VIDEO_MAX_BYTES : ARTIFACT_MAX_BYTES);
+export const maxArtifactBytes = (kind: ArtifactKind): number => (kind === "video" || kind === "audio" ? ARTIFACT_MEDIA_MAX_BYTES : ARTIFACT_MAX_BYTES);
+
+/** "C:\\x\\out" from "C:\\x\\out\\a.pdf" (either slash style); the path itself when it has no folder part. */
+export const dirOf = (p: string): string => {
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i > 0 ? (i === 2 && /^[A-Za-z]:/.test(p) ? p.slice(0, 3) : p.slice(0, i)) : p;
+};
 
 /** `/api/artifacts/<id>/file`, `?download=1` for an attachment. */
 export const artifactFileUrl = (id: string, download = false) => `/api/artifacts/${id}/file${download ? "?download=1" : ""}`;
@@ -80,17 +133,19 @@ export const artifactFileUrl = (id: string, download = false) => `/api/artifacts
 export const KIND_LABEL: Record<ArtifactKind, string> = {
   image: "Ảnh",
   video: "Video",
+  audio: "Âm thanh",
   pdf: "PDF",
+  office: "Office",
   html: "HTML",
   markdown: "Markdown",
   text: "Văn bản",
 };
 
-export type ArtifactGroup = { key: string; root: string; project: string; items: Artifact[] };
+export type ArtifactGroup<A extends Artifact = Artifact> = { key: string; root: string; project: string; items: A[] };
 
 /** One block per project root (case/slash-insensitive). `list` comes newest first, so blocks and their items do too. */
-export function groupArtifacts(list: Artifact[]): ArtifactGroup[] {
-  const by = new Map<string, ArtifactGroup>();
+export function groupArtifacts<A extends Artifact>(list: A[]): ArtifactGroup<A>[] {
+  const by = new Map<string, ArtifactGroup<A>>();
   for (const a of list) {
     const root = a.for_root ?? a.root;
     const key = rootKey(root);
@@ -128,4 +183,20 @@ export function linkLabel(url: string): string {
   if (host === "business.facebook.com") return "Meta Business Suite";
   if (host === "facebook.com" || host === "m.facebook.com" || host === "fb.com") return "Facebook";
   return host;
+}
+
+/**
+ * An image in a markdown result may load only from `data:image/…` or HQ's own origin; null for anything
+ * else. A remote `![](https://…)` would tell that server the owner opened the file, from where, and when.
+ */
+export function safeImageSrc(src: unknown, origin: string): string | null {
+  if (typeof src !== "string" || !src.trim()) return null;
+  const s = src.trim();
+  if (/^data:image\/[a-z0-9.+-]+[;,]/i.test(s)) return s;
+  try {
+    const u = new URL(s, origin);
+    return u.origin === origin && (u.protocol === "http:" || u.protocol === "https:") ? u.href : null;
+  } catch {
+    return null;
+  }
 }

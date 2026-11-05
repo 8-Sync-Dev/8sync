@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -22,9 +23,21 @@ export function toTmuxName(input: unknown): Result<string> {
   return { ok: true, value: `hq-${bare}` };
 }
 
+/** Same folder, compared the way the OS does (case-insensitive on Windows and macOS). */
+function samePath(a: string, b: string): boolean {
+  const n = (p: string) => path.resolve(p).replace(/[\\/]+$/, "");
+  return process.platform === "linux" ? n(a) === n(b) : n(a).toLowerCase() === n(b).toLowerCase();
+}
+
+/** A drive or filesystem root (`C:\`, `/`): a whole disk is never a project. */
+const isFsRoot = (p: string) => path.dirname(path.resolve(p)) === path.resolve(p);
+
 /**
  * A project path must be absolute, contain no `..` segment, and resolve to an
- * existing directory. Returns the canonical (realpath) form.
+ * existing directory. Returns the canonical (realpath) form. Never a network or device path
+ * (`\\host\share`, `\\?\`, `\\.\`: refused before any disk call, so Windows does not reach out
+ * to a server with the user's credentials), a filesystem root, or the home folder itself: every
+ * project tool (trail, the file tree, a build) would then walk the whole disk or home.
  */
 export function validateProjectPath(input: unknown): Result<string> {
   if (typeof input !== "string" || input.trim() === "") {
@@ -32,20 +45,34 @@ export function validateProjectPath(input: unknown): Result<string> {
   }
   const p = input.trim();
   if (p.length > 4096 || p.includes("\0")) return { ok: false, error: "path is invalid" };
+  if (/^[\\/]{2}/.test(p)) return { ok: false, error: "không nhận đường dẫn mạng hoặc thiết bị (\\\\…)" };
   if (!path.isAbsolute(p)) return { ok: false, error: "path must be absolute" };
   if (p.split(/[\\/]+/).includes("..")) return { ok: false, error: "path must not contain '..'" };
+  if (isFsRoot(p)) return { ok: false, error: "không nhận cả ổ đĩa làm dự án" };
   let real: string;
   try {
     real = fs.realpathSync(p);
   } catch {
     return { ok: false, error: "path does not exist" };
   }
+  // A link can lead to a root, the home folder or a share too.
+  if (/^[\\/]{2}/.test(real)) return { ok: false, error: "không nhận đường dẫn mạng hoặc thiết bị (\\\\…)" };
+  if (isFsRoot(real)) return { ok: false, error: "không nhận cả ổ đĩa làm dự án" };
+  if (samePath(real, os.homedir()) || samePath(real, realOr(os.homedir()))) return { ok: false, error: "không nhận cả thư mục home làm dự án: chọn một thư mục con" };
   try {
     if (!fs.statSync(real).isDirectory()) return { ok: false, error: "path is not a directory" };
   } catch {
     return { ok: false, error: "path is not readable" };
   }
   return { ok: true, value: real };
+}
+
+function realOr(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
 }
 
 /**
@@ -75,10 +102,13 @@ export function clampText(text: unknown, max = 4000, allowControls = false): Res
 /**
  * A folder to create for a new project (owner 2026-10-22: "không có nút tạo dự án"): absolute, no
  * "..", not a drive or filesystem root, not there yet (or an empty folder), under an existing parent.
+ * A network or device path (`\\host\share`, `\\?\…`, `//host`) is refused before anything touches the
+ * disk: even `existsSync` on a UNC path makes Windows connect to that host (and send the account's NTLM hash).
  * Returns the normalized path; creating it is the caller's job.
  */
 export function validateNewProjectPath(input: unknown): Result<string> {
   if (typeof input !== "string" || input.trim() === "") return { ok: false, error: "path is required" };
+  if (/^[\\/]{2}/.test(input.trim())) return { ok: false, error: "không nhận đường dẫn mạng hoặc thiết bị (\\\\…)" };
   const p = path.normalize(input.trim()).replace(/[\\/]+$/, "");
   if (p.length > 4096 || p.includes("\0")) return { ok: false, error: "path is invalid" };
   if (!path.isAbsolute(p)) return { ok: false, error: "path must be absolute" };

@@ -1,7 +1,8 @@
 import path from "node:path";
-import { OWNER_CONTENT_FIELDS } from "@/lib/access";
-import { isFormat, isStatus } from "@/lib/content";
-import { ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
+import { GUEST_STATUS_DENIED, OWNER_CONTENT_FIELDS, OWNER_CONTENT_STATUSES } from "@/lib/access";
+import { GUEST_CHANNEL_ERROR, isFormat, isStatus, type ChannelPost } from "@/lib/content";
+import { approveAndSend, ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
+import { deliverText } from "@/lib/server/deliver";
 import { bad, json, open, readBody } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -21,9 +22,11 @@ function fail(e: unknown): Response {
 /** What a guest (Chia sẻ) reads instead of a DB error: those name paths on the owner's disk. */
 const GUEST_DB_ERROR = "sổ nội dung trên máy chủ HQ chưa sẵn sàng";
 
-/** A guest sees the media (signed URLs), not where it sits on the owner's disk. */
-function guestItem<T extends { media_path?: string | null }>(it: T): T {
-  return { ...it, media_path: it.media_path && path.basename(it.media_path) };
+/** A guest sees the media (signed URLs), not where it sits on the owner's disk, nor the worker's error text (paths, account details). */
+function guestItem<T extends { media_path?: string | null; channel_posts?: ChannelPost[] }>(it: T): T {
+  const out: T = { ...it, media_path: it.media_path && path.basename(it.media_path) };
+  if (it.channel_posts) out.channel_posts = it.channel_posts.map((p) => ({ ...p, error: p.error ? GUEST_CHANNEL_ERROR : null }));
+  return out;
 }
 
 /** The registry for writes: 404 when no DB is configured, 409 with the reason when it cannot be used (a guest gets no path). */
@@ -56,7 +59,8 @@ export async function GET(req: Request) {
   try {
     const list = listContent(c.db, { status, format, fb_page: page });
     if (!guest) return json({ ...list, repo: contentRepo() });
-    return json({ ...list, items: list.items.map(guestItem) });
+    // The owner's default posting session is the owner's: a guest cannot send anyway (`send` is owner only).
+    return json({ ...list, assign: null, items: list.items.map(guestItem) });
   } catch (e) {
     // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
     return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : `không đọc được sổ nội dung: ${(e as Error).message}` });
@@ -79,9 +83,18 @@ export async function POST(req: Request) {
 
 /**
  * `?id=`: body = fields to change, `status`, `scheduled_at` (ms | null), `assignee_session` (+
- * `assignee_base`; null clears) and `approve_source: "<source URL the owner saw>"`.
- * An editor (Chia sẻ) changes the item but not its media path or its agent; the source it approves
- * is signed with its invite label.
+ * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and `ai_label`
+ * (optional: true = AI used, label on when posting; false = no AI; kept in the 0064 column).
+ * Migration 0064 (else 400): `channels`, `captions_json` (merged; "" drops a channel's own caption)
+ * and `retry_channel` (deletes a failed / blocked / cancelled channel row; 409 otherwise). Entering
+ * `approved` answers 409 with what a channel misses.
+ * "Duyệt" in one tap (owner only): `{ status: "approved", seen: <updated_at on screen>, send: { session, base }, ai_label? }`
+ * approves AND sends the posting task to that session (`approveAndSend`): a refusal sends nothing,
+ * a failed delivery (502) leaves the status unchanged. Answers `{ item, sent }`.
+ * An editor (Chia sẻ) changes the item but not its media path, its agent, `send`, `ai_label` or
+ * `retry_channel`, and never sets `approved` or `published` (403: only the owner approves what goes
+ * out); the source it approves is signed with its invite label. Its edit of what an approved item
+ * posts (title, caption, page, channels, format) sends the item back to "checked".
  */
 export async function PATCH(req: Request) {
   const o = open(req);
@@ -93,11 +106,20 @@ export async function PATCH(req: Request) {
   const guest = o.access.guest;
   const ownerField = guest ? OWNER_CONTENT_FIELDS.find((k) => k in body) : undefined;
   if (ownerField) return bad(`${ownerField}: chỉ chủ HQ sửa được`, 403);
+  if (guest && typeof body.status === "string" && OWNER_CONTENT_STATUSES.includes(body.status)) return bad(GUEST_STATUS_DENIED, 403);
   const c = registry(!!guest);
   if ("res" in c) return c.res;
   try {
-    const item = updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover());
-    return json({ item: guest ? guestItem(item) : item });
+    if (!("send" in body)) {
+      const item = updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover(), Date.now(), !!guest);
+      return json({ item: guest ? guestItem(item) : item });
+    }
+    const send = body.send;
+    if (body.status !== "approved" || Object.keys(body).some((k) => !["send", "status", "ai_label", "seen"].includes(k)) || !send || typeof send !== "object" || Array.isArray(send))
+      return bad('send: chỉ đi cùng status "approved", seen (và ai_label), dạng { session, base }', 422);
+    const { session, base } = send as Record<string, unknown>;
+    const args = { session, base, seen: body.seen, ...("ai_label" in body ? { ai_label: body.ai_label } : {}) };
+    return json(await approveAndSend(c.db, id, args, hqApprover(), (s, text) => deliverText(o.db, s, text)));
   } catch (e) {
     return fail(e);
   }

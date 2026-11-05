@@ -44,6 +44,7 @@ mod marketplace;
 #[cfg(feature = "web")]
 pub(crate) mod knowledge;
 mod toolstats;
+mod sessions;
 
 #[derive(ClapArgs, Debug)]
 #[command(after_help = indoc::indoc! {"

@@ -28,8 +28,7 @@ pub(crate) fn harness_toolstats(env: &env_detect::Env) -> Result<()> {
     ui::header("8sync harness toolstats");
     let root = discover::detect_current_project_root()
         .context("not inside a project — cd into your repo first")?;
-    let slug = session_slug(&env.home, &root);
-    let sess_dir = env.home.join(format!(".omp/agent/sessions/{}", slug));
+    let sess_dir = super::sessions::session_dir(&env.home, &root);
 
     if !sess_dir.is_dir() {
         ui::warn(&format!(
@@ -46,14 +45,6 @@ pub(crate) fn harness_toolstats(env: &env_detect::Env) -> Result<()> {
         sess_dir.display()
     ));
     report(&calls, &root)
-}
-
-/// `~/.omp/agent/sessions/<slug>` for a project root (mirrors the web dashboard).
-fn session_slug(home: &Path, root: &Path) -> String {
-    match root.strip_prefix(home) {
-        Ok(rel) => format!("-{}", rel.to_string_lossy().replace('/', "-")),
-        Err(_) => format!("-{}", root.to_string_lossy().trim_start_matches('/').replace('/', "-")),
-    }
 }
 
 /// Parse each `<slug>/*.jsonl` and fold its tool calls. Returns (calls, sessions).

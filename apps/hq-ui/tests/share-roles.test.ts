@@ -8,9 +8,12 @@ import { GET as UPLOAD_FILE } from "@/app/api/uploads/[id]/file/route";
 import { DELETE as INVITES_DELETE, GET as INVITES_GET, POST as INVITES_POST } from "@/app/api/invites/route";
 import { GET as LOGIN } from "@/app/api/login/route";
 import { GET as GH_POLL, POST as GH_START } from "@/app/api/login/github/route";
-import { atLeast, deniedText, GUEST_ROLES, GUEST_ROUTES, type GuestRole } from "@/lib/access";
+import { atLeast, deniedText, GUEST_ROLES, GUEST_ROUTES, GUEST_STATUS_DENIED, type GuestRole } from "@/lib/access";
+import { GUEST_CHANNEL_ERROR } from "@/lib/content";
 import { checkAuth, getToken, isDenied, sessionSecret, type Access, type Denied } from "@/lib/server/auth";
 import { contentConfigPath } from "@/lib/server/content";
+import { contentPrefsPath, saveAssignPref } from "@/lib/server/content-prefs";
+import { inboxDir } from "@/lib/server/inbox";
 import { __resetFlows, githubConfigPath } from "@/lib/server/github-login";
 import { cookieAccess } from "@/lib/server/http";
 import { createInvite, GUEST_COOKIE, GUEST_GH_MS, GUEST_MAX_MS, guestAccess, guestCookie, readInvites, revokeInvite } from "@/lib/server/invites";
@@ -224,13 +227,14 @@ describe("content as a guest", () => {
     scheduled_at INTEGER, assignee_session TEXT, assignee_base TEXT, assigned_at INTEGER);`;
   let dir = "";
   let id = 0;
+  let file = "";
 
   beforeAll(() => {
     const home = process.env.USERPROFILE!;
     dir = path.join(home, "share-media");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "clip.mp4"), Buffer.alloc(512, 7));
-    const file = path.join(home, "share-content.db");
+    file = path.join(home, "share-content.db");
     const db = new DatabaseSync(file);
     db.exec(SCHEMA);
     id = Number(db.prepare("INSERT INTO content_items (format, title, caption, media_path) VALUES ('clip', 'Bài chia sẻ', 'cap', ?)").run(dir).lastInsertRowid);
@@ -276,11 +280,104 @@ describe("content as a guest", () => {
     expect((await patchAs({ source_url: "https://s" })).status).toBe(200);
     const approved = await patchAs({ approve_source: "https://s" });
     expect(((await approved.json()) as { item: { source_approved_by: string } }).item.source_approved_by).toBe("chia sẻ: khách editor");
-    for (const field of ["media_path", "assignee_session", "assignee_base"]) {
+    for (const field of ["media_path", "assignee_session", "assignee_base", "ai_label", "retry_channel"]) {
       const r = await PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body: { [field]: "C:/x" } }));
       expect(r.status, field).toBe(403);
     }
     expect((await PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body: { caption: "y" }, origin: "http://evil.test" }))).status).toBe(403);
+  });
+
+  it("a guest cannot send the posting task to an agent session, nor read the owner's default session", async () => {
+    saveAssignPref({ session: "omp-2364d8b9ca3a61ed", base: "mkt · 8sync-startup" });
+    try {
+      for (const role of GUEST_ROLES) {
+        const { invite: inv } = invite(role);
+        const cookie = cookieFor(inv.id, role);
+        const r = await PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body: { status: "approved", send: { session: "omp-2364d8b9ca3a61ed", base: "x" } } }));
+        expect(r.status, role).toBe(403);
+        const list = (await (await CONTENT(guestReq("/api/content", cookie))).json()) as { assign: unknown };
+        expect(list.assign, role).toBeNull();
+      }
+    } finally {
+      fs.rmSync(contentPrefsPath(), { force: true });
+    }
+  });
+
+  it("a guest editor's change to what an approved item posts sends it back to checked; the owner's edit keeps it approved", async () => {
+    const setApproved = () => {
+      const db = new DatabaseSync(file);
+      db.prepare("UPDATE content_items SET status = 'approved', checked_at = 1 WHERE id = ?").run(id);
+      db.close();
+    };
+    const statusIn = async (r: Response) => {
+      expect(r.status).toBe(200);
+      const body: { item: { status: string } } = await r.json();
+      return body.item.status;
+    };
+    const { invite: inv } = invite("editor");
+    const cookie = cookieFor(inv.id, "editor");
+    const patchAs = (body: Record<string, unknown>) => PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body })).then(statusIn);
+    for (const body of [{ caption: "caption khách sửa" }, { title: "Tiêu đề khách sửa" }, { fb_page: "trang-khac" }, { format: "text" }]) {
+      setApproved();
+      expect(await patchAs(body), JSON.stringify(body)).toBe("checked");
+    }
+    // The item waits for the owner: a guest cannot approve it again, nor mark it published, alone or
+    // riding along an edit; the refused write changes nothing.
+    for (const body of [{ status: "approved" }, { status: "published" }, { caption: "lén duyệt", status: "approved" }]) {
+      const r = await PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body }));
+      expect(r.status, JSON.stringify(body)).toBe(403);
+      const err: { error: string } = await r.json();
+      expect(err.error).toBe(GUEST_STATUS_DENIED);
+    }
+    const db = new DatabaseSync(file);
+    expect(db.prepare("SELECT status, caption FROM content_items WHERE id = ?").get(id)).toMatchObject({ status: "checked", caption: "caption khách sửa" });
+    db.close();
+    // The earlier steps stay the guest's.
+    expect(await patchAs({ status: "drafted" })).toBe("drafted");
+    expect(await patchAs({ status: "checked" })).toBe("checked");
+    // The same value again, or a field that is not what gets posted: still approved.
+    setApproved();
+    expect(await patchAs({ caption: "caption khách sửa" })).toBe("approved");
+    expect(await patchAs({ check_note: "ok" })).toBe("approved");
+    // Nothing went to any agent session.
+    expect(fs.existsSync(inboxDir()) ? fs.readdirSync(inboxDir()) : []).toEqual([]);
+    // The owner's edit keeps main's behaviour (0.122.15: no drop-back), and the owner approves.
+    expect(await statusIn(await PATCH(req(`/api/content?id=${id}`, { method: "PATCH", token, origin: ORIGIN, body: { caption: "chủ sửa" } })))).toBe("approved");
+    expect(await statusIn(await PATCH(req(`/api/content?id=${id}`, { method: "PATCH", token, origin: ORIGIN, body: { status: "published" } })))).toBe("published");
+  });
+
+  // Last in this block: it adds migration 0064 to the shared DB.
+  it("a guest reads a channel's failure as a generic line, never the worker's text; the owner reads it whole", async () => {
+    const db = new DatabaseSync(file);
+    db.exec(`ALTER TABLE content_items ADD COLUMN channels TEXT NOT NULL DEFAULT '["facebook"]';
+      ALTER TABLE content_items ADD COLUMN captions_json TEXT;
+      ALTER TABLE content_items ADD COLUMN ai_label INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE content_channel_posts (item_id INTEGER NOT NULL, channel TEXT NOT NULL, state TEXT NOT NULL, scheduled_for INTEGER, permalink TEXT,
+        published_at INTEGER, error TEXT, attempts INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, channel));`);
+    const secret = "ego profile C:\\Users\\owner\\AppData\\ego\\8sync FB: login checkpoint";
+    db.prepare("INSERT INTO content_channel_posts (item_id, channel, state, error) VALUES (?, 'facebook', 'failed', ?)").run(id, secret);
+    db.close();
+    type Listed = { items: { id: number; channel_posts: { state: string; error: string | null }[] }[] };
+    for (const role of GUEST_ROLES) {
+      const { invite: inv } = invite(role);
+      const res = await CONTENT(guestReq("/api/content", cookieFor(inv.id, role)));
+      const text = await res.text();
+      expect(text, role).not.toContain("AppData");
+      const row = (JSON.parse(text) as Listed).items.find((i) => i.id === id)!;
+      expect(row.channel_posts, role).toEqual([expect.objectContaining({ state: "failed", error: GUEST_CHANNEL_ERROR })]);
+    }
+    const owner = (await (await CONTENT(req("/api/content", { token, origin: null }))).json()) as Listed;
+    expect(owner.items.find((i) => i.id === id)!.channel_posts[0].error).toBe(secret);
+    // With channels: a guest's change of channels or a channel caption on an approved item drops it back too.
+    const { invite: ed } = invite("editor");
+    for (const body of [{ channels: ["facebook", "threads"] }, { captions_json: { threads: "khách viết" } }]) {
+      const db = new DatabaseSync(file);
+      db.prepare("UPDATE content_items SET status = 'approved' WHERE id = ?").run(id);
+      db.close();
+      const r = await PATCH(guestReq(`/api/content?id=${id}`, cookieFor(ed.id, "editor"), { method: "PATCH", body }));
+      const got: { item: { status: string } } = await r.json();
+      expect(got.item.status, JSON.stringify(body)).toBe("checked");
+    }
   });
 });
 

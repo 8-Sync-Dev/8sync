@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
-use clap::Args as ClapArgs;
+use anyhow::{bail, Context, Result};
+use clap::{Args as ClapArgs, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -16,6 +16,9 @@ use crate::{env_detect, ui, verbs::{session, skill}};
           8sync . mv <old> <new>        rename a session
           8sync . rm <name> [--force]   remove a session (--force also deletes its transcript + worktree)
           8sync . merge <a> <b> ...     land session branches into the current branch (safe merge, local-only)
+          8sync . api --mode claude-code-cli   open 'api' in Claude Code (same as `8sync ccc . api`)
+          8sync . api --mode forgecode  open 'api' in ForgeCode (same as `8sync forge api`)
+          SUSYNC_MODE=claude 8sync . api   default engine from the env (the flag wins)
 
         BEHAVIOR
           · A named session is an isolated omp conversation (its own --session-dir), tracked in a
@@ -25,6 +28,9 @@ use crate::{env_detect, ui, verbs::{session, skill}};
           · --worktree gives a session its own tree/branch so features run in parallel without collision;
             merge lands them back via git merge-tree preflight + rebase-to-unblock (never pushes).
           · Reserved verbs (new/ls/list/mv/rm/merge) can't be used as bare session names.
+          · --mode picks the engine for launches (`.`, `<name>`, `new <name>`): omp (default),
+            claude-code-cli (claude, ccc, claude-code), forgecode (forge); codex-cli is planned.
+            ls/mv/rm/merge always act on the omp registry.
     "}
 )]
 pub struct Args {
@@ -72,6 +78,127 @@ pub struct Args {
     /// With a bare `<name>`: run omp on this model (`--model <provider/model>`, e.g. zai/glm-5.3).
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Engine for launches (`.`, `<name>`, `new <name>`); default from `SUSYNC_MODE`, else omp.
+    #[arg(long, value_enum, value_name = "ENGINE")]
+    pub mode: Option<Engine>,
+}
+
+/// The engine `8sync .` launches a session in. Add a variant here and its launcher in [`launch_in`].
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    /// omp (default): named sessions in this repo's omp registry.
+    Omp,
+    /// Claude Code, exactly like `8sync ccc . <name>`.
+    #[value(name = "claude-code-cli", alias = "claude", alias = "ccc", alias = "claude-code")]
+    ClaudeCodeCli,
+    /// ForgeCode, exactly like `8sync forge <name>`.
+    #[value(alias = "forge")]
+    Forgecode,
+    /// Codex CLI: planned, not supported yet.
+    #[value(name = "codex-cli", alias = "codex")]
+    CodexCli,
+}
+
+/// Env var holding the default engine when `--mode` is absent.
+const MODE_ENV: &str = "SUSYNC_MODE";
+
+/// `--mode` wins over `SUSYNC_MODE`, which wins over omp. A bad env value is an error, not omp.
+fn resolve_engine(flag: Option<Engine>, env: Option<&str>) -> Result<Engine> {
+    if let Some(e) = flag {
+        return Ok(e);
+    }
+    match env.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(Engine::Omp),
+        Some(v) => Engine::from_str(v, true)
+            .map_err(|_| anyhow::anyhow!("{MODE_ENV}={v} không hợp lệ — engine hỗ trợ: {}", engine_names())),
+    }
+}
+
+fn engine_names() -> String {
+    Engine::value_variants()
+        .iter()
+        .filter_map(|e| e.to_possible_value())
+        .map(|v| v.get_name().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Args for a non-omp engine's own verb, or the reason it can't run there. Only the launch shapes
+/// of `8sync .` pass (`""`, `<name>`, `new <name>`): a word the engine would route as one of its
+/// own commands, a flag-looking name or extra words never reach it.
+fn delegate_args(engine: Engine, a: &Args) -> Result<Vec<String>> {
+    let only_omp = [("--share", a.share), ("--worktree", a.worktree)];
+    if let Some((flag, _)) = only_omp.iter().find(|(_, on)| *on) {
+        bail!("{flag} chỉ dùng với --mode omp");
+    }
+    let (commands, verb_of): (Vec<&str>, fn(&str) -> String) = match engine {
+        Engine::Omp => unreachable!("omp launches in here::run"),
+        Engine::CodexCli => bail!(
+            "--mode codex-cli đang trong kế hoạch, chưa hỗ trợ — engine dùng được: omp, claude-code-cli, forgecode"
+        ),
+        Engine::ClaudeCodeCli => (
+            crate::verbs::ccc::help::VERBS.iter().chain(crate::verbs::ccc::help::RESERVED).copied().collect(),
+            |w| format!("8sync ccc . {w}"),
+        ),
+        Engine::Forgecode => (crate::verbs::forge::SUBCOMMANDS.to_vec(), |w| format!("8sync forge {w}")),
+    };
+    let name = match a.rest.as_slice() {
+        [] => None,
+        [n] => Some(n),
+        [new, n] if new == "new" => Some(n),
+        _ => bail!("với --mode chỉ nhận `8sync . [<name>]` hoặc `8sync . new <name>`"),
+    };
+    if let Some(n) = name {
+        if commands.contains(&n.as_str()) {
+            bail!("`{n}` là lệnh của {}, không phải tên phiên — dùng `{}`", engine.name(), verb_of(n));
+        }
+        if n.is_empty() || n.starts_with('-') {
+            bail!("tên phiên `{n}` không hợp lệ (không được rỗng hay bắt đầu bằng `-`)");
+        }
+    }
+    let model = match a.model.as_deref() {
+        Some(m) if m.is_empty() || m.starts_with('-') => bail!("--model `{m}` không hợp lệ (không được rỗng hay bắt đầu bằng `-`)"),
+        m => m,
+    };
+    match engine {
+        Engine::ClaudeCodeCli => {
+            let mut rest = vec![".".to_string()];
+            rest.extend(a.rest.iter().cloned());
+            if let Some(m) = model {
+                if name.is_none() {
+                    bail!("--model với claude-code-cli cần tên phiên: 8sync . <name> --mode claude-code-cli --model <model>");
+                }
+                // One argv: `claude` can never read the value as a flag of its own.
+                rest.push(format!("--model={m}"));
+            }
+            Ok(rest)
+        }
+        Engine::Forgecode => {
+            if model.is_some() {
+                bail!("--model không dùng với forgecode — chọn model trong Forge (:model)");
+            }
+            Ok(a.rest.clone())
+        }
+        Engine::Omp | Engine::CodexCli => unreachable!("handled above"),
+    }
+}
+
+impl Engine {
+    /// The engine's `--mode` name (`claude-code-cli`, `forgecode`, ...).
+    fn name(self) -> String {
+        self.to_possible_value().map_or_else(String::new, |v| v.get_name().to_string())
+    }
+}
+
+/// Launch in a non-omp engine through its own verb (same registry, same prepare path).
+fn launch_in(engine: Engine, a: &Args) -> Result<()> {
+    let rest = delegate_args(engine, a)?;
+    match engine {
+        Engine::ClaudeCodeCli => crate::verbs::ccc::run(crate::verbs::ccc::Args { rest }),
+        Engine::Forgecode => crate::verbs::forge::run(crate::verbs::forge::Args { rest }),
+        Engine::Omp | Engine::CodexCli => unreachable!("delegate_args handles omp and codex"),
+    }
 }
 
 pub fn run(a: Args) -> Result<()> {
@@ -105,6 +232,11 @@ pub fn run(a: Args) -> Result<()> {
             return session::cmd_merge(&env, &root, rest, a.keep_worktree);
         }
         _ => {}
+    }
+
+    let engine = resolve_engine(a.mode, std::env::var(MODE_ENV).ok().as_deref())?;
+    if engine != Engine::Omp {
+        return launch_in(engine, &a);
     }
 
     // Launch paths — seed project context first.
@@ -357,6 +489,100 @@ mod tests {
         let a = p(&["ls"]).unwrap();
         assert_eq!((a.sort, a.reverse), (None, false));
         assert!(p(&["ls", "--sort", "nope"]).is_err());
+    }
+
+    fn parse(v: &[&str]) -> Result<Args, clap::Error> {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            a: Args,
+        }
+        Cli::try_parse_from(std::iter::once(".").chain(v.iter().copied())).map(|c| c.a)
+    }
+
+    #[test]
+    fn mode_accepts_engines_and_aliases() {
+        let mode = |m: &str| parse(&["api", "--mode", m]).unwrap().mode;
+        for (m, want) in [
+            ("omp", Engine::Omp),
+            ("claude-code-cli", Engine::ClaudeCodeCli),
+            ("claude", Engine::ClaudeCodeCli),
+            ("ccc", Engine::ClaudeCodeCli),
+            ("claude-code", Engine::ClaudeCodeCli),
+            ("forgecode", Engine::Forgecode),
+            ("forge", Engine::Forgecode),
+            ("codex-cli", Engine::CodexCli),
+            ("codex", Engine::CodexCli),
+        ] {
+            assert_eq!(mode(m), Some(want), "{m}");
+        }
+        let err = parse(&["api", "--mode", "gemini"]).unwrap_err().to_string();
+        assert!(err.contains("claude-code-cli") && err.contains("forgecode"), "{err}");
+        assert_eq!(parse(&["new", "api", "--mode", "forge"]).unwrap().rest, ["new", "api"]);
+    }
+
+    #[test]
+    fn mode_precedence_is_flag_then_env_then_omp() {
+        assert_eq!(resolve_engine(Some(Engine::Forgecode), Some("claude")).unwrap(), Engine::Forgecode);
+        assert_eq!(resolve_engine(None, Some("claude")).unwrap(), Engine::ClaudeCodeCli);
+        assert_eq!(resolve_engine(None, Some("FORGE")).unwrap(), Engine::Forgecode);
+        assert_eq!(resolve_engine(None, None).unwrap(), Engine::Omp);
+        assert_eq!(resolve_engine(None, Some("  ")).unwrap(), Engine::Omp);
+        assert!(resolve_engine(None, Some("gemini")).unwrap_err().to_string().contains("claude-code-cli"));
+        // A valid flag overrides even a broken env value.
+        assert_eq!(resolve_engine(Some(Engine::Omp), Some("gemini")).unwrap(), Engine::Omp);
+    }
+
+    #[test]
+    fn codex_is_refused_with_the_supported_list() {
+        let err = delegate_args(Engine::CodexCli, &parse(&["api", "--mode", "codex"]).unwrap()).unwrap_err().to_string();
+        assert!(err.contains("chưa hỗ trợ") && err.contains("claude-code-cli") && err.contains("forgecode"), "{err}");
+    }
+
+    #[test]
+    fn other_engines_get_their_own_verb_args() {
+        let a = parse(&["new", "api", "--mode", "claude"]).unwrap();
+        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "new", "api"]);
+        let a = parse(&["api", "--mode", "ccc", "--model", "opus"]).unwrap();
+        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "api", "--model=opus"]);
+        let a = parse(&["new", "api", "--mode", "ccc", "--model", "opus"]).unwrap();
+        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "new", "api", "--model=opus"]);
+        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &parse(&[]).unwrap()).unwrap(), ["."]);
+        assert_eq!(delegate_args(Engine::Forgecode, &parse(&["api"]).unwrap()).unwrap(), ["api"]);
+        // omp-only flags are refused instead of silently dropped.
+        assert!(delegate_args(Engine::Forgecode, &parse(&["new", "api", "--worktree"]).unwrap()).is_err());
+        assert!(delegate_args(Engine::ClaudeCodeCli, &parse(&["api", "--share"]).unwrap()).is_err());
+        assert!(delegate_args(Engine::Forgecode, &parse(&["api", "--model", "x"]).unwrap()).is_err());
+    }
+
+    #[test]
+    fn engine_commands_are_never_session_names() {
+        let refuse = |e: Engine, w: &[&str]| delegate_args(e, &parse(w).unwrap()).unwrap_err().to_string();
+        for w in ["kit", "hook", "status", "policy", "secret", "guard", "statusline", "eco"] {
+            let err = refuse(Engine::ClaudeCodeCli, &[w]);
+            assert!(err.contains(&format!("`{w}` là lệnh của claude-code-cli")) && err.contains(&format!("8sync ccc . {w}")), "{err}");
+            refuse(Engine::ClaudeCodeCli, &["new", w]);
+        }
+        for w in ["key", "provider", "config", "mcp", "status", "workspace", "info", "--tui"] {
+            let err = refuse(Engine::Forgecode, &["--", w]);
+            assert!(err.contains("lệnh của forgecode") && err.contains(&format!("8sync forge {w}")), "{err}");
+        }
+        // A flag-looking name, a lone `new` or extra words would reach the engine as its own args.
+        assert!(refuse(Engine::ClaudeCodeCli, &["--", "-p"]).contains("không hợp lệ"));
+        assert!(refuse(Engine::ClaudeCodeCli, &["--", "new", "--dangerously-skip-permissions"]).contains("không hợp lệ"));
+        refuse(Engine::ClaudeCodeCli, &["new"]);
+        refuse(Engine::ClaudeCodeCli, &["--", "api", "-p", "hi"]);
+        refuse(Engine::Forgecode, &["api", "extra"]);
+    }
+
+    #[test]
+    fn model_value_never_becomes_a_flag() {
+        let err = delegate_args(Engine::ClaudeCodeCli, &parse(&["api", "--model=--dangerously-skip-permissions"]).unwrap()).unwrap_err();
+        assert!(err.to_string().contains("--model"), "{err}");
+        assert!(delegate_args(Engine::ClaudeCodeCli, &parse(&["api", "--model="]).unwrap()).is_err());
+        // clap itself refuses a separate dash value.
+        assert!(parse(&["api", "--model", "-x"]).is_err());
     }
     use super::*;
 
