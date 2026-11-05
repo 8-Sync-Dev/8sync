@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- CI `hq-ui-test` / `package-hq-ui`: test model của hq-ui import extension `8sync-inbox` (kéo type của SDK omp, hq-ui không cài) làm `tsc` và `next build` đỏ; giờ test nạp extension lúc chạy (`import(new URL(…))`), `tsc` của hq-ui không đi theo nó nữa, test round-trip HQ → extension vẫn giữ.
+
 ### Added
 - HQ: **chọn model + mức suy nghĩ ngay ở ô chat của phòng** (cả ô chat trong phòng và "Gửi cho một phòng"). Nút tròn cạnh tên phòng hiện model đang chạy + mức (vd `Opus 5.5 · cao`); bấm mở popover: hàng bong bóng mức suy nghĩ ở trên (chỉ các mức model đó nhận, omp thêm "tắt"), dưới là danh sách model có ô tìm (theo provider, cuộn sẵn tới model đang dùng). Phòng omp: danh sách từ `omp models --json` (chỉ provider đã có key/đăng nhập, cache 10 phút); HQ xếp một tin điều khiển `/8sync-model {"model","thinking"}` vào inbox, extension `8sync-inbox` gọi `pi.setModel` / `pi.setThinkingLevel` (chỉ phiên đó, `config.yml` giữ nguyên, không thành tin nhắn cho model), rồi ghi model + mức đang chạy ra `~/.local/state/8sync/hq/omp-model/<id>.json` (cả khi chủ đổi bằng `/model` trong omp) để HQ hiện. Model không có / chưa có key → không đổi, popover báo lỗi. Phòng omp mở trước bản này: nút báo "thoát rồi mở lại phòng" thay vì gửi. Phòng Claude Code HQ gõ vào terminal: alias `/model` (opus, sonnet, haiku, opusplan, default) và `/effort` (low … max); phiên Claude mở ngoài HQ (chỉ inbox) không đổi được từ đây. API `GET/POST /api/models` (chỉ chủ). "ultracode" là thiết lập riêng của Claude Code, omp không có nên không có trong danh sách.
 - HQ: ô chat cao theo số dòng tới 40% màn hình rồi mới cuộn; Safari/Firefox (link điện thoại) không có `field-sizing: content` nên đo bằng JS.

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { modelStateJson, parseModelControl, splitControls } from "../../../assets/extensions/8sync-inbox";
 import { claudeCommands, effortsFor, findChoice, ompControl, type ModelChoice } from "@/lib/room-model";
 import { getToken } from "@/lib/server/auth";
 import { inboxFile } from "@/lib/server/inbox";
@@ -24,6 +23,16 @@ beforeAll(() => {
   tempHome();
   token = getToken();
 });
+
+// The extension imports omp's SDK types, which hq-ui does not install (CI typechecks it apart, in
+// ts-assets): load it at run time so `tsc` here never follows it. Same file the rooms run.
+const EXT: string = new URL("../../../assets/extensions/8sync-inbox.ts", import.meta.url).href;
+type Control = { model?: string; thinking?: string };
+const { modelStateJson, parseModelControl, splitControls } = (await import(EXT)) as {
+  modelStateJson: (s: { model: string | null; thinking: string | null; error: string | null }, at: number) => string;
+  parseModelControl: (text: string) => Control | null;
+  splitControls: <T extends { text: string; messages: string[] }>(x: T) => { controls: Control[]; rest: T | { text: string; messages: string[] } | null };
+};
 
 describe("HQ → extension control message", () => {
   it("what HQ queues is what the extension applies", () => {
