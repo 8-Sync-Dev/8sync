@@ -124,35 +124,70 @@ fn engine_names() -> String {
         .join(", ")
 }
 
-/// Args for a non-omp engine's own verb, or the reason it can't run there. `verb`/`rest` are the
-/// launch words of `8sync .` (`""`, `<name>`, `new <name>`), passed through unchanged.
+/// Args for a non-omp engine's own verb, or the reason it can't run there. Only the launch shapes
+/// of `8sync .` pass (`""`, `<name>`, `new <name>`): a word the engine would route as one of its
+/// own commands, a flag-looking name or extra words never reach it.
 fn delegate_args(engine: Engine, a: &Args) -> Result<Vec<String>> {
     let only_omp = [("--share", a.share), ("--worktree", a.worktree)];
     if let Some((flag, _)) = only_omp.iter().find(|(_, on)| *on) {
         bail!("{flag} chỉ dùng với --mode omp");
     }
-    match engine {
+    let (commands, verb_of): (Vec<&str>, fn(&str) -> String) = match engine {
         Engine::Omp => unreachable!("omp launches in here::run"),
         Engine::CodexCli => bail!(
             "--mode codex-cli đang trong kế hoạch, chưa hỗ trợ — engine dùng được: omp, claude-code-cli, forgecode"
         ),
+        Engine::ClaudeCodeCli => (
+            crate::verbs::ccc::help::VERBS.iter().chain(crate::verbs::ccc::help::RESERVED).copied().collect(),
+            |w| format!("8sync ccc . {w}"),
+        ),
+        Engine::Forgecode => (crate::verbs::forge::SUBCOMMANDS.to_vec(), |w| format!("8sync forge {w}")),
+    };
+    let name = match a.rest.as_slice() {
+        [] => None,
+        [n] => Some(n),
+        [new, n] if new == "new" => Some(n),
+        _ => bail!("với --mode chỉ nhận `8sync . [<name>]` hoặc `8sync . new <name>`"),
+    };
+    if let Some(n) = name {
+        if commands.contains(&n.as_str()) {
+            bail!("`{n}` là lệnh của {}, không phải tên phiên — dùng `{}`", engine.name(), verb_of(n));
+        }
+        if n.is_empty() || n.starts_with('-') {
+            bail!("tên phiên `{n}` không hợp lệ (không được rỗng hay bắt đầu bằng `-`)");
+        }
+    }
+    let model = match a.model.as_deref() {
+        Some(m) if m.is_empty() || m.starts_with('-') => bail!("--model `{m}` không hợp lệ (không được rỗng hay bắt đầu bằng `-`)"),
+        m => m,
+    };
+    match engine {
         Engine::ClaudeCodeCli => {
             let mut rest = vec![".".to_string()];
             rest.extend(a.rest.iter().cloned());
-            if let Some(m) = &a.model {
-                if a.rest.is_empty() {
+            if let Some(m) = model {
+                if name.is_none() {
                     bail!("--model với claude-code-cli cần tên phiên: 8sync . <name> --mode claude-code-cli --model <model>");
                 }
-                rest.extend(["--model".to_string(), m.clone()]);
+                // One argv: `claude` can never read the value as a flag of its own.
+                rest.push(format!("--model={m}"));
             }
             Ok(rest)
         }
         Engine::Forgecode => {
-            if a.model.is_some() {
+            if model.is_some() {
                 bail!("--model không dùng với forgecode — chọn model trong Forge (:model)");
             }
             Ok(a.rest.clone())
         }
+        Engine::Omp | Engine::CodexCli => unreachable!("handled above"),
+    }
+}
+
+impl Engine {
+    /// The engine's `--mode` name (`claude-code-cli`, `forgecode`, ...).
+    fn name(self) -> String {
+        self.to_possible_value().map_or_else(String::new, |v| v.get_name().to_string())
     }
 }
 
@@ -510,13 +545,44 @@ mod tests {
         let a = parse(&["new", "api", "--mode", "claude"]).unwrap();
         assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "new", "api"]);
         let a = parse(&["api", "--mode", "ccc", "--model", "opus"]).unwrap();
-        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "api", "--model", "opus"]);
+        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "api", "--model=opus"]);
+        let a = parse(&["new", "api", "--mode", "ccc", "--model", "opus"]).unwrap();
+        assert_eq!(delegate_args(Engine::ClaudeCodeCli, &a).unwrap(), [".", "new", "api", "--model=opus"]);
         assert_eq!(delegate_args(Engine::ClaudeCodeCli, &parse(&[]).unwrap()).unwrap(), ["."]);
         assert_eq!(delegate_args(Engine::Forgecode, &parse(&["api"]).unwrap()).unwrap(), ["api"]);
         // omp-only flags are refused instead of silently dropped.
         assert!(delegate_args(Engine::Forgecode, &parse(&["new", "api", "--worktree"]).unwrap()).is_err());
         assert!(delegate_args(Engine::ClaudeCodeCli, &parse(&["api", "--share"]).unwrap()).is_err());
         assert!(delegate_args(Engine::Forgecode, &parse(&["api", "--model", "x"]).unwrap()).is_err());
+    }
+
+    #[test]
+    fn engine_commands_are_never_session_names() {
+        let refuse = |e: Engine, w: &[&str]| delegate_args(e, &parse(w).unwrap()).unwrap_err().to_string();
+        for w in ["kit", "hook", "status", "policy", "secret", "guard", "statusline", "eco"] {
+            let err = refuse(Engine::ClaudeCodeCli, &[w]);
+            assert!(err.contains(&format!("`{w}` là lệnh của claude-code-cli")) && err.contains(&format!("8sync ccc . {w}")), "{err}");
+            refuse(Engine::ClaudeCodeCli, &["new", w]);
+        }
+        for w in ["key", "provider", "config", "mcp", "status", "workspace", "info", "--tui"] {
+            let err = refuse(Engine::Forgecode, &["--", w]);
+            assert!(err.contains("lệnh của forgecode") && err.contains(&format!("8sync forge {w}")), "{err}");
+        }
+        // A flag-looking name, a lone `new` or extra words would reach the engine as its own args.
+        assert!(refuse(Engine::ClaudeCodeCli, &["--", "-p"]).contains("không hợp lệ"));
+        assert!(refuse(Engine::ClaudeCodeCli, &["--", "new", "--dangerously-skip-permissions"]).contains("không hợp lệ"));
+        refuse(Engine::ClaudeCodeCli, &["new"]);
+        refuse(Engine::ClaudeCodeCli, &["--", "api", "-p", "hi"]);
+        refuse(Engine::Forgecode, &["api", "extra"]);
+    }
+
+    #[test]
+    fn model_value_never_becomes_a_flag() {
+        let err = delegate_args(Engine::ClaudeCodeCli, &parse(&["api", "--model=--dangerously-skip-permissions"]).unwrap()).unwrap_err();
+        assert!(err.to_string().contains("--model"), "{err}");
+        assert!(delegate_args(Engine::ClaudeCodeCli, &parse(&["api", "--model="]).unwrap()).is_err());
+        // clap itself refuses a separate dash value.
+        assert!(parse(&["api", "--model", "-x"]).is_err());
     }
     use super::*;
 

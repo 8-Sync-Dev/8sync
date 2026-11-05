@@ -55,6 +55,11 @@ pub struct Args {
     pub rest: Vec<String>,
 }
 
+/// Every word `run` routes as a subcommand instead of a session name (checked against the match
+/// arms by a unit test). `8sync . <name> --mode forgecode` refuses these as names.
+pub(crate) const SUBCOMMANDS: &[&str] =
+    &["status", "ls", "list", "key", "set-key", "rm", "new", "provider", "config", "workspace", "mcp", "vscode", "banner", "info", "--tui"];
+
 pub fn run(a: Args) -> Result<()> {
     let env = Env::detect()?;
     let cwd = std::env::current_dir().context("no cwd")?;
@@ -831,6 +836,26 @@ fn cmd_key(rest: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{mask, shell_path};
+
+    /// Reads the real dispatcher: every quoted word of `run`'s `match verb` is in SUBCOMMANDS.
+    #[test]
+    fn every_dispatched_word_is_a_listed_subcommand() {
+        let src = include_str!("forge.rs");
+        let body = src.split("pub fn run(").nth(1).and_then(|s| s.split("match verb {").nth(1)).expect("match verb");
+        let body = body.split("\n    }\n").next().unwrap();
+        let mut found = vec![];
+        for l in body.lines().filter(|l| l.starts_with("        \"")) {
+            for w in l.split("=>").next().unwrap_or("").split('|') {
+                if let Some(x) = w.trim().strip_prefix('"').and_then(|r| r.split('"').next()).filter(|x| !x.is_empty()) {
+                    found.push(x.to_string());
+                }
+            }
+        }
+        assert!(found.len() >= 10, "parsed too few arms: {found:?}");
+        for w in found {
+            assert!(super::SUBCOMMANDS.contains(&w.as_str()), "forge verb {w} not in SUBCOMMANDS");
+        }
+    }
 
     #[cfg(unix)]
     #[test]
