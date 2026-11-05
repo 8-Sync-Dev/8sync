@@ -11,6 +11,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - `8sync harness toolstats` và dashboard harness (context, danh sách project) tìm đúng thư mục phiên omp trên Windows. omp đặt tên `-<đường dẫn tương đối>` cho repo trong home và `--<đường dẫn tuyệt đối, / \ : → ->--` cho repo ngoài home (ví dụ `--C--Users-Projects-su-code--`); trước đây 8sync chỉ hiểu dạng đầu nên báo "no omp sessions yet". Hai nơi giờ dùng chung `harness::sessions::session_slug`, và `slug_to_path` đọc được cả hai dạng.
+- Bảo mật `8sync harness web` (dashboard local): mọi request phải có Host là `127.0.0.1|localhost|[::1]:<port>` (chặn DNS rebinding), request ghi (POST/DELETE…) phải không có Origin hoặc Origin cùng host, và mọi `/api/*` phải gửi header `x-8sync-token` khớp token ngẫu nhiên tạo mỗi lần chạy (trang index tự mang token qua `<meta name="8sync-token">`, `web/src/api.ts` gửi kèm; Vite dev proxy đọc `~/.config/8sync/web-token`). Sai host/origin → 403, thiếu/sai token → 401.
+- `POST /api/rules/delete` không còn xoá được file ngoài thư mục rules: đường dẫn được canonicalize (giải `..` và symlink) và phải là file `.md`/`.mdc` nằm ngay trong `~/.omp/agent/rules` hoặc `<repo>/.omp/rules`. Trước đây chỉ cần chuỗi có `/rules/`.
+- `slug_to_path` chỉ đọc `X--…` thành ổ đĩa `X:\` trên Windows. `__pycache__/` vào `.gitignore` và file `.pyc` bị track nhầm đã gỡ khỏi git.
 
 ## [0.122.21] — 2026-11-05
 

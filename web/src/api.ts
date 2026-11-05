@@ -143,8 +143,17 @@ export class EndpointMissingError extends Error {
   }
 }
 
+// Per-launch dashboard token: `8sync harness web` puts it in the served index page;
+// every /api call must echo it (the server refuses the call otherwise).
+const TOKEN =
+  typeof document !== "undefined"
+    ? document.querySelector<HTMLMetaElement>('meta[name="8sync-token"]')?.content ?? ""
+    : "";
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
+  const headers = new Headers(init?.headers);
+  if (TOKEN) headers.set("x-8sync-token", TOKEN);
+  const r = await fetch(url, { ...init, headers });
   // SPA fallback: backend returns 200 + index.html for unknown /api paths. A
   // missing endpoint therefore looks like a successful HTML response.
   const ct = r.headers.get("content-type") ?? "";
