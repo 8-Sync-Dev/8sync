@@ -462,7 +462,6 @@ pub fn run_guide() -> Result<()> {
     row("/ship <việc> [--release]", "plan → R&D → code → test → UAT → review → docs → commit (→ release + monitor)");
     row("/planning <việc>", "chỉ lập plan: acceptance criteria, task, rủi ro, câu hỏi gom 1 lần");
     row("/remember · /consolidate", "ghi bài học có bằng chứng vào KNOWLEDGE · dọn memory");
-    row("/rules <việc>", "việc này có được phép không (Anthropic + quy tắc 8 Sync)");
     row("/sec · /harden", "quét secret/lỗ hổng · siết cấu hình Claude Code");
 
     h("6. Khác");

@@ -9,8 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  CHANNEL_LABEL,
-  CHANNEL_SHORT,
   byDay,
   CONTENT_FORMATS,
   CONTENT_STATUSES,
@@ -44,7 +42,7 @@ import { useAccess } from "./access";
 import { ErrorNote } from "./bits";
 import { ALL, assigneeShort, Editable, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, useContentPatch, type Patch } from "./content-bits";
 import { ContentCalendar, periodLabel } from "./content-calendar";
-import { ContentSheet, NO_DAY } from "./content-sheet";
+import { ChannelStates, ContentSheet, NO_DAY } from "./content-sheet";
 import { ContentOverview, indexResults } from "./content-results";
 import { TOUCH } from "./room-send";
 import { makeApi, type Api } from "./use-hq";
@@ -535,12 +533,7 @@ function Items({
                 </td>
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
-                  {it.channels && (
-                    <p className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground" title={it.channels.map((c) => CHANNEL_LABEL[c]).join(", ")}>
-                      {it.channels.map((c) => CHANNEL_SHORT[c]).join(" · ")}
-                      {it.channel_posts?.some((p) => p.state === "failed" || p.state === "blocked") && <span className="ml-1 font-medium text-destructive">· có kênh lỗi</span>}
-                    </p>
-                  )}
+                  {it.channels && <ChannelStates it={it} />}
                   <div className="mt-1 flex flex-col items-start gap-1">
                     {canEdit &&
                       steps

@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST } from "@/app/api/content/route";
 import { PUT as PUT_PREFS } from "@/app/api/content/prefs/route";
 import { GET as MEDIA } from "@/app/api/content/media/route";
-import { addDays, byDay, capDay, captionFor, channelLine, CONTENT_DATA_NOTE, contentTaskText, contentWarning, cpaCommand, dataLine, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_CHANNELS, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, weekStart } from "@/lib/content";
+import { addDays, byDay, capDay, captionFor, channelLine, CONTENT_DATA_NOTE, contentTaskText, contentWarning, cpaCommand, dataLine, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_CHANNELS, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, unapprovedLive, weekStart } from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
 import { CONTENT_CHANGED, contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
 import { mediaSigValid } from "@/lib/server/content-media";
@@ -413,6 +413,17 @@ describe("content rules", () => {
     const it0 = { status: "approved" as const, scheduled_at: null };
     expect(channelLine(it0, { ...post, permalink: "https://facebook.com/p/1" }).link).toBe("https://facebook.com/p/1");
     for (const bad of ["javascript:alert(1)", "file:///C:/x", "data:text/html,x", " //evil", "http://a b"]) expect(channelLine(it0, { ...post, permalink: bad }).link, bad).toBeNull();
+  });
+  it("channels scheduled or posted before approval are named; approved, published, failed and cancelled are not", () => {
+    const p = (channel: "facebook" | "linkedin" | "threads" | "youtube", state: "scheduling" | "scheduled" | "published" | "failed" | "blocked" | "cancelled") => ({
+      item_id: 1, channel, state, scheduled_for: null, published_at: null, permalink: null, error: null, attempts: 1, updated_at: 1,
+    });
+    const posts = [p("facebook", "scheduled"), p("linkedin", "scheduling"), p("threads", "published"), p("youtube", "failed")];
+    expect(unapprovedLive({ status: "checked", channel_posts: posts })).toEqual(["facebook", "linkedin", "threads"]);
+    expect(unapprovedLive({ status: "drafted", channel_posts: [p("youtube", "cancelled"), p("facebook", "blocked")] })).toEqual([]);
+    expect(unapprovedLive({ status: "approved", channel_posts: posts })).toEqual([]);
+    expect(unapprovedLive({ status: "published", channel_posts: posts })).toEqual([]);
+    expect(unapprovedLive({ status: "checked" })).toEqual([]);
   });
 });
 

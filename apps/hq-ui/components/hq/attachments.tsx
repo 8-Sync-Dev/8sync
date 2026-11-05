@@ -184,15 +184,16 @@ export function OrderBadge({ n }: { n: number }) {
 
 /**
  * Uploads as the chat shows them: images as thumbnails (a tap opens the lightbox), video/audio as players,
- * anything else as a file chip. With more than one file each carries its number in the message, so
- * grouping by kind never hides which one the room calls "file 2".
+ * anything else as a file chip. `numbered` (a message's own attachments, in the order they were added):
+ * with more than one file each carries its number, so grouping by kind never hides which one the room
+ * calls "file 2". A reply's uploads come in the order the reply names them, so they get no number.
  */
-function Uploads({ token, files }: { token: string; files: Attachment[] }) {
+function Uploads({ token, files, numbered = false }: { token: string; files: Attachment[]; numbered?: boolean }) {
   const [shown, setShown] = useState<Shown | null>(null);
-  const numbered = files.map((f, i) => ({ f, n: files.length > 1 ? i + 1 : undefined }));
-  const images = numbered.filter(({ f }) => mediaKind(f.name) === "image");
-  const players = numbered.filter(({ f }) => mediaKind(f.name) === "video" || mediaKind(f.name) === "audio");
-  const others = numbered.filter(({ f }) => mediaKind(f.name) === "file");
+  const items = files.map((f, i) => ({ f, n: numbered && files.length > 1 ? i + 1 : undefined }));
+  const images = items.filter(({ f }) => mediaKind(f.name) === "image");
+  const players = items.filter(({ f }) => mediaKind(f.name) === "video" || mediaKind(f.name) === "audio");
+  const others = items.filter(({ f }) => mediaKind(f.name) === "file");
   return (
     <>
       {images.length > 0 && (
@@ -279,7 +280,7 @@ export function MessageText({ text, token, className }: { text: string | null | 
       <UrlPreviews text={body} />
       {files.length > 0 && (
         <div className="mt-1 flex flex-col gap-1.5">
-          <Uploads token={token} files={files} />
+          <Uploads token={token} files={files} numbered />
           <AttachmentPaths files={files} />
         </div>
       )}

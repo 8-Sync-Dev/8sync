@@ -18,6 +18,7 @@ import {
   CAPTION_LIMIT,
   captionFor,
   CHANNEL_LABEL,
+  CHANNEL_SHORT,
   channelLine,
   CHANNELS,
   charCount,
@@ -33,6 +34,7 @@ import {
   STATUS_LABEL,
   timeOf,
   toLocalInput,
+  unapprovedLive,
   whenOf,
   type Channel,
   type ChannelLine,
@@ -539,6 +541,7 @@ function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow;
   }
   return (
     <div className="space-y-3">
+      <UnapprovedNote it={it} />
       <div role="group" aria-label={`Kênh đăng #${it.id}`} className="flex flex-wrap gap-1.5">
         {CHANNELS.map((ch) => {
           const on = selected.includes(ch);
@@ -566,6 +569,38 @@ function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow;
         <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} canRetry={canRetry} />
       ))}
     </div>
+  );
+}
+
+/** Scheduled or posted channels on an item that is not approved, named; nothing when there are none. */
+function UnapprovedNote({ it }: { it: ContentRow }) {
+  const live = unapprovedLive(it);
+  if (live.length === 0) return null;
+  return (
+    <p role="note" className="flex items-start gap-1.5 text-xs font-medium text-destructive">
+      <AlertTriangleIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      {live.map((c) => CHANNEL_LABEL[c]).join(", ")} đã lên lịch/đăng khi bài chưa duyệt. Bỏ duyệt ở HQ không huỷ được: huỷ trên nền tảng, hoặc duyệt để sổ khớp.
+    </p>
+  );
+}
+
+/** The list row's channels: one short tag each, coloured as the sheet colours its line, the line as the tooltip. */
+export function ChannelStates({ it }: { it: ContentRow }) {
+  const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
+  const unapproved = unapprovedLive(it).length > 0;
+  return (
+    <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] whitespace-nowrap">
+      {(it.channels ?? []).map((c) => {
+        const line = channelLine(it, posts.get(c));
+        return (
+          <span key={c} className={cn("font-medium", LINE_TONE[line.tone])} title={`${CHANNEL_LABEL[c]}: ${line.text}`}>
+            {CHANNEL_SHORT[c]}
+            {line.tone === "ok" ? " ✓" : line.tone === "bad" ? " !" : ""}
+          </span>
+        );
+      })}
+      {unapproved && <span className="font-medium text-destructive">· lịch khi chưa duyệt</span>}
+    </p>
   );
 }
 

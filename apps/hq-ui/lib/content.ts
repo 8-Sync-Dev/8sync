@@ -235,6 +235,16 @@ export function channelLine(it: Pick<ContentItem, "status" | "scheduled_at">, po
   }
 }
 
+/**
+ * The channels already scheduled or posted while the item is not approved: a worker that went around
+ * "Duyệt" (owner 2026-11-05, #77–80). "Bỏ duyệt" cancels nothing here (there is no approval to drop),
+ * so HQ says it next to the item instead.
+ */
+export function unapprovedLive(it: Pick<ContentItem, "status"> & { channel_posts?: ChannelPost[] }): Channel[] {
+  if (it.status === "approved" || it.status === "published") return [];
+  return (it.channel_posts ?? []).filter((p) => p.state === "scheduling" || p.state === "scheduled" || p.state === "published").map((p) => p.channel);
+}
+
 /** Text fields the owner edits in place (status, approval and the `*_at` stamps go through their own actions). */
 export const CONTENT_TEXT_FIELDS = ["title", "brief", "caption", "media_path", "fb_page", "source_url", "check_note", "news_url", "fb_post_url"] as const;
 export type ContentTextField = (typeof CONTENT_TEXT_FIELDS)[number];

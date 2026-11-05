@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.125.1] — 2026-11-05
+
+### Fixed
+- HQ: ảnh/video/file mà phòng nhắc trong câu trả lời không còn đánh số 1, 2, 3. Chỉ file đính kèm trong tin của chủ mới có số, vì đó là thứ tự lúc chủ dán, còn câu trả lời liệt kê theo thứ tự phòng nhắc tới.
+- Bỏ `/rules` còn sót sau v0.124.2: dòng `/rules <việc>` trong hướng dẫn lệnh phòng và mô tả plugin `8sync-kit`.
+
+### Changed
+- HQ Nội dung, "Danh sách": cột trạng thái hiện từng kênh thay cho "FB · LI" trơn. Kênh đã lên lịch hoặc đã đăng có ✓ xanh, kênh lỗi hoặc bị chặn có ! đỏ, kênh chưa tới lượt để xám; rê chuột vào kênh để xem trạng thái đầy đủ.
+- HQ Nội dung: bài chưa duyệt mà đã có kênh lên lịch hoặc đã đăng thì bị báo đỏ "· lịch khi chưa duyệt" trong danh sách. Trong sheet chi tiết có ghi chú nêu tên kênh và nói rõ "Bỏ duyệt ở HQ không huỷ được: huỷ trên nền tảng, hoặc duyệt để sổ khớp".
+
 ## [0.125.0] — 2026-11-05
 
 ### Added
