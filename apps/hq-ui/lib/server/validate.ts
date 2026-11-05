@@ -102,10 +102,13 @@ export function clampText(text: unknown, max = 4000, allowControls = false): Res
 /**
  * A folder to create for a new project (owner 2026-10-22: "không có nút tạo dự án"): absolute, no
  * "..", not a drive or filesystem root, not there yet (or an empty folder), under an existing parent.
+ * A network or device path (`\\host\share`, `\\?\…`, `//host`) is refused before anything touches the
+ * disk: even `existsSync` on a UNC path makes Windows connect to that host (and send the account's NTLM hash).
  * Returns the normalized path; creating it is the caller's job.
  */
 export function validateNewProjectPath(input: unknown): Result<string> {
   if (typeof input !== "string" || input.trim() === "") return { ok: false, error: "path is required" };
+  if (/^[\\/]{2}/.test(input.trim())) return { ok: false, error: "không nhận đường dẫn mạng hoặc thiết bị (\\\\…)" };
   const p = path.normalize(input.trim()).replace(/[\\/]+$/, "");
   if (p.length > 4096 || p.includes("\0")) return { ok: false, error: "path is invalid" };
   if (!path.isAbsolute(p)) return { ok: false, error: "path must be absolute" };

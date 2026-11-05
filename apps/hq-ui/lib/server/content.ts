@@ -28,6 +28,7 @@ import {
   type ContentRow,
   type ContentStatus,
 } from "../content";
+import { GUEST_STATUS_DENIED, OWNER_CONTENT_STATUSES } from "../access";
 import { mediaFiles, publicMedia } from "./content-media";
 import { readAssignPref, saveAssignPref } from "./content-prefs";
 import { isInboxId } from "./inbox";
@@ -369,7 +370,7 @@ class DryRun extends Error {}
  * other state: a live or posted one must not be posted twice). Entering approved checks the channel
  * rule and clears the item's cancelled rows (left from an earlier un-approve) so it is scheduled again.
  * `seen` (optional): the `updated_at` the caller had on screen; 409 `CONTENT_CHANGED` when the item changed since.
- * `guest`: the edit comes from a Chia sẻ guest; see `GUEST_DROPBACK_FIELDS`.
+ * `guest`: the edit comes from a Chia sẻ guest: never `approved`/`published` (403), and see `GUEST_DROPBACK_FIELDS`.
  */
 export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now(), guest = false): ContentRow {
   applyUpdate(db, id, body, approver, now, false, guest);
@@ -384,6 +385,8 @@ export function checkUpdate(db: DatabaseSync, id: number, body: Record<string, u
 function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now: number, dry: boolean, guest = false): void {
   const item = getContent(db, id);
   if (!item) throw new ContentError(`không có mục #${id}`, 404);
+  // Only the owner approves or marks published (owner 2026-11-05); the route refuses it first.
+  if (guest && typeof body.status === "string" && OWNER_CONTENT_STATUSES.includes(body.status)) throw new ContentError(GUEST_STATUS_DENIED, 403);
   if ("seen" in body) {
     if (typeof body.seen !== "number" || !Number.isFinite(body.seen)) throw new ContentError("seen: cần updated_at của mục lúc xem (số ms)", 422);
     if (item.updated_at !== body.seen) throw new ContentError(CONTENT_CHANGED, 409);
@@ -418,8 +421,8 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
     set.source_approved_by = approver;
     set.source_approved_at = now;
   }
-  // A guest's change to what an approved item posts sends it back to "checked" (owner 2026-11-05),
-  // whatever status the same body asks for: the owner approves the text that goes out.
+  // A guest's change to what an approved item posts sends it back to "checked" (owner 2026-11-05):
+  // the owner approves the text that goes out, and only the owner approves it again.
   if (guest && item.status === "approved") {
     const fields = GUEST_DROPBACK_FIELDS.filter((k) => k in set && (has || (k !== "channels" && k !== "captions_json")));
     if (fields.length) {

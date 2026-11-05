@@ -1,5 +1,5 @@
 import path from "node:path";
-import { OWNER_CONTENT_FIELDS } from "@/lib/access";
+import { GUEST_STATUS_DENIED, OWNER_CONTENT_FIELDS, OWNER_CONTENT_STATUSES } from "@/lib/access";
 import { GUEST_CHANNEL_ERROR, isFormat, isStatus, type ChannelPost } from "@/lib/content";
 import { approveAndSend, ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
 import { deliverText } from "@/lib/server/deliver";
@@ -92,8 +92,9 @@ export async function POST(req: Request) {
  * approves AND sends the posting task to that session (`approveAndSend`): a refusal sends nothing,
  * a failed delivery (502) leaves the status unchanged. Answers `{ item, sent }`.
  * An editor (Chia sẻ) changes the item but not its media path, its agent, `send`, `ai_label` or
- * `retry_channel`; the source it approves is signed with its invite label. Its edit of what an
- * approved item posts (title, caption, page, channels, format) sends the item back to "checked".
+ * `retry_channel`, and never sets `approved` or `published` (403: only the owner approves what goes
+ * out); the source it approves is signed with its invite label. Its edit of what an approved item
+ * posts (title, caption, page, channels, format) sends the item back to "checked".
  */
 export async function PATCH(req: Request) {
   const o = open(req);
@@ -105,6 +106,7 @@ export async function PATCH(req: Request) {
   const guest = o.access.guest;
   const ownerField = guest ? OWNER_CONTENT_FIELDS.find((k) => k in body) : undefined;
   if (ownerField) return bad(`${ownerField}: chỉ chủ HQ sửa được`, 403);
+  if (guest && typeof body.status === "string" && OWNER_CONTENT_STATUSES.includes(body.status)) return bad(GUEST_STATUS_DENIED, 403);
   const c = registry(!!guest);
   if ("res" in c) return c.res;
   try {

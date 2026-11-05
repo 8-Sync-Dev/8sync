@@ -43,7 +43,7 @@ import {
   type ContentTextField,
   type AssignPref,
 } from "@/lib/content";
-import { atLeast } from "@/lib/access";
+import { atLeast, GUEST_AWAITS_APPROVAL } from "@/lib/access";
 import { bytes } from "@/lib/disk";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
@@ -224,7 +224,8 @@ function ItemDetail({
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
   // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
-  const steps = nextStatuses(it.status);
+  // "Đã đăng" is the owner's (403 for a guest); "Duyệt" stays so a guest sees "Chờ chủ HQ duyệt" there.
+  const steps = nextStatuses(it.status).filter((s) => role === "owner" || s !== "published");
   const hints = [...new Set(steps.map((s) => stepHint(it, s)).filter((h): h is string => h != null))];
   // An approved item whose posts already sit on a platform scheduler: they keep the text they were
   // given. Editing captions or channels here says so, next to approve.
@@ -283,21 +284,12 @@ function ItemDetail({
   }
 
   /**
-   * One tap (owner 2026-11-04): approve AND send the posting task; nothing changes when either fails.
-   * A guest editor cannot send nor set the AI label (owner only): its "Duyệt" only approves. Both send
-   * `seen` (the `updated_at` on screen) so an edit made meanwhile answers 409 instead of riding along.
+   * One tap (owner 2026-11-04, owner only): approve AND send the posting task; nothing changes when
+   * either fails. `seen` (the `updated_at` on screen) makes an edit made meanwhile answer 409 instead
+   * of riding along. A guest never approves (403): it sees "Chờ chủ HQ duyệt" instead.
    */
   async function approve() {
     const seen = it.updated_at;
-    if (!owner) {
-      setBusy(true);
-      try {
-        await patch(it.id, { status: "approved", seen });
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
     const ai = aiChoice === null ? {} : { ai_label: aiChoice };
     const to = known(session) ? session : "";
     if (!to) {
@@ -360,9 +352,15 @@ function ItemDetail({
         <div className="flex flex-wrap items-center gap-2">
           {steps.map((s) =>
             s === "approved" ? (
-              <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || stepHint(it, s) != null} onClick={() => void approve()}>
-                {busy ? <Loader2Icon aria-hidden className="animate-spin" /> : <CheckIcon aria-hidden />} Duyệt
-              </Button>
+              owner ? (
+                <Button key={s} type="button" size="sm" className={cn("min-w-24", TOUCH)} disabled={busy || stepHint(it, s) != null} onClick={() => void approve()}>
+                  {busy ? <Loader2Icon aria-hidden className="animate-spin" /> : <CheckIcon aria-hidden />} Duyệt
+                </Button>
+              ) : (
+                <span key={s} className="text-xs font-medium text-muted-foreground">
+                  {GUEST_AWAITS_APPROVAL}
+                </span>
+              )
             ) : s === "rejected" ? (
               <Button key={s} type="button" size="sm" variant="outline" className={TOUCH} disabled={busy} onClick={() => void setStatus(s)}>
                 <XIcon aria-hidden /> Bỏ

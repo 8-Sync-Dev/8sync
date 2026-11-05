@@ -8,7 +8,7 @@ import { GET as UPLOAD_FILE } from "@/app/api/uploads/[id]/file/route";
 import { DELETE as INVITES_DELETE, GET as INVITES_GET, POST as INVITES_POST } from "@/app/api/invites/route";
 import { GET as LOGIN } from "@/app/api/login/route";
 import { GET as GH_POLL, POST as GH_START } from "@/app/api/login/github/route";
-import { atLeast, deniedText, GUEST_ROLES, GUEST_ROUTES, type GuestRole } from "@/lib/access";
+import { atLeast, deniedText, GUEST_ROLES, GUEST_ROUTES, GUEST_STATUS_DENIED, type GuestRole } from "@/lib/access";
 import { GUEST_CHANNEL_ERROR } from "@/lib/content";
 import { checkAuth, getToken, isDenied, sessionSecret, type Access, type Denied } from "@/lib/server/auth";
 import { contentConfigPath } from "@/lib/server/content";
@@ -317,18 +317,33 @@ describe("content as a guest", () => {
     const { invite: inv } = invite("editor");
     const cookie = cookieFor(inv.id, "editor");
     const patchAs = (body: Record<string, unknown>) => PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body })).then(statusIn);
-    for (const body of [{ caption: "caption khách sửa" }, { title: "Tiêu đề khách sửa" }, { fb_page: "trang-khac" }, { format: "text" }, { caption: "lén duyệt", status: "approved" }]) {
+    for (const body of [{ caption: "caption khách sửa" }, { title: "Tiêu đề khách sửa" }, { fb_page: "trang-khac" }, { format: "text" }]) {
       setApproved();
       expect(await patchAs(body), JSON.stringify(body)).toBe("checked");
     }
+    // The item waits for the owner: a guest cannot approve it again, nor mark it published, alone or
+    // riding along an edit; the refused write changes nothing.
+    for (const body of [{ status: "approved" }, { status: "published" }, { caption: "lén duyệt", status: "approved" }]) {
+      const r = await PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body }));
+      expect(r.status, JSON.stringify(body)).toBe(403);
+      const err: { error: string } = await r.json();
+      expect(err.error).toBe(GUEST_STATUS_DENIED);
+    }
+    const db = new DatabaseSync(file);
+    expect(db.prepare("SELECT status, caption FROM content_items WHERE id = ?").get(id)).toMatchObject({ status: "checked", caption: "caption khách sửa" });
+    db.close();
+    // The earlier steps stay the guest's.
+    expect(await patchAs({ status: "drafted" })).toBe("drafted");
+    expect(await patchAs({ status: "checked" })).toBe("checked");
     // The same value again, or a field that is not what gets posted: still approved.
     setApproved();
-    expect(await patchAs({ caption: "lén duyệt" })).toBe("approved");
+    expect(await patchAs({ caption: "caption khách sửa" })).toBe("approved");
     expect(await patchAs({ check_note: "ok" })).toBe("approved");
     // Nothing went to any agent session.
     expect(fs.existsSync(inboxDir()) ? fs.readdirSync(inboxDir()) : []).toEqual([]);
-    // The owner's edit keeps main's behaviour (0.122.15: no drop-back).
+    // The owner's edit keeps main's behaviour (0.122.15: no drop-back), and the owner approves.
     expect(await statusIn(await PATCH(req(`/api/content?id=${id}`, { method: "PATCH", token, origin: ORIGIN, body: { caption: "chủ sửa" } })))).toBe("approved");
+    expect(await statusIn(await PATCH(req(`/api/content?id=${id}`, { method: "PATCH", token, origin: ORIGIN, body: { status: "published" } })))).toBe("published");
   });
 
   // Last in this block: it adds migration 0064 to the shared DB.

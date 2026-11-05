@@ -42,3 +42,13 @@ export const deniedText = (role: AccessRole) => `Quyền "${ACCESS_LABEL[role]}"
  * and `retry_channel` (requeues a failed or blocked post).
  */
 export const OWNER_CONTENT_FIELDS = ["media_path", "assignee_session", "assignee_base", "send", "ai_label", "retry_channel"] as const;
+
+/**
+ * Statuses only the owner sets: approving (which schedules the channels and is what the worker
+ * posts) and marking published. A guest editor moves an item between the earlier steps, or rejects
+ * it; the owner approves what goes out (owner 2026-11-05).
+ */
+export const OWNER_CONTENT_STATUSES: readonly string[] = ["approved", "published"];
+export const GUEST_STATUS_DENIED = "Chỉ chủ HQ duyệt hoặc đánh dấu đã đăng. Khách chuyển được giữa Đặt, Nháp, Đã check và Bỏ; bài sửa xong chờ chủ HQ duyệt.";
+/** What a guest sees where "Duyệt" would be. */
+export const GUEST_AWAITS_APPROVAL = "Chờ chủ HQ duyệt";

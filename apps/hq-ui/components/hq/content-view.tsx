@@ -35,7 +35,7 @@ import {
   type ContentRow,
   type ContentTextField,
 } from "@/lib/content";
-import { atLeast } from "@/lib/access";
+import { atLeast, GUEST_AWAITS_APPROVAL } from "@/lib/access";
 import type { OmpTreeRow } from "@/lib/session-tree";
 import type { ContentResults } from "@/lib/content-metrics";
 import { agoShort } from "@/lib/now";
@@ -482,7 +482,8 @@ function Items({
           {items.map((it) => {
             const warn = contentWarning(it);
             // "Duyệt" lives in the sheet: it also sends the posting task to a session picked there.
-            const steps = nextStatuses(it.status).filter((s) => s !== "approved");
+            // Only the owner approves or marks published (a guest gets 403): it sees "Chờ chủ HQ duyệt".
+            const steps = nextStatuses(it.status).filter((s) => s !== "approved" && (role === "owner" || s !== "published"));
             const toApprove = canEdit && nextStatuses(it.status).includes("approved");
             const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
@@ -502,7 +503,10 @@ function Items({
                   </div>
                   <div className="mt-1.5 flex items-center gap-1">
                     {canEdit ? (
-                      <Select value={it.format} onValueChange={(v) => void patch(it.id, { format: v })}>
+                      <Select
+                        value={it.format}
+                        onValueChange={(v) => void patch(it.id, { format: v }).then((ok) => ok && role !== "owner" && it.status === "approved" && v !== it.format && toast.info(GUEST_DROPBACK_NOTE))}
+                      >
                         <SelectTrigger size="sm" className={cn("h-7 text-xs", FORMAT_TONE[it.format])} aria-label={`Định dạng #${it.id}`}>
                           <SelectValue />
                         </SelectTrigger>
@@ -557,11 +561,12 @@ function Items({
                         );
                       })}
                     {note && <span className="text-[11px] text-muted-foreground">{note}</span>}
-                    {toApprove && (
+                    {toApprove && role === "owner" && (
                       <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px] whitespace-nowrap", TOUCH)} onClick={() => onOpen(it)}>
                         <CheckIcon aria-hidden /> Duyệt trong khung chi tiết
                       </Button>
                     )}
+                    {toApprove && role !== "owner" && <span className="text-[11px] font-medium text-muted-foreground">{GUEST_AWAITS_APPROVAL}</span>}
                   </div>
                 </td>
                 <td className="w-44 min-w-36 px-2 py-2">
