@@ -81,11 +81,10 @@ mod verify;
       git repo → harness: su-code/ memory, AGENTS.md/CLAUDE.md blocks, ECC rules → .claude/rules/ecc/ (cached checkout only)
 
     THE KIT (installed by `8sync setup`; edited files are kept unless --force)
-      rules    a short 8 Sync/Anthropic rules block in every session; full text (aup-audit/8sync-anthropic-rules.md)
-               opens on demand through /rules
+      rules    a short 8 Sync workflow-rules block in every session (kit CLAUDE.md)
       agents   explore (haiku) · task · quick-task · reviewer · designer · verifier · researcher ·
                architect (opus, writes docs/ADR/RFC only) · qa (tests only) · critic
-      skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
+      skills   /ship · /sec (secrets, deps, OWASP) ·
                /harden (Claude Code security posture) ·
                /do · /ship-auto · /ship-loop · /autopilot · /solo (graded auto levels) · deep-research-web + every bundled 8sync skill (linked to ~/.omp/skills)
       policy   `8sync ccc policy` prints org managed settings (bypass off, deny rules, login pinned to your
@@ -635,7 +634,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 44] = [
+const KIT_FILES: [(&str, &str); 40] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -652,7 +651,6 @@ const KIT_FILES: [(&str, &str); 44] = [
     ("claude/skills/ui-ux/SKILL.md", "skills/ui-ux/SKILL.md"),
     ("claude/skills/remember/SKILL.md", "skills/remember/SKILL.md"),
     ("claude/skills/consolidate/SKILL.md", "skills/consolidate/SKILL.md"),
-    ("claude/skills/rules/SKILL.md", "skills/rules/SKILL.md"),
     ("claude/skills/sec/SKILL.md", "skills/sec/SKILL.md"),
     ("claude/skills/harden/SKILL.md", "skills/harden/SKILL.md"),
     ("claude/skills/do/SKILL.md", "skills/do/SKILL.md"),
@@ -663,10 +661,6 @@ const KIT_FILES: [(&str, &str); 44] = [
     ("claude/skills/solo/SKILL.md", "skills/solo/SKILL.md"),
     ("claude/skills/sysdesign/SKILL.md", "skills/sysdesign/SKILL.md"),
     ("claude/skills/clean/SKILL.md", "skills/clean/SKILL.md"),
-    ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
-    ("skills/aup-audit/RULES.md", "skills/aup-audit/RULES.md"),
-    // The org's rules: summarised in the kit's CLAUDE.md block, full text opened on demand (/aup-audit).
-    ("skills/aup-audit/8sync-anthropic-rules.md", "skills/aup-audit/8sync-anthropic-rules.md"),
     ("skills/deep-research-web/SKILL.md", "skills/deep-research-web/SKILL.md"),
     ("skills/deep-research-web/references/binary-weight-audit.md", "skills/deep-research-web/references/binary-weight-audit.md"),
     ("skills/deep-research-web/references/templates.md", "skills/deep-research-web/references/templates.md"),
@@ -882,8 +876,8 @@ const ASK_GATE_MODEL: &str = "claude-sonnet-5-5";
 /// Skills the kit itself relies on: never demoted by `skillOverrides`.
 /// Includes the repo-rule skills (always-on or required for UI), whose trigger
 /// text must not be dropped.
-const CORE_SKILLS: [&str; 15] =
-    ["ship", "ship-loop", "ship-tick", "autopilot", "ui-ux", "planning", "remember", "aup-audit", "deep-research-web", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
+const CORE_SKILLS: [&str; 14] =
+    ["ship", "ship-loop", "ship-tick", "autopilot", "ui-ux", "planning", "remember", "deep-research-web", "sysdesign", "8sync-cli", "trail", "karpathy-guidelines", "ponytail", "impeccable"];
 
 /// Install or refresh the kit in Claude Code's user config. Idempotent.
 pub(crate) fn install_kit(env: &Env, force: bool) -> Result<()> {
@@ -1006,7 +1000,7 @@ fn install_kit_at(env: &Env, dir: &Path, force: bool) -> Result<()> {
     let eccx_loop = assets::iter_under("claude/commands/eccx-loop-").len();
     let eccx = assets::iter_under("claude/commands/eccx-").len() - eccx_loop;
     ui::ok(&format!(
-        "kit: {agents} agents · /ship · /aup-audit · deep-research-web · {eccx} /eccx-<category> + {eccx_loop} /eccx-loop-<category> · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
+        "kit: {agents} agents · /ship · deep-research-web · {eccx} /eccx-<category> + {eccx_loop} /eccx-loop-<category> · verify hook · guard · stop + ask gates · auto mode · CLAUDE.md rules ({})",
         dir.display()
     ));
     Ok(())
@@ -2812,7 +2806,7 @@ mod tests {
         for c in ["full", "workflow", "ai-agent", "frontend"] {
             let body = assets::read(&format!("claude/commands/eccx-loop-{c}.md")).unwrap();
             for want in ["disable-model-invocation: true", "$ARGUMENTS", "8sync ccc loop init", "8sync ccc loop ev", "8sync ccc loop tick",
-                         "/ship-tick <slug>", &format!("Driver: /eccx-{c}"), &format!("eccx-{c}.md"), "`sec`, `rules`, `aup-audit`"] {
+                         "/ship-tick <slug>", &format!("Driver: /eccx-{c}"), &format!("eccx-{c}.md"), "`sec`"] {
                 assert!(body.contains(want), "eccx-loop-{c} lacks {want:?}");
             }
         }

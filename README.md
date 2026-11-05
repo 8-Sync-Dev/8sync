@@ -57,7 +57,7 @@ Pick the engine with `--mode`; set `SUSYNC_MODE` to change your default.
 
 **Claude Code mode** loads the 8sync kit from `~/.claude`: a guard that refuses deletes outside the repo, force-pushes and printing `.env` or keys; a verify hook that runs the build after every edit; stop and ask gates that keep Claude working instead of ending on a plan; and `/ship`, `/ship-loop`, `/autopilot` for hands-off work that still waits for one `Ship` answer before anything merges. Bypass mode is locked. Its own verbs: `8sync ccc help`.
 
-**Sign-in, the official way.** Claude Code signs in with Anthropic's own login (`claude auth login`). omp and Forge use your own API key against the provider's official API. 8sync never proxies a consumer subscription. The team's rules: [`8sync-anthropic-rules.md`](assets/skills/aup-audit/8sync-anthropic-rules.md).
+**Sign-in, the official way.** Claude Code signs in with Anthropic's own login (`claude auth login`). omp and Forge use your own API key against the provider's official API. 8sync never proxies a consumer subscription.
 
 ## 8 Sync HQ
 

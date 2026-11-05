@@ -19,4 +19,4 @@ Checklist (mỗi dòng OK / WARN / BLOCK + cách sửa):
 
 Kết quả: checklist + việc nên làm theo thứ tự ưu tiên. Đề xuất managed-settings: chạy `8sync ccc policy --org-uuid <uuid>` (in JSON + lệnh `sudo install` để user tự chạy; org UUID lấy ở claude.ai Admin settings). Team plan còn có server-managed settings trong admin console claude.ai (cùng key, không cần file; https://code.claude.com/docs/en/server-managed-settings).
 
-Liên quan: `/sec` (secret + lỗ hổng code) · `/rules` (được phép không) · `/aup-audit` (quét theo Usage Policy).
+Liên quan: `/sec` (secret + lỗ hổng code).

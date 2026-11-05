@@ -13,4 +13,4 @@ Mặc định quét diff hiện tại (`git diff` + file untracked); `repo` ho�
 6. **Báo cáo:** bảng `mức | mục | file:dòng | việc cần làm`. **BLOCK** (secret thật, lỗ hổng khai thác được — dừng ship) · **WARN** (rủi ro cần user quyết) · **OK** (liệt kê ngắn mục sạch + mục bị skip).
 7. Secret thật → bảo user rotate NGAY và xoá khỏi history; không tự rotate, không tự xoá, không lặp lại giá trị.
 
-Liên quan: `/aup-audit` (quét theo Usage Policy) · `/rules` (được phép không) · `/harden` (cấu hình Claude Code).
+Liên quan: `/harden` (cấu hình Claude Code).

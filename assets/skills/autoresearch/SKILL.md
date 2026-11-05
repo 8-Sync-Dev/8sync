@@ -45,7 +45,7 @@ Lấy từ yêu cầu/repo trước; rồi hỏi MỘT `AskUserQuestion` header 
 - Chạy trên CI: baseline và candidate trong CÙNG một job (runner khác nhau làm keep rule vô nghĩa), ghi runner id.
 - `outputs/<slug>.md` (trong worktree): target, environment, baseline vs best (mean ± stdev, n), bảng MỌI cấu hình đã thử (keep/revert/fail/remeasure) kèm metric, cái gì có tác dụng và vì sao, biến thiên giữa seed, mối đe doạ độ tin cậy (nhiễu, máy bận, nhiệt, cache), giả thuyết tiếp theo. Không nhận hiệu quả từ một lần chạy tốt nhất; mọi con số map tới một dòng ledger.
 - `outputs/<slug>.provenance.md`: `Verification: PASS` chỉ khi held-out đạt; `PASS WITH NOTES` khi held-out đạt nhưng nhiễu lớn; `BLOCKED` khi một kiểm bắt buộc không chạy được.
-- Đưa best vào code: một commit `perf(<scope>): …` từ `best.patch` qua `/ship` (sec/rules/aup-audit, CI 3 OS). Xong việc nặng → `/clean`.
+- Đưa best vào code: một commit `perf(<scope>): …` từ `best.patch` qua `/ship` (sec, CI 3 OS). Xong việc nặng → `/clean`.
 
 ## Lệnh phụ
 `/autoresearch <slug> status` (session + 5 dòng ledger cuối) · `resume` · `stop` (giữ dữ liệu) · `clear` (xoá `outputs/autoresearch/<slug>/` và worktree `ar-<slug>`, không hoàn tác: hỏi trước).

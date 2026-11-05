@@ -16,6 +16,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Fixed
 - HQ: ảnh/file dán hoặc chọn liên tiếp giữ đúng thứ tự anh thêm. Trước đây file nào tải lên xong trước thì đứng trước, nên ảnh nhỏ dán sau có thể nhảy lên đầu và câu hỏi đi kèm ảnh sai. Giờ mỗi file giữ chỗ ngay lúc dán (ô chờ có vòng xoay), có số 1, 2, 3… khi nhiều file. Tin gửi phòng ghi `- 1. <path>`, `- 2. <path>` theo đúng thứ tự đó (một file thì vẫn `- <path>`).
 
+## [0.124.2] — 2026-11-05
+
+### Removed
+- Bỏ lớp rules AUP/Anthropic khỏi kit và sản phẩm theo quyết định của owner (2026-11-05): xoá skill `aup-audit` (kèm `8sync-anthropic-rules.md`, `RULES.md`), skill `rules`, workflow `legal-sync.yml` và `docs/legal/anthropic/`. `8sync ccc risk` giờ chỉ yêu cầu `/sec` (luôn) + người review cho high-risk + `/harden` khi đụng cấu hình kit; `--release` chỉ nâng mức lên `medium`. Block CLAUDE.md của kit bỏ các dòng luật Anthropic (token subscription, link toàn văn, cổng `/rules` `/aup-audit`); quy ước workflow (CHANGELOG/STATE, ship, đa nền tảng, memory) giữ nguyên. Các lệnh `/eccx-loop-*`, `/ship*`, help và docs cập nhật theo. Giữ nguyên các chặn bảo vệ có chủ đích: không bao giờ route subscription Claude qua proxy/gateway (guard, `harness claude-code`, `gateway`, doctor, Feynman) — chúng bảo vệ tài khoản Anthropic của owner, không phải lớp rules.
+
 ## [0.124.1] — 2026-11-05
 
 ### Security

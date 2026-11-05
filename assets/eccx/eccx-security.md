@@ -25,7 +25,6 @@ Scope: security review, scanning, hardening, compliance, crypto.
 
 ## Skills
 - `agent-security-hardening` — Security hardening guidance for AI agent frameworks that process untrusted content, invoke
-- `skill://aup-audit` — Kiểm tra repo theo Usage Policy của Anthropic (anthropic.com/legal/aup) và quy tắc
 - `defi-amm-security` — Security checklist for Solidity AMM contracts, liquidity pools, and swap flows
 - `django-security` — Django security best practices, CSRF, SQL injection, and secure deployment
 - `evm-token-decimals` — Prevent silent decimal mismatch bugs across EVM chains

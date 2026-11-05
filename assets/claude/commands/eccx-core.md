@@ -34,7 +34,6 @@ Scope: harness basics: standards, learning, compaction, always-on rules.
 - `karpathy-guidelines` — . It enforces Andrej Karpathy-style engineering discipline
 - `ponytail` — Forces the laziest solution that actually works, simplest, shortest, most minimal
 - `remember` — Ghi MỘT bài học có bằng chứng vào memory của repo (su-code/KNOWLEDGE.md)
-- `rules` — Luật Anthropic + quy tắc 8 Sync
 - `ecc:strategic-compact` — Manual context compaction at logical intervals to preserve context across task phases
 - `taste-output` — Overrides default LLM truncation behavior
 - `trail` — "where is X defined", "who calls Y", "how does Z work", "what
