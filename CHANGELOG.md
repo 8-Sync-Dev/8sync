@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.16] — 2026-11-05
+
+### Fixed
+- HQ Nội dung › Tổng quan: tên bài dài trong bảng từng bài không còn đè lên cột "Số liệu". Cột Bài rộng cố định 21,5rem, tên cắt bằng "…" và hiện đủ khi rê chuột.
+
 ## [0.122.15] — 2026-11-05
 
 ### Added
