@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.122.18] — 2026-11-05
+
+### Fixed
+- HQ việc cuối ngày gửi phòng nội dung: đọc thẳng các bài lên lịch từ hôm qua tới ngày mai theo `scheduled_at`. Trước đây nó dùng danh sách của trang (500 bài sửa gần nhất), sổ quá 500 bài thì bài hôm nay ít sửa bị sót, giờ "bài cuối" tính sai và ngày bị đánh dấu đã gửi thiếu bài.
+
+### Docs
+- Hợp đồng API: `DELETE /api/artifacts/:id` và `POST /api/content/metrics` qua link `--public` (chỉ chủ) là cố ý: xoá chỉ gỡ dòng, số liệu chỉ thêm bản ghi; chỉ đăng file mới là phải từ máy.
+
 ## [0.122.17] — 2026-11-05
 
 ### Security

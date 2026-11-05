@@ -10,7 +10,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { dayKey, type ContentItem } from "../content";
 import type { FloorRow } from "../floor";
 import { isInboxId, inboxLive, queueInbox } from "./inbox";
-import { contentConfigPath, contentDbPath, listContent, openContent } from "./content";
+import { contentConfigPath, contentDbPath, hasSchedule, openContent } from "./content";
 import { getDb } from "./db";
 import { expand, loadFloor } from "./floor";
 import { listArtifacts } from "./artifacts";
@@ -111,23 +111,32 @@ export function digestText(d: Due, links: ReadonlyMap<number, string[]>, repo: s
 
 type Result = { sent: string; session: string } | { skipped: string } | null;
 
-export type DigestDeps = { content: () => { items: Item[]; repo: string } | null; floor: () => Promise<FloorRow[]>; cfg: DigestConfig };
+export type DigestDeps = { content: (now: number) => { items: Item[]; repo: string } | null; floor: () => Promise<FloorRow[]>; cfg: DigestConfig };
 
-/** The content book's items and the repo it lives in, or null when none is configured / readable. */
-function loadContent(): { items: Item[]; repo: string } | null {
+const DAY_MS = 24 * 3600_000;
+
+/**
+ * The posts scheduled around today (yesterday … tomorrow, so a day's later posts count) and the repo
+ * the book lives in, or null when none is configured / readable. Read straight by `scheduled_at`:
+ * the page list (`listContent`) caps at the most recently edited rows and would drop older ones.
+ */
+function loadContent(now: number): { items: Item[]; repo: string } | null {
   const dbPath = contentDbPath();
   if (!dbPath || "error" in dbPath) return null;
   const c = openContent();
-  if (!("db" in c)) return null;
+  if (!("db" in c) || !hasSchedule(c.db)) return null;
+  const items = c.db
+    .prepare("SELECT id, title, format, status, fb_page, fb_post_url, scheduled_at FROM content_items WHERE scheduled_at >= ? AND scheduled_at < ? ORDER BY scheduled_at")
+    .all(now - 2 * DAY_MS, now + 2 * DAY_MS) as unknown as Item[];
   const dir = path.dirname(dbPath.path);
-  return { items: listContent(c.db).items, repo: projectOf(dir)?.root ?? dir };
+  return { items, repo: projectOf(dir)?.root ?? dir };
 }
 
 /** One tick. Exported for the test; the timer calls it every DIGEST_EVERY_MS. */
 export async function digestTick(db: DatabaseSync, now = Date.now(), deps: Partial<DigestDeps> = {}): Promise<Result> {
   const cfg = deps.cfg ?? digestConfig();
   if (cfg.off) return null;
-  const book = (deps.content ?? loadContent)();
+  const book = (deps.content ?? loadContent)(now);
   if (!book) return null;
   const done = new Set((db.prepare("SELECT day FROM content_digest").all() as { day: string }[]).map((r) => r.day));
   const due = dueDigest(book.items, now, cfg.delayMin * 60_000, done);
