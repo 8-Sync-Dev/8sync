@@ -13,6 +13,7 @@ import type { Message } from "./types";
 import { cn } from "@/lib/utils";
 import { AttachButton, AttachList, useAttach, type Upload } from "./attach";
 import { MentionTextarea } from "./mention-textarea";
+import { ModelPicker } from "./model-picker";
 import { ApiError, type Api } from "./use-hq";
 import type { Room } from "./use-office";
 
@@ -164,7 +165,7 @@ export function RoomSend({
           maxLength={2000}
           aria-describedby={`${id}-summary`}
           placeholder={placeholder}
-          className="max-h-48 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+          className="max-h-[40dvh] min-h-14 resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
         <AttachList a={att} token={token} />
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 pb-2">
@@ -192,6 +193,7 @@ export function RoomSend({
               ))}
             </SelectContent>
           </Select>
+          {room && <ModelPicker api={api} session={room.name} engine={room.engine === "omp" ? "omp" : "claude"} model={room.model} className={TOUCH} />}
           <AttachButton a={att} disabled={disabled} className={TOUCH} />
           <Button type="submit" size="sm" className={cn("ml-auto", TOUCH, "max-sm:px-4")} disabled={disabled || busy || uploading > 0 || (!text.trim() && !allowEmpty)} aria-busy={busy}>
             {busy ? <Loader2Icon className="animate-spin motion-reduce:animate-none" aria-hidden /> : <SendIcon aria-hidden />}
