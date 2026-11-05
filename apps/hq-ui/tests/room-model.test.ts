@@ -1,0 +1,118 @@
+import fs from "node:fs";
+import path from "node:path";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { modelStateJson, parseModelControl, splitControls } from "../../../assets/extensions/8sync-inbox";
+import { claudeCommands, effortsFor, findChoice, ompControl, type ModelChoice } from "@/lib/room-model";
+import { getToken } from "@/lib/server/auth";
+import { inboxFile } from "@/lib/server/inbox";
+import { modelStateFile, parseOmpModels, readRoomModel } from "@/lib/server/models";
+import { stateDir } from "@/lib/server/paths";
+import { ORIGIN, req, tempHome } from "./helpers";
+
+const LIST: ModelChoice[] = [
+  { selector: "anthropic/claude-opus-5-5", provider: "anthropic", name: "Claude Opus 5.5", thinking: ["low", "medium", "high", "xhigh", "max"] },
+  { selector: "cloudgo-cc/claude-opus-5-5", provider: "cloudgo-cc", name: "Claude Opus 5.5", thinking: ["low", "medium", "high"] },
+  { selector: "zai/glm-5.3", provider: "zai", name: "GLM-5.3", thinking: [] },
+];
+
+vi.mock("@/lib/server/models", async (orig) => ({ ...(await orig<typeof import("@/lib/server/models")>()), ompModels: async () => LIST }));
+const { GET, POST } = await import("@/app/api/models/route");
+
+const ROOM = "omp-0123456789abcdef";
+let token = "";
+beforeAll(() => {
+  tempHome();
+  token = getToken();
+});
+
+describe("HQ → extension control message", () => {
+  it("what HQ queues is what the extension applies", () => {
+    expect(parseModelControl(ompControl({ model: "nvidia/meta/llama-4", thinking: "xhigh" }))).toEqual({ model: "nvidia/meta/llama-4", thinking: "xhigh" });
+    expect(parseModelControl(ompControl({ thinking: "off" }))).toEqual({ thinking: "off" });
+  });
+  it("ignores look-alikes: ordinary text, a bad level, a model with a thinking suffix", () => {
+    expect(parseModelControl("/8sync-model is great")).toBeNull();
+    expect(parseModelControl('/8sync-model {"thinking":"ultracode"}')).toBeNull();
+    expect(parseModelControl('/8sync-model {"model":"anthropic/claude-opus-5-5:high"}')).toBeNull();
+  });
+  it("a switch sent with a message: switch applied, the message delivered as itself", () => {
+    const sw = ompControl({ model: "zai/glm-5.3" });
+    expect(splitControls({ text: "framed", messages: [sw] })).toEqual({ controls: [{ model: "zai/glm-5.3" }], rest: null });
+    expect(splitControls({ text: "framed", messages: ["fix it", sw, "/compact"] })).toEqual({
+      controls: [{ model: "zai/glm-5.3" }],
+      rest: { text: "fix it\n\n/compact", messages: ["fix it", "/compact"] },
+    });
+    const plain = { text: "framed", messages: ["hi"] };
+    expect(splitControls(plain).rest).toBe(plain);
+  });
+  it("the extension's state file reads back on HQ; other ids are never a path", () => {
+    fs.mkdirSync(path.dirname(modelStateFile(ROOM)), { recursive: true });
+    fs.writeFileSync(modelStateFile(ROOM), modelStateJson({ model: "zai/glm-5.3", thinking: "high", error: null }, 5));
+    expect(readRoomModel(ROOM)).toEqual({ model: "zai/glm-5.3", thinking: "high", error: null, at: 5 });
+    expect(readRoomModel("../../etc")).toBeNull();
+  });
+});
+
+describe("model list helpers", () => {
+  it("keeps chat models with a usable selector", () => {
+    const out = parseOmpModels(
+      JSON.stringify({
+        models: [
+          { provider: "zai", kind: "chat", selector: "zai/glm-5.3", name: "GLM-5.3", thinking: ["low", 3] },
+          { provider: "x", kind: "image", selector: "x/img" },
+          { provider: "x", kind: "chat", selector: "x/a:b" },
+          { provider: "x", kind: "chat" },
+        ],
+      }),
+    );
+    expect(out).toEqual([{ selector: "zai/glm-5.3", provider: "zai", name: "GLM-5.3", thinking: ["low"] }]);
+    expect(parseOmpModels("not json")).toEqual([]);
+  });
+  it("finds the room's model from `8sync ls` (bare id) or the extension (selector + level)", () => {
+    expect(findChoice(LIST, "claude-opus-5-5")?.selector).toBe("anthropic/claude-opus-5-5");
+    expect(findChoice(LIST, "cloudgo-cc/claude-opus-5-5:high")?.selector).toBe("cloudgo-cc/claude-opus-5-5");
+    expect(findChoice(LIST, null)).toBeUndefined();
+  });
+  it("effort row: omp adds off, a model without levels gets only off; Claude is fixed", () => {
+    expect(effortsFor("omp", LIST[1])).toEqual(["off", "low", "medium", "high"]);
+    expect(effortsFor("omp", LIST[2])).toEqual(["off"]);
+    expect(effortsFor("claude", undefined)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(claudeCommands({ model: "opus", thinking: "max" })).toEqual(["/model opus", "/effort max"]);
+  });
+});
+
+describe("/api/models", () => {
+  const post = (body: unknown) => POST(req("/api/models", { method: "POST", token, origin: ORIGIN, body }));
+  beforeEach(() => fs.rmSync(path.join(stateDir(), "inbox"), { recursive: true, force: true }));
+
+  it("an omp room on an old extension (no state) cannot switch: nothing queued", async () => {
+    const other = "omp-ffffffffffffffff";
+    const g = await (await GET(req(`/api/models?session=${other}`, { token }))).json();
+    expect(g).toMatchObject({ engine: "omp", apply: null, current: null });
+    expect((await post({ session: other, thinking: "high" })).status).toBe(409);
+    expect(fs.existsSync(inboxFile(other))).toBe(false);
+  });
+  it("queues one control message for a known model and level", async () => {
+    const g = await (await GET(req(`/api/models?session=${ROOM}`, { token }))).json();
+    expect(g).toMatchObject({ engine: "omp", apply: "inbox", current: { model: "zai/glm-5.3" } });
+    expect((await post({ session: ROOM, model: "anthropic/claude-opus-5-5", thinking: "max" })).status).toBe(202);
+    const lines = fs.readFileSync(inboxFile(ROOM), "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(parseModelControl(JSON.parse(lines[0]).text)).toEqual({ model: "anthropic/claude-opus-5-5", thinking: "max" });
+  });
+  it("rejects a model omp does not list, a bad level, an empty change", async () => {
+    expect((await post({ session: ROOM, model: "openai/gpt-9" })).status).toBe(422);
+    expect((await post({ session: ROOM, thinking: "ultracode" })).status).toBe(422);
+    expect((await post({ session: ROOM })).status).toBe(422);
+    expect(fs.existsSync(inboxFile(ROOM))).toBe(false);
+  });
+  it("a Claude session reached only by inbox cannot switch; Claude aliases are checked", async () => {
+    const uuid = "2c40ff62-99dd-4c88-b060-9ff5877a2ed2";
+    expect(await (await GET(req(`/api/models?session=${uuid}`, { token }))).json()).toMatchObject({ engine: "claude", apply: null });
+    expect((await post({ session: uuid, model: "opus" })).status).toBe(422);
+    expect((await post({ session: "hq-a", model: "gpt-5" })).status).toBe(422);
+  });
+  it("is owner only", async () => {
+    expect((await GET(req(`/api/models?session=${ROOM}`))).status).toBe(401);
+  });
+});

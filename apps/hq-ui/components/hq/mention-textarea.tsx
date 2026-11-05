@@ -1,7 +1,7 @@
 "use client";
 
 import { FileIcon, FolderIcon, FolderUpIcon, SlashIcon } from "lucide-react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type KeyboardEvent } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { applyCommand, applyPick, filterCommands, filterEntries, mentionAt, slashAt, type Entry, type Mention, type Slash, type SlashCommand } from "@/lib/mention";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,15 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
   // Loaded on the first "/" typed, then kept (the server caches the list 30 s).
   const [cmds, setCmds] = useState<SlashCommand[] | null>(null);
   const listId = useRef(`mention-${Math.random().toString(36).slice(2)}`).current;
+
+  // Grows with its lines: CSS `field-sizing: content` where supported (Chromium), else measured here
+  // (Safari, Firefox: the phone link). The className's max-h caps it; past that it scrolls.
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (!el || CSS.supports("field-sizing", "content")) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+  }, [value]);
 
   // One listing per folder typed; the prefix only filters.
   const dirKey = m && base ? `${base}\0${m.dir}` : null;
