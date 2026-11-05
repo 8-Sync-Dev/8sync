@@ -562,9 +562,9 @@ async fn api_context(State(ctx): State<Arc<Ctx>>) -> Json<serde_json::Value> {
     let (window, assumed) = model_window(&model);
     let cfg_raw = std::fs::read_to_string(home.join(".omp/agent/config.yml")).unwrap_or_default();
     let threshold_pct = parse_threshold(&cfg_raw);
-    let (used, last_compact_at, session, session_age) = match (&root, session_slug(home, root.as_deref())) {
-        (Some(_r), Some(slug)) => {
-            let dir = home.join(format!(".omp/agent/sessions/{}", slug));
+    let (used, last_compact_at, session, session_age) = match &root {
+        Some(r) => {
+            let dir = super::sessions::session_dir(home, r);
             let newest = newest_session(&dir);
             let (used, last_compact) = newest.as_ref().and_then(|p| analyze_context(p)).unwrap_or((0, None));
             let session = newest.as_ref().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("").to_string();
@@ -577,7 +577,7 @@ async fn api_context(State(ctx): State<Arc<Ctx>>) -> Json<serde_json::Value> {
                 .unwrap_or(0);
             (used, last_compact, session, age)
         }
-        _ => (0u64, None, String::new(), 0u64),
+        None => (0u64, None, String::new(), 0u64),
     };
     let pct = if window > 0 { used * 100 / window } else { 0 };
     let compact_at = window * threshold_pct / 100;
@@ -673,12 +673,6 @@ fn parse_token_count(s: &str) -> Option<u64> {
         return None;
     }
     Some((f * mult) as u64)
-}
-
-fn session_slug(home: &std::path::Path, root: Option<&std::path::Path>) -> Option<String> {
-    let r = root?;
-    let rel = r.strip_prefix(home).ok()?;
-    Some(format!("-{}", rel.to_string_lossy().replace('/', "-")))
 }
 
 fn newest_session(dir: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -1136,16 +1130,25 @@ async fn api_models_set(
 
 // ---- Projects (omp session directories) ----
 
-/// Invert `session_slug`'s encoding (`-<rel-with-/replaced-by-->`) back to an
-/// absolute project path under `home`. The encoding is lossy (a literal `-` in a
-/// dir name is indistinguishable from a `/` separator), so resolve greedily
-/// against the filesystem: at each level take the longest run of `-`-joined
-/// tokens that names an existing directory. Returns None if it can't be resolved
-/// to an existing path.
+/// Invert `sessions::session_slug` back to an absolute project path. Two forms:
+/// `-<rel>` (under `home`) and `--<abs>--` (elsewhere; `C--x` = `C:\x` on
+/// Windows, otherwise rooted at `/`). The encoding is lossy (a literal `-` in a
+/// dir name is indistinguishable from a separator), so resolve greedily against
+/// the filesystem: at each level take the longest run of `-`-joined tokens that
+/// names an existing directory. Returns None if it can't be resolved.
 fn slug_to_path(home: &std::path::Path, slug: &str) -> Option<std::path::PathBuf> {
-    let body = slug.strip_prefix('-')?;
+    let (base, body) = if let Some(abs) = slug.strip_prefix("--").and_then(|s| s.strip_suffix("--")) {
+        let b = abs.as_bytes();
+        if b.len() >= 3 && b[0].is_ascii_alphabetic() && &b[1..3] == b"--" {
+            (std::path::PathBuf::from(format!("{}:\\", b[0] as char)), &abs[3..])
+        } else {
+            (std::path::PathBuf::from("/"), abs)
+        }
+    } else {
+        (home.to_path_buf(), slug.strip_prefix('-')?)
+    };
     let tokens: Vec<&str> = body.split('-').collect();
-    let mut cur = home.to_path_buf();
+    let mut cur = base;
     let mut i = 0;
     while i < tokens.len() {
         let mut advanced = false;
@@ -1708,7 +1711,8 @@ impl Drop for TmpDir {
 
 #[cfg(test)]
 mod tests {
-    use super::{session_slug, slug_to_path};
+    use super::super::sessions::session_slug;
+    use super::slug_to_path;
     use std::path::PathBuf;
 
     /// Unique scratch home under the OS temp dir; cleaned on drop.
@@ -1737,7 +1741,7 @@ mod tests {
         let home = TmpHome::new("dash");
         // Project dir whose name contains a literal '-' (the lossy case).
         let root = home.mkdirs("Projects/tools/su-code");
-        let slug = session_slug(&home.0, Some(root.as_path())).unwrap();
+        let slug = session_slug(&home.0, root.as_path());
         assert_eq!(slug, "-Projects-tools-su-code");
         assert_eq!(slug_to_path(&home.0, &slug), Some(root));
     }
@@ -1747,7 +1751,7 @@ mod tests {
         let home = TmpHome::new("nested");
         for rel in ["foo", "a/b/c"] {
             let root = home.mkdirs(rel);
-            let slug = session_slug(&home.0, Some(root.as_path())).unwrap();
+            let slug = session_slug(&home.0, root.as_path());
             assert_eq!(slug_to_path(&home.0, &slug), Some(root), "rel={}", rel);
         }
     }
@@ -1758,5 +1762,16 @@ mod tests {
         assert_eq!(slug_to_path(&home.0, "-does-not-exist"), None);
         // Missing leading '-' is not a valid slug.
         assert_eq!(slug_to_path(&home.0, "Projects"), None);
+    }
+
+    #[test]
+    fn slug_roundtrip_outside_home() {
+        // Project outside home uses the `--<abs>--` form (Windows: `--C--…--`).
+        let home = TmpHome::new("outhome");
+        let other = TmpHome::new("outroot");
+        let root = other.mkdirs("proj-x/sub");
+        let slug = session_slug(&home.0, root.as_path());
+        assert!(slug.starts_with("--") && slug.ends_with("--"), "slug={}", slug);
+        assert_eq!(slug_to_path(&home.0, &slug), Some(root));
     }
 }

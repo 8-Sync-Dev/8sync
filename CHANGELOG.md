@@ -5,6 +5,13 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- Kit Claude Code: hook PreToolUse mới `8sync ccc hook trail-hint` (matcher `Grep|Glob|Bash`). Khi repo có trail index (`.trail/`) và Claude gọi Grep/Glob hoặc Bash bắt đầu bằng `rg `, `grep -r`, `find . -name`, hook thêm `additionalContext` nhắc dùng `trail ask|grep|skeleton|callers` trước. Không bao giờ chặn tool, chỉ nhắc một lần mỗi phiên cho mỗi repo (file nhớ `~/.local/state/8sync/ccc/trail-hint/<session>.seen`, tự dọn sau 7 ngày). `8sync ccc kit` cài lại vẫn idempotent và giữ hook của anh.
+- `/eccx-core`: thêm mục `## Tools` với `graphify` (fallback của trail: `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster`, `graphify explain`, `graphify path`). `scripts/eccx-gen.py` có bảng `TOOLS` cho CLI tool không phải skill.
+
+### Fixed
+- `8sync harness toolstats` và dashboard harness (context, danh sách project) tìm đúng thư mục phiên omp trên Windows. omp đặt tên `-<đường dẫn tương đối>` cho repo trong home và `--<đường dẫn tuyệt đối, / \ : → ->--` cho repo ngoài home (ví dụ `--C--Users-Projects-su-code--`); trước đây 8sync chỉ hiểu dạng đầu nên báo "no omp sessions yet". Hai nơi giờ dùng chung `harness::sessions::session_slug`, và `slug_to_path` đọc được cả hai dạng.
+
 ## [0.122.21] — 2026-11-05
 
 ### Changed

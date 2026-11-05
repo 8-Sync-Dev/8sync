@@ -43,3 +43,6 @@ Scope: harness basics: standards, learning, compaction, always-on rules.
 - `/ecc:auto-update` — Pull the latest ECC repo changes and reinstall the current managed targets
 - `/ecc:ecc-guide` — Navigate ECC's current agents, skills, commands, hooks, install profiles, and docs
 - `/ecc:project-init` — Detect a project's stack and produce a dry-run ECC onboarding plan using
+
+## Tools
+- `graphify` — only when `trail` falls short (`no indexed callers`, or the path A→B): `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (re-run after edits), then `graphify explain <symbol>` / `graphify path "A()" "B()"`; skip `graphify query` (~2K tokens)
