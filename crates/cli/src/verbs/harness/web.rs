@@ -26,7 +26,7 @@ use crate::{assets, ui, verbs::skill::discover::{self, detect_current_project_ro
 struct Ctx {
     home: std::path::PathBuf,
     port: u16,
-    /// Random per launch; the index page carries it, `/api/*` requires it (`x-8sync-token`).
+    /// Random per launch; reaches the FE only in the launch URL's fragment, `/api/*` requires it (`x-8sync-token`).
     token: String,
 }
 
@@ -39,20 +39,24 @@ pub(crate) fn harness_web(home: &std::path::Path, port: u16, no_open: bool) -> R
     let mut raw = [0u8; 16];
     getrandom::getrandom(&mut raw).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
     let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-    // For the Vite dev proxy (web/vite.config.ts), which can't read the served page.
-    let _ = write_private(&crate::brand::config_dir(home).join("web-token"), &token);
-    let ctx = Arc::new(Ctx { home: home.to_path_buf(), port, token });
+    // For the Vite dev proxy (web/vite.config.ts), which has no launch URL to read it from.
+    let token_file = crate::brand::config_dir(home).join("web-token");
+    if let Err(e) = write_private(&token_file, &token) {
+        ui::warn(&format!("could not write {} ({e}); the Vite dev proxy will get 401s", token_file.display()));
+    }
+    let ctx = Arc::new(Ctx { home: home.to_path_buf(), port, token: token.clone() });
     apply_active_project(home); // honor last-activated project across restarts
-    let app = api_routes()
-        .merge(Router::new().fallback(static_handler))
-        .layer(middleware::from_fn_with_state(ctx.clone(), guard))
-        .with_state(ctx);
+    let app = app(ctx);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     ui::ok(&format!("8sync harness web → http://127.0.0.1:{}  (Ctrl+C to stop)", port));
-    if !no_open {
-        let _ = std::process::Command::new("xdg-open")
-            .arg(format!("http://127.0.0.1:{}", port))
-            .spawn();
+    // The token rides in the fragment: browsers never send it, so the page itself carries no
+    // secret for another local user to GET. The FE moves it to sessionStorage and strips it.
+    // Printed only when no browser was started (`--no-open` or the opener failed): a terminal
+    // line ends up in agent transcripts.
+    let launch = format!("http://127.0.0.1:{port}/#t={token}");
+    let opened = !no_open && browser_command(&launch).spawn().is_ok();
+    if !opened {
+        ui::info(&format!("open this URL (it carries this launch's API token; keep it to yourself): {launch}"));
     }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -65,18 +69,54 @@ pub(crate) fn harness_web(home: &std::path::Path, port: u16, no_open: bool) -> R
     Ok(())
 }
 
-/// Write `body` readable by the owner only (0600 on unix; the profile dir ACL on Windows).
+/// The OS browser opener, argv only (no shell, so `#` and `&` reach the browser intact).
+/// Windows: `rundll32 url.dll,FileProtocolHandler` keeps the fragment (`cmd /c start` and
+/// `explorer` are not argv-safe or drop it).
+fn browser_command(url: &str) -> std::process::Command {
+    let mut c = if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    c.arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c
+}
+
+/// Write `body` readable by the owner only: a fresh `<name>.<pid>.tmp` (created new, 0600 on
+/// unix; the profile dir ACL on Windows) renamed over `path`, so the file is never briefly
+/// world-readable or half-written, and a planted symlink at the tmp name is not followed.
 fn write_private(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+    use std::io::Write;
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    std::fs::write(path, body)?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("token");
+    let tmp = path.with_file_name(format!("{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp); // a stale tmp from a crashed run with the same pid
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
-    Ok(())
+    let res = opts.open(&tmp).and_then(|mut f| f.write_all(body.as_bytes())).and_then(|_| std::fs::rename(&tmp, path));
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// The dashboard app: API + SPA behind [`guard`].
+fn app(ctx: Arc<Ctx>) -> Router {
+    api_routes()
+        .merge(Router::new().fallback(static_handler))
+        .layer(middleware::from_fn_with_state(ctx.clone(), guard))
+        .with_state(ctx)
 }
 
 /// Byte compare without an early exit, so timing does not leak the token prefix.
@@ -116,13 +156,18 @@ fn check_request(
     Ok(())
 }
 
+/// Every response, refusals included, refuses to be framed (clickjacking).
 async fn guard(State(ctx): State<Arc<Ctx>>, req: Request, next: Next) -> Response {
     let h = req.headers();
     let get = |n: &str| h.get(n).and_then(|v| v.to_str().ok());
-    if let Err((code, msg)) = check_request(ctx.port, &ctx.token, req.method(), req.uri().path(), get("host"), get("origin"), get(TOKEN_HEADER)) {
-        return (code, msg).into_response();
-    }
-    next.run(req).await
+    let mut resp = match check_request(ctx.port, &ctx.token, req.method(), req.uri().path(), get("host"), get("origin"), get(TOKEN_HEADER)) {
+        Err((code, msg)) => (code, msg).into_response(),
+        Ok(()) => next.run(req).await,
+    };
+    let hs = resp.headers_mut();
+    hs.insert(header::X_FRAME_OPTIONS, header::HeaderValue::from_static("DENY"));
+    hs.insert(header::CONTENT_SECURITY_POLICY, header::HeaderValue::from_static("frame-ancestors 'none'"));
+    resp
 }
 
 /// Honor the last-activated project (web-session.json) by chdir-ing into it, so
@@ -383,13 +428,7 @@ async fn api_eval(State(ctx): State<Arc<Ctx>>) -> Result<Json<super::eval::EvalD
         .ok_or((StatusCode::NOT_FOUND, "not in a project".into()))
 }
 
-/// The SPA shell with the launch token as `<meta name="8sync-token">` (hex, so no escaping).
-fn index_with_token(html: &[u8], token: &str) -> Vec<u8> {
-    let s = String::from_utf8_lossy(html);
-    s.replacen("</head>", &format!("<meta name=\"8sync-token\" content=\"{token}\"></head>"), 1).into_bytes()
-}
-
-async fn static_handler(State(ctx): State<Arc<Ctx>>, uri: Uri) -> Response {
+async fn static_handler(uri: Uri) -> Response {
     let p = uri.path().trim_start_matches('/');
     let p = if p.is_empty() { "index.html" } else { p };
     if p != "index.html" {
@@ -398,7 +437,7 @@ async fn static_handler(State(ctx): State<Arc<Ctx>>, uri: Uri) -> Response {
         }
     }
     if let Some(bytes) = assets::web_asset("index.html") {
-        return ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], index_with_token(&bytes, &ctx.token)).into_response();
+        return ([(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], bytes).into_response();
     }
     (StatusCode::NOT_FOUND, "8sync web FE not built — run `pnpm --dir web build`").into_response()
 }
@@ -884,6 +923,9 @@ async fn api_rule_add(
         Some("global") => ctx.home.join(".omp/agent/rules"),
         _ => root.join(".omp/rules"),
     };
+    if is_link(&dir) {
+        return Err((StatusCode::BAD_REQUEST, "the rules dir is a symlink; refusing to write through it".into()));
+    }
     std::fs::create_dir_all(&dir).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut name = body.name.trim().to_string();
     if name.is_empty() {
@@ -917,13 +959,19 @@ async fn api_rule_delete(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// A symlink (or Windows junction) at `p` itself. A rules dir that is one could point the
+/// dashboard's writes and deletes anywhere, so both refuse it.
+fn is_link(p: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
+}
+
 /// The file `path` names, if it is a `.md`/`.mdc` rule directly inside one of the
 /// rule `dirs` after resolving `..` and symlinks (a link or `../` that leaves the
-/// dir is refused).
+/// dir is refused, and so is a rules dir that is itself a symlink).
 fn rule_delete_target(path: &std::path::Path, dirs: &[std::path::PathBuf]) -> Result<std::path::PathBuf, ApiErr> {
     let refuse = || (StatusCode::BAD_REQUEST, "path not under a rules dir".to_string());
     let real = std::fs::canonicalize(path).map_err(|_| refuse())?;
-    let inside = dirs.iter().filter_map(|d| std::fs::canonicalize(d).ok()).any(|d| real.parent() == Some(d.as_path()));
+    let inside = dirs.iter().filter(|d| !is_link(d)).filter_map(|d| std::fs::canonicalize(d).ok()).any(|d| real.parent() == Some(d.as_path()));
     let is_rule = real.extension().is_some_and(|x| x == "md" || x == "mdc") && real.is_file();
     if !inside || !is_rule {
         return Err(refuse());
@@ -1809,7 +1857,7 @@ impl Drop for TmpDir {
 #[cfg(test)]
 mod tests {
     use super::super::sessions::session_slug;
-    use super::{check_request, index_with_token, rule_delete_target, slug_to_path};
+    use super::{app, check_request, is_link, rule_delete_target, slug_to_path, write_private, Ctx};
     use axum::http::{Method, StatusCode};
     use std::path::PathBuf;
 
@@ -1894,7 +1942,7 @@ mod tests {
             assert_eq!(r.map_err(|e| e.0), Err(StatusCode::UNAUTHORIZED), "sent={sent:?}");
         }
         assert!(check_request(8731, TOK, &Method::GET, "/api/state", h, None, Some(TOK)).is_ok());
-        // The page shell itself needs no token (it is what carries it).
+        // The page shell itself needs no token (it carries none; the FE reads the URL fragment).
         assert!(check_request(8731, TOK, &Method::GET, "/", h, None, None).is_ok());
     }
 
@@ -1907,10 +1955,75 @@ mod tests {
         assert!(check_request(8731, TOK, &Method::POST, "/api/mcp/add", h, None, Some(TOK)).is_ok());
     }
 
+    /// One raw HTTP/1.1 exchange; returns the whole response text.
+    fn http(port: u16, req: &str) -> String {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        s.write_all(req.as_bytes()).unwrap();
+        let mut out = String::new();
+        let _ = s.read_to_string(&mut out);
+        out
+    }
+
     #[test]
-    fn index_page_carries_the_token_meta() {
-        let out = String::from_utf8(index_with_token(b"<html><head><title>x</title></head><body></body></html>", TOK)).unwrap();
-        assert!(out.contains(&format!("<meta name=\"8sync-token\" content=\"{TOK}\"></head>")));
+    fn served_pages_carry_no_token_and_every_response_refuses_framing() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let home = TmpHome::new("serve");
+        let ctx = std::sync::Arc::new(Ctx { home: home.0.clone(), port, token: TOK.into() });
+        rt.spawn(async move { axum::serve(listener, app(ctx)).await });
+        let host = format!("127.0.0.1:{port}");
+        let page = http(port, &format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"));
+        let api = http(port, &format!("GET /api/state HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"));
+        let rebound = http(port, "GET / HTTP/1.1\r\nHost: evil.test\r\nConnection: close\r\n\r\n");
+        assert!(api.starts_with("HTTP/1.1 401"), "{api}");
+        assert!(rebound.starts_with("HTTP/1.1 403"), "{rebound}");
+        for r in [&page, &api, &rebound] {
+            let lower = r.to_ascii_lowercase();
+            assert!(!r.contains(TOK), "the token never leaves the server in a response");
+            assert!(lower.contains("x-frame-options: deny") && lower.contains("content-security-policy: frame-ancestors 'none'"), "{r}");
+        }
+        if page.starts_with("HTTP/1.1 200") {
+            assert!(page.to_ascii_lowercase().contains("cache-control: no-store"), "{page}");
+        }
+    }
+
+    #[test]
+    fn token_file_is_replaced_whole_and_owner_only() {
+        let home = TmpHome::new("tokfile");
+        let f = home.0.join("cfg/web-token");
+        write_private(&f, "first").unwrap();
+        write_private(&f, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "second");
+        let left: Vec<_> = std::fs::read_dir(home.0.join("cfg")).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("web-token")], "no tmp file left behind");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn symlinked_rules_dir_is_refused() {
+        let home = TmpHome::new("rulelink");
+        let real = home.mkdirs("elsewhere");
+        std::fs::write(real.join("victim.md"), "x").unwrap();
+        let link = home.0.join("rules");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&real, &link).is_ok();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_dir(&real, &link).is_ok();
+        if !made {
+            eprintln!("skip: this account cannot create symlinks");
+            return;
+        }
+        assert!(is_link(&link), "rule add refuses this dir");
+        assert!(!is_link(&real));
+        assert!(rule_delete_target(&link.join("victim.md"), &[link.clone()]).is_err());
+        assert!(std::fs::metadata(real.join("victim.md")).is_ok());
     }
 
     #[test]

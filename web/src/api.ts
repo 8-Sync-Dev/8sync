@@ -143,12 +143,22 @@ export class EndpointMissingError extends Error {
   }
 }
 
-// Per-launch dashboard token: `8sync harness web` puts it in the served index page;
-// every /api call must echo it (the server refuses the call otherwise).
-const TOKEN =
-  typeof document !== "undefined"
-    ? document.querySelector<HTMLMetaElement>('meta[name="8sync-token"]')?.content ?? ""
-    : "";
+// Per-launch dashboard token: `8sync harness web` opens `/#t=<token>`. The fragment never
+// reaches the server, so the served page holds no secret. Read it once, keep it in
+// sessionStorage (this tab only, survives reloads), and strip it from the address bar.
+// Every /api call must echo it (the server refuses the call otherwise).
+const TOKEN_KEY = "8sync-token";
+function launchToken(): string {
+  if (typeof window === "undefined") return "";
+  const t = /^#t=([0-9a-f]+)$/.exec(window.location.hash)?.[1];
+  if (t) {
+    sessionStorage.setItem(TOKEN_KEY, t);
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    return t;
+  }
+  return sessionStorage.getItem(TOKEN_KEY) ?? "";
+}
+const TOKEN = launchToken();
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
