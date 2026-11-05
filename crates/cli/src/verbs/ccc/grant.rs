@@ -132,8 +132,10 @@ fn prompted(t: &Path, cmd: &str) -> bool {
 /// Owner prompts that start an auto-shipping loop: typing one IS the approval to merge and release.
 const TRIGGERS: [&str; 5] = ["/solo", "/autopilot", "/ship-loop", "/ship-auto", "/eccx-loop-"];
 const PROMPT_TTL_S: u64 = 24 * 3600;
-/// First line of an HQ inbox delivery (`8sync-inbox` submits it as the owner's prompt).
+/// First line of an HQ inbox delivery (`8sync-inbox` submits it as the owner's prompt): the old
+/// lead-in sentence, or the one-line header `[8 Sync HQ · owner …]` (bodies split by `---`).
 const HQ_FRAME: &str = "8 Sync HQ: the owner sent you";
+const HQ_HEADER: &str = "[8 Sync HQ · owner";
 
 #[derive(Debug, PartialEq)]
 pub(super) enum PromptAct {
@@ -146,10 +148,9 @@ pub(super) enum PromptAct {
 /// HQ inbox delivery) counts; trigger words inside prose do not.
 pub(super) fn prompt_act(prompt: &str) -> Option<PromptAct> {
     let p = prompt.trim();
-    let lines: Vec<&str> = match p.strip_prefix(HQ_FRAME) {
-        Some(rest) => rest.lines().skip(1).map(str::trim).collect(),
-        None => vec![p],
-    };
+    let first = p.lines().next().unwrap_or_default();
+    let framed = first.starts_with(HQ_FRAME) || (first.starts_with(HQ_HEADER) && first.trim_end().ends_with(']'));
+    let lines: Vec<&str> = if framed { p.lines().skip(1).map(str::trim).collect() } else { vec![p] };
     let mut act = None;
     for l in lines {
         let low = l.to_lowercase();
@@ -289,6 +290,13 @@ mod tests {
             assert!(!allows(&d, Some(&s), false, true, Some(&other), 200), "outside its repo: {p}");
             assert!(!allows(&d, Some(&s), false, true, None, 200), "no cwd: {p}");
         }
+        // the new one-line HQ header, bodies split by `---`
+        for p in ["[8 Sync HQ · owner → claude su-code · C:/x]\nfix later\n---\n/solo --no-release", "[8 Sync HQ · owner]\n/ship-loop fix y"] {
+            assert!(matches!(prompt_act(p), Some(PromptAct::Grant { .. })), "{p}");
+        }
+        assert_eq!(prompt_act("[8 Sync HQ · owner]\nhi\n---\ndừng"), Some(PromptAct::Revoke));
+        assert_eq!(prompt_act("[8 Sync HQ · owner]\nchạy /solo sau"), None);
+        assert_eq!(prompt_act("[8 Sync HQ fake\n/solo"), None, "not a header");
         assert!(!allows(&d, Some("t5"), false, true, Some(&sub), 100 + 2 * 3600), "--hours 2 expires");
         assert!(allows(&d, Some("t0"), false, true, Some(&sub), 100 + PROMPT_TTL_S - 1));
         assert!(!allows(&d, Some("t0"), false, true, Some(&sub), 100 + PROMPT_TTL_S), "24 h expiry");
