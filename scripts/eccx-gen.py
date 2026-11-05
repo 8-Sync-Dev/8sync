@@ -79,7 +79,7 @@ KIT_CATS = {  # Claude Code kit only
     "autopilot": ["workflow"], "clean": ["specialized"], "consolidate": ["core"], "do": ["workflow"],
     "harden": ["security"], "planning": ["workflow"], "remember": ["core"], "rules": ["core", "security"],
     "sec": ["security"], "ship": ["workflow"], "ship-auto": ["workflow"], "ship-loop": ["workflow"],
-    "ship-tick": ["workflow"], "sysdesign": ["backend", "workflow"], "ui-ux": ["frontend"],
+    "ship-tick": ["workflow"], "solo": ["workflow"], "sysdesign": ["backend", "workflow"], "ui-ux": ["frontend"],
 }
 
 # ECC overrides: name -> categories (first = primary). Applied before the rule classifier.
@@ -457,16 +457,16 @@ def loop_body(c):
     select = ("its Route + Select steps (every relevant category, then each category's members)" if c == "full"
               else "its Select step")
     return (head("cc", c, f"Loop /eccx-{c} on a goal until every acceptance criterion passes: criteria with check commands, "
-                 "evidence, learn each iteration, iteration/time/stuck caps").replace(
+                 "evidence, learn each iteration, iteration/time/stuck caps; auto-merge + auto-release when green").replace(
                      "argument-hint: \"<goal> [--dry-run]\"",
-                     "argument-hint: \"<goal> [--max-iter 8] [--max-min 90] [--release] [--dry-run]\"")
+                     "argument-hint: \"<goal> [--max-iter 8] [--max-min 90] [--no-release] [--dry-run]\"")
             + f"# /eccx-loop-{c} — {title}, looped until green\n\n"
             "Goal: `$ARGUMENTS`. Level 4 like `/ship-loop`: owner-only; \"dừng\"/\"stop\" ends it at once. "
             "Defaults `--max-iter 8`, `--max-min 90`.\n\n"
             f"1. **Members.** Open {src} and do {select} for this goal.\n"
             "2. **Criteria.** Write `su-code/ship/<slug>/PLAN.md`: acceptance criteria, each with ONE check command "
             "(exit 0 = pass; light and local, or a CI workflow name for heavy builds), plus three lines the ticks read: "
-            f"`Driver: /eccx-{c}`, `Members: <picks>`, `Release: yes|no` (yes only with `--release`). "
+            f"`Driver: /eccx-{c}`, `Members: <picks>`, `Release: yes|no` (yes unless `--no-release`). "
             "No criterion can get a command → say so and stop; never loop on taste. `--dry-run`: print PLAN and stop.\n"
             "3. **Open the loop** exactly as `/ship-loop` A.2–A.4: `LOOP.md`, `<slug>` in `su-code/ship/ACTIVE`, "
             "`8sync ccc . goal`, `8sync ccc loop init <slug> --max-iter <N> --max-min <M>`, then `CronCreate` "
@@ -484,8 +484,10 @@ def loop_body(c):
             "then re-Select: add skipped members that fit the failure, `ecc:agent-introspection-debugging` when the loop itself "
             "misbehaves; record the change in `Members:`.\n"
             "5. **Close** as `/ship-loop` D: all green → review + `8sync ccc risk` + skills `sec`, `rules`, `aup-audit` on the diff "
-            "→ CHANGELOG + commit on the feature branch; `Release: yes` → ONE `Ship` question, CI green on Windows, macOS and "
-            "Linux before merge/tag. Stop or cap → brief ≤10 lines in LOOP.md, `8sync ccc loop done`, drop the `ACTIVE` line, "
+            "→ CHANGELOG + commit on the feature branch → Auto-ship, no Ship question: PR, CI green on Windows, macOS and Linux, "
+            "squash-merge, then the repo's own release path (`Release: no` stops at merge; never on red CI), remove worktree + branch. "
+            "Only irreversible, prod-data, billing, security-policy or prod-deploy choices go to the owner (ONE AskUserQuestion). "
+            "Stop or cap → brief ≤10 lines in LOOP.md, `8sync ccc loop done`, drop the `ACTIVE` line, "
             "`CronDelete` the `/ship-tick <slug>` job. Report: criteria + evidence, iterations/minutes used, lessons kept, open items.\n\n"
             "## How to call members\n" + HOW["cc"] + "\n")
 

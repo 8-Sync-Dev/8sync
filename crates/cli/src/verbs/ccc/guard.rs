@@ -124,16 +124,20 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
             &format!("{r} (Auto mode: this is not a question for the user. Rewrite the command with literal paths and no command held in a variable, or split it into plain steps, then continue.)"),
         ),
         Verdict::Unsure(r) => decision("ask", &r),
-        // The owner approved shipping once for this session (one `Ship` AskUserQuestion). Staying
+        // The owner approved shipping for this session: one `Ship` AskUserQuestion, or typing a
+        // loop command (`/solo`, `/autopilot`, `/ship-loop`, `/ship-auto`, `/eccx-loop-*`; merge +
+        // release in that repo, merge only with `--no-release`, never prod deploy). Staying
         // silent left the step to auto mode's classifier, which still prompted at every merge and
         // tag; an explicit allow skips that prompt (settings deny/ask rules still apply,
         // https://code.claude.com/docs/en/hooks). Only when the whole command is a ship step and
-        // the owner's answer is in the transcript; a grant without it stays silent as before.
-        Verdict::Ship { why, deploy } if super::grant::allows(grants, v["session_id"].as_str(), deploy, now_s) => {
+        // the owner's answer/prompt is in the transcript; a grant without it stays silent as before.
+        Verdict::Ship { why, deploy }
+            if super::grant::allows(grants, v["session_id"].as_str(), deploy, ti["command"].as_str().is_some_and(|c| c.trim_start().starts_with("gh pr merge ")), v["cwd"].as_str(), now_s) =>
+        {
             if !super::grant::confirmed(grants, v["session_id"].as_str(), v["transcript_path"].as_str().map(Path::new)) {
                 return None;
             }
-            decision("allow", &format!("{why} Covered by the owner's Ship answer in this session (8 h)."))
+            decision("allow", &format!("{why} Covered by the owner's Ship approval in this session."))
         }
         Verdict::Ship { why, .. } => decision(
             "ask",

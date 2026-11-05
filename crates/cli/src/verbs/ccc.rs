@@ -87,7 +87,7 @@ mod verify;
                architect (opus, writes docs/ADR/RFC only) · qa (tests only) · critic
       skills   /ship · /rules (is X allowed?) · /aup-audit (repo vs Usage Policy) · /sec (secrets, deps, OWASP) ·
                /harden (Claude Code security posture) ·
-               /do · /ship-auto · /ship-loop · /autopilot (graded auto levels) · deep-research-web + every bundled 8sync skill (linked to ~/.omp/skills)
+               /do · /ship-auto · /ship-loop · /autopilot · /solo (graded auto levels) · deep-research-web + every bundled 8sync skill (linked to ~/.omp/skills)
       policy   `8sync ccc policy` prints org managed settings (bypass off, deny rules, login pinned to your
                claude.ai org, marketplace allowlist, opt-in MCP allowlist, sandbox, channels); you install it with sudo
       verify   after every Edit/Write, in the background: cargo check · package typecheck/tsc · go vet;
@@ -635,7 +635,7 @@ fn install_claude() -> Result<()> {
 
 /// Kit files: (asset path, path under Claude Code's config dir). The shared
 /// skills come from omp's bundled tree, so both harnesses read one source.
-const KIT_FILES: [(&str, &str); 43] = [
+const KIT_FILES: [(&str, &str); 44] = [
     ("claude/agents/explore.md", "agents/explore.md"),
     ("claude/agents/task.md", "agents/task.md"),
     ("claude/agents/quick-task.md", "agents/quick-task.md"),
@@ -660,6 +660,7 @@ const KIT_FILES: [(&str, &str); 43] = [
     ("claude/skills/ship-loop/SKILL.md", "skills/ship-loop/SKILL.md"),
     ("claude/skills/autopilot/SKILL.md", "skills/autopilot/SKILL.md"),
     ("claude/skills/ship-tick/SKILL.md", "skills/ship-tick/SKILL.md"),
+    ("claude/skills/solo/SKILL.md", "skills/solo/SKILL.md"),
     ("claude/skills/sysdesign/SKILL.md", "skills/sysdesign/SKILL.md"),
     ("claude/skills/clean/SKILL.md", "skills/clean/SKILL.md"),
     ("skills/aup-audit/SKILL.md", "skills/aup-audit/SKILL.md"),
@@ -1239,6 +1240,13 @@ fn apply_kit_settings(v: &mut Value, exe: &str, skills: &[String]) -> Result<()>
         hooks,
         "PostToolUse",
         json!({ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "ship-grant"], "timeout": 5 }] }),
+    );
+    // The owner typing a loop command (/solo, /autopilot, /ship-loop, /ship-auto, /eccx-loop-*) is
+    // its ship approval: merge + release in that repo, no Ship question; `dừng` revokes it.
+    upsert_hook_group(
+        hooks,
+        "UserPromptSubmit",
+        json!({ "hooks": [{ "type": "command", "command": exe, "args": ["ccc", "hook", "ship-grant"], "timeout": 5 }] }),
     );
     // A turn that dies on an API error fires StopFailure, not Stop: record it, and remind
     // Claude on the next prompt (https://code.claude.com/docs/en/hooks, StopFailure).
@@ -1982,10 +1990,13 @@ fn hook(rest: &[String]) -> Result<()> {
         Some("watchdog") => crate::verbs::watchdog::run_hook(&input),
         // StopFailure (no decision control): record + notify; resume-note says it once next prompt.
         // PostToolUse(AskUserQuestion): the owner's answer to a `Ship` question → session grant.
+        // UserPromptSubmit: the owner's loop command → session grant; `dừng` → revoke.
         Some("ship-grant") => {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             if let Some(d) = grant::default_dir() {
-                let _ = grant::record(&input, &d, now);
+                if grant::record_prompt(&input, &d, now).is_none() {
+                    let _ = grant::record(&input, &d, now);
+                }
             }
             None
         }
@@ -2084,7 +2095,7 @@ mod tests {
             let body = assets::read(&format!("claude/skills/{name}/SKILL.md")).unwrap();
             assert!(body.contains("`CronCreate`") && body.contains("/ship-tick <slug>"), "{name}: no cron");
         }
-        for name in ["ship-loop", "autopilot", "ship-auto"] {
+        for name in ["ship-loop", "autopilot", "ship-auto", "solo"] {
             let body = assets::read(&format!("claude/skills/{name}/SKILL.md")).unwrap();
             assert!(body.contains("disable-model-invocation: true"), "{name} must stay owner-only");
             assert!(body.contains("`CronDelete`"), "{name}: never deletes its tick cron");
@@ -2649,8 +2660,8 @@ mod tests {
         assert_eq!(args("StopFailure"), vec![json!(["ccc", "hook", "stop-failure"])]);
         let ups = args("UserPromptSubmit");
         assert!(ups.contains(&json!(["ccc", "hook", "resume-note"])) && ups.contains(&json!(["ccc", "hook", "watchdog"])), "both coexist: {ups:?}");
-        assert!(ups.contains(&json!(["ccc", "hook", "ecc-pick"])), "{ups:?}");
-        assert_eq!(ups.len(), 3);
+        assert!(ups.contains(&json!(["ccc", "hook", "ecc-pick"])) && ups.contains(&json!(["ccc", "hook", "ship-grant"])), "{ups:?}");
+        assert_eq!(ups.len(), 4);
         strip_kit_hooks(&mut v);
         assert!(v["hooks"].get("StopFailure").is_none() && v["hooks"].get("UserPromptSubmit").is_none());
     }

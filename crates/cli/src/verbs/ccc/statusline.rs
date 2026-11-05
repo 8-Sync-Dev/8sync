@@ -411,7 +411,7 @@ fn gather(v: &Value, input: &str, home: &Path, now: u64) -> Extras {
     if !cwd.is_empty() {
         x.looping = ship_active(Path::new(cwd));
     }
-    x.grant = super::grant::allows(&super::grant::dir(home), sid, false, now);
+    x.grant = super::grant::allows(&super::grant::dir(home), sid, false, true, (!cwd.is_empty()).then_some(cwd), now);
     // The status line inherits the session's env (settings `env` applied at start), so this is the
     // point this session uses, not what settings.json says now.
     let var = |k: &str| std::env::var(k).ok();

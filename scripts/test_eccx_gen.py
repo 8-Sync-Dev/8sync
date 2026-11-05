@@ -31,6 +31,14 @@ class LoopCommands(unittest.TestCase):
             self.assertLessEqual(len(text.encode("utf-8")), gen.MAX_BYTES)
         self.assertIn("Route + Select", gen.loop_body("full"))
 
+    def test_loop_body_auto_ships_without_a_ship_question(self):
+        for c in gen.CATS:
+            text = gen.loop_body(c)
+            self.assertIn("--no-release", text)
+            self.assertIn("Auto-ship, no Ship question", text)
+            self.assertNotIn("ONE `Ship`", text)
+            self.assertNotIn("[--release]", text)
+
 
 if __name__ == "__main__":
     unittest.main()
