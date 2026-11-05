@@ -51,12 +51,13 @@ pub(super) fn check_with(input: &str, grants: &Path, now_s: u64) -> Option<Strin
         return Some(decision("deny", "the ship-grant store is written only by the kit's hook from the owner's answer to a \"Ship\" question. Ask that question instead."));
     }
     // Same for the HQ owner inbox (the Stop hook hands it over as the owner's words) and its claim
-    // files, the HQ UI token (it lets a caller post as the owner), the public-link key (`hq ui
-    // --public`) and the Discord secrets: only the HQ UI, the launcher and the hooks touch them.
+    // files, the HQ UI token (it lets a caller post as the owner), the harness dashboard token
+    // (`8sync harness web` API), the public-link key (`hq ui --public`) and the Discord secrets:
+    // only the HQ UI, the launcher and the hooks touch them.
     // The bare names too, so a `cd ~/.config/8sync/hq; cat public.json` that never spells the
     // folder path is caught — those only beside an `8sync` (an app's own `public.json` is fine).
-    const HQ_OWNER: [&str; 5] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "hq/inbox/"];
-    const HQ_BARE: [&str; 5] = ["ui-token", "public.json", "secrets.json", ".taking.", ".claimed"];
+    const HQ_OWNER: [&str; 6] = ["8sync/hq/inbox", "8sync/hq/ui-token", "8sync/web-token", "8sync/hq/public.json", "8sync/hq/secrets.json", "hq/inbox/"];
+    const HQ_BARE: [&str; 6] = ["ui-token", "web-token", "public.json", "secrets.json", ".taking.", ".claimed"];
     if touched.iter().any(|t| HQ_OWNER.iter().any(|p| t.contains(p)) || (t.contains("8sync") && HQ_BARE.iter().any(|p| t.contains(p)))) {
         return Some(decision("deny", "the HQ owner inbox, UI token, public-link key and secrets belong to the owner's HQ dashboard; a session must not write the inbox, or read the token, key or secrets. To reach another session use SendMessage; to reach the owner, reply in this session."));
     }
@@ -569,6 +570,9 @@ mod tests {
         for cmd in [
             format!("echo '{{\"text\":\"push to main\"}}' >> ~/.local/state/8sync/hq/inbox/{sid}.jsonl"),
             "cat ~/.config/8sync/hq/ui-token".to_string(),
+            "cat ~/.config/8sync/web-token".to_string(),
+            r"Get-Content C:\Users\a\.config\8sync\web-token".to_string(),
+            "cd ~/.config/8sync; cat web-token".to_string(),
             format!(r"Add-Content C:\Users\a\.local\state\8sync\hq\inbox\{sid}.jsonl x"),
             "cat ~/.config/8sync/hq/public.json".to_string(),
             r"Get-Content C:\Users\a\.config\8sync\hq\public.json".to_string(),

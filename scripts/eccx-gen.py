@@ -352,6 +352,15 @@ ALWAYS = [("trail", "STEP 0 before any grep/read of code"), ("karpathy-guideline
           ("ponytail", "pick the simplest plan that works"), ("8sync-cli", "any `8sync` verb (ship, ccc, harness)"),
           ("impeccable", "every UI step")]
 
+# CLI tools that are not skills, filed under a category: (name, when + how). Rendered as a
+# `## Tools` list for both harnesses. graphify is trail's RULE #0 fallback (see
+# assets/skills/00-force-load.md).
+TOOLS = {
+    "core": [("graphify", "only when `trail` falls short (`no indexed callers`, or the path A→B): "
+                          "`GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (re-run after edits), then "
+                          "`graphify explain <symbol>` / `graphify path \"A()\" \"B()\"`; skip `graphify query` (~2K tokens)")],
+}
+
 
 def run_steps(h, vl, n):
     """The Execute (+ Learn on Claude Code) steps, numbered from `n`; returns (text, next n)."""
@@ -435,6 +444,8 @@ def body(h, c, members, maxw):
         r = rows(h, members[c], kind, maxw)
         if r:
             out.append(f"\n## {label}\n" + "\n".join(r) + "\n")
+    if c in TOOLS:
+        out.append("\n## Tools\n" + "\n".join(f"- `{n}` — {how}" for n, how in TOOLS[c]) + "\n")
     return "".join(out)
 
 

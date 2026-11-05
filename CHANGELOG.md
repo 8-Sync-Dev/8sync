@@ -24,6 +24,15 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Removed
 - `docs/assets/hero.png` (ảnh hero cũ, không còn chỗ nào dùng).
+- Kit Claude Code: hook PreToolUse mới `8sync ccc hook trail-hint` (matcher `Grep|Glob`). Khi repo có trail index (`.trail/`) và Claude gọi Grep/Glob, hook thêm `additionalContext` nhắc dùng `trail ask|grep|skeleton|callers` trước. Không gắn vào Bash để mỗi lệnh Bash không phải spawn thêm một process cạnh guard. Không bao giờ chặn tool, chỉ nhắc một lần mỗi phiên cho mỗi repo (file nhớ `~/.local/state/8sync/ccc/trail-hint/<session>.seen`, tự dọn sau 7 ngày). `8sync ccc kit` cài lại vẫn idempotent, thay group cũ tại chỗ và giữ hook của anh.
+- `/eccx-core`: thêm mục `## Tools` với `graphify` (fallback của trail: `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster`, `graphify explain`, `graphify path`). `scripts/eccx-gen.py` có bảng `TOOLS` cho CLI tool không phải skill.
+
+### Fixed
+- `8sync harness toolstats` và dashboard harness (context, danh sách project) tìm đúng thư mục phiên omp trên Windows. omp đặt tên `-<đường dẫn tương đối>` cho repo trong home và `--<đường dẫn tuyệt đối, / \ : → ->--` cho repo ngoài home (ví dụ `--C--Users-Projects-su-code--`); trước đây 8sync chỉ hiểu dạng đầu nên báo "no omp sessions yet". Hai nơi giờ dùng chung `harness::sessions::session_slug`, và `slug_to_path` đọc được cả hai dạng.
+- Bảo mật `8sync harness web` (dashboard local): mọi request phải có Host là `127.0.0.1|localhost|[::1]:<port>` (chặn DNS rebinding), request ghi (POST/DELETE…) phải không có Origin hoặc Origin cùng host, và mọi `/api/*` phải gửi header `x-8sync-token` khớp token ngẫu nhiên tạo mỗi lần chạy (trang index tự mang token qua `<meta name="8sync-token">`, `web/src/api.ts` gửi kèm; Vite dev proxy đọc `~/.config/8sync/web-token`). Sai host/origin → 403, thiếu/sai token → 401.
+- Token dashboard `~/.config/8sync/web-token` được bảo vệ như `hq/ui-token`: kit thêm `Read(~/.config/8sync/web-token)` vào deny, guard chặn `cat`/`Get-Content` file đó (cả khi chỉ gọi tên `web-token` cạnh `8sync`).
+- `POST /api/rules/delete` không còn xoá được file ngoài thư mục rules: đường dẫn được canonicalize (giải `..` và symlink) và phải là file `.md`/`.mdc` nằm ngay trong `~/.omp/agent/rules` hoặc `<repo>/.omp/rules`. Trước đây chỉ cần chuỗi có `/rules/`.
+- `slug_to_path` chỉ đọc `X--…` thành ổ đĩa `X:\` trên Windows. `__pycache__/` vào `.gitignore` và file `.pyc` bị track nhầm đã gỡ khỏi git.
 
 ## [0.122.21] — 2026-11-05
 
