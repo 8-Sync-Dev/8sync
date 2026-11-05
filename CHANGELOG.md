@@ -31,6 +31,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ### Removed
 - `docs/assets/hero.png` (ảnh hero cũ, không còn chỗ nào dùng).
 - `docs/assets/`: bỏ 11 ảnh cũ không còn trang nào dùng (`ccc-*.png`, `dashboard-*.png`, `forge-prompt.png`, `install.png`, `hq-office/machine/results.webp`); `hq-office.webp` là ảnh ít làm mờ nhất.
+- `scripts/test_site_skills.py`: site và README không còn catalogue skill hay con số skill nào, nên test đối chiếu danh sách không còn gì để giữ.
 
 ### Fixed
 - `8sync harness toolstats` và dashboard harness (context, danh sách project) tìm đúng thư mục phiên omp trên Windows. omp đặt tên `-<đường dẫn tương đối>` cho repo trong home và `--<đường dẫn tuyệt đối, / \ : → ->--` cho repo ngoài home (ví dụ `--C--Users-Projects-su-code--`); trước đây 8sync chỉ hiểu dạng đầu nên báo "no omp sessions yet". Hai nơi giờ dùng chung `harness::sessions::session_slug`, và `slug_to_path` đọc được cả hai dạng.
