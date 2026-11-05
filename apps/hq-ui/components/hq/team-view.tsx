@@ -125,11 +125,13 @@ export function TeamView({
     </Conversation>
   );
 
+  // Its own full-width row under the split (the split is chat | Nhật ký only); centred on one column.
+  const wide = !!split && !mobile;
   const composer =
     messageTargets(sessions).length === 0 ? (
       <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
     ) : (
-      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} />
     );
 
   return (
@@ -137,14 +139,13 @@ export function TeamView({
       {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
       {bar && (
         <div className="shrink-0 border-b bg-background">
-          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", split && !mobile ? "max-w-none" : "max-w-3xl")}>{bar}</div>
+          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
         </div>
       )}
-      {split && !mobile ? (
+      {wide ? (
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
           <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
             {chat}
-            {composer}
           </ResizablePanel>
           <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
           <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
@@ -152,11 +153,9 @@ export function TeamView({
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : (
-        <>
-          {chat}
-          {composer}
-        </>
+        chat
       )}
+      {composer}
     </div>
   );
 }
@@ -336,11 +335,14 @@ function Composer({
   sessions,
   target,
   onTarget,
+  wide = false,
 }: {
   hq: Hq;
   sessions: Session[];
   target: string | null;
   onTarget: (s: string) => void;
+  /** Under the chat | Nhật ký split: spans both columns instead of one centred chat column. */
+  wide?: boolean;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -414,7 +416,7 @@ function Composer({
         return (
           <div className="shrink-0 border-t bg-background">
             <form
-              className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
+              className={cn("mx-auto w-full px-4 py-3 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();
