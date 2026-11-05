@@ -7,6 +7,7 @@ import { addressOf } from "@/lib/labels";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { inboxFile, inboxLive, isSessionId, LIVE_MS, pendingInbox } from "@/lib/server/inbox";
+import { targetOf } from "@/lib/server/floor";
 import { applyMapped, mapEvent } from "@/lib/server/ingest";
 import { projectOf, readLoops, readTranscriptStats, readUsage, type Room } from "@/lib/server/office";
 import { messagesAfter } from "@/lib/server/queries";
@@ -198,10 +199,18 @@ describe("owner message to a session started elsewhere (no tmux, all of Windows)
     expect(pendingInbox(SID)).toBe(1);
     const line = JSON.parse(fs.readFileSync(inboxFile(SID), "utf8").trim());
     expect(line.text).toBe("review PR #24 giúp");
+    expect(line.to, "a Claude session HQ's room list does not know: its engine only").toMatchObject({ engine: "claude" });
+    expect(line.from).toBeUndefined();
     if (process.platform !== "win32") {
       expect(fs.statSync(inboxFile(SID)).mode & 0o777).toBe(0o600);
       expect(fs.statSync(path.dirname(inboxFile(SID))).mode & 0o777).toBe(0o700);
     }
+  });
+  it("names the room for the header: engine from the id, name (a uuid-named row: its title) and folder", () => {
+    expect(targetOf({ name: "review", title: "review", repo: "~/shop" }, SID)).toEqual({ engine: "claude", name: "review", cwd: `${os.homedir()}/shop` });
+    expect(targetOf({ name: SID, title: "Sửa nút Giao", repo: "/w/x" }, SID)).toEqual({ engine: "claude", name: "Sửa nút Giao", cwd: "/w/x" });
+    expect(targetOf({ name: "core", title: "core", repo: "/w/su-code" }, "omp-0123456789abcdef")).toEqual({ engine: "omp", name: "core", cwd: "/w/su-code" });
+    expect(targetOf(null, "omp-0123456789abcdef")).toEqual({ engine: "omp" });
   });
   it("refuses anything that is not an hq-* name or a session uuid", async () => {
     for (const session of ["../../etc", "core", `${SID}/x`, ""]) {

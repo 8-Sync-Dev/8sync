@@ -99,7 +99,8 @@ describe("end-of-day digest", () => {
     expect(await digestTick(db, now + 600_000, { content, cfg, floor: live })).toBeNull();
     const lines = fs.readFileSync(inboxFile(ROOM), "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
-    const text = (JSON.parse(lines[0]) as { text: string }).text;
+    const { text, to } = JSON.parse(lines[0]) as { text: string; to: unknown };
+    expect(to, "the room for the header the session sees").toEqual({ engine: "omp", name: "core", cwd: repo });
     expect(text).toContain("#38 11:30");
     expect(text).toContain('"8sync FB"');
     expect(text).toContain("metrics add --content <id>");

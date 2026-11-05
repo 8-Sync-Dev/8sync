@@ -7,7 +7,7 @@ import { roomLabel } from "../room-label";
 import { deriveFloor, type FloorRow, type LsInput } from "../floor";
 import { projectIdFor } from "./db";
 import { coreGet } from "./core";
-import { inboxLive } from "./inbox";
+import { inboxLive, type InboxTarget } from "./inbox";
 import { readRoomModel } from "./models";
 import { mergedSessions, run, type SessionView } from "./proc";
 import { ompRepoDir } from "./omp-sessions";
@@ -245,6 +245,23 @@ export async function ompRoom(db: DatabaseSync, id: string): Promise<{ cwd: stri
   if (!isOmpRoomId(id)) return null;
   const r = (await loadFloor(db)).find((x) => x.engine === "omp" && x.inbox_id === id);
   return r ? { cwd: r.repo ? ompRepoDir(expand(r.repo)) : null } : null;
+}
+
+/** The inbox header's `to` for a room row: its engine, name (a uuid-named row: its title) and folder. */
+export function targetOf(row: Pick<FloorRow, "name" | "title" | "repo"> | null | undefined, id: string): InboxTarget {
+  const engine = isOmpRoomId(id) ? "omp" : "claude";
+  if (!row) return { engine };
+  const repo = row.repo ? expand(row.repo) : null;
+  return { engine, name: UUID_ISH.test(row.name) ? row.title : row.name, cwd: repo && engine === "omp" ? (ompRepoDir(repo) ?? repo) : repo };
+}
+
+/**
+ * Who an inbox message for `id` goes to, from the last room list HQ built (any age: a room's name
+ * and folder do not drift, and sending must not wait on `8sync ls`); a fresh list only when none.
+ */
+export async function inboxTarget(db: DatabaseSync, id: string): Promise<InboxTarget> {
+  const rows = cache?.rows ?? (await loadFloor(db));
+  return targetOf(rows.find((r) => r.inbox_id === id), id);
 }
 
 export function resetFloorCache() {
