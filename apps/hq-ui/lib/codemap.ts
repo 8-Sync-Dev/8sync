@@ -205,3 +205,22 @@ export function buildProgress(text: string): { done: number; total: number } | n
 
 /** Terminal colour codes out of trail's text. */
 export const stripAnsi = (s: string) => s.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+
+/**
+ * What graph.html may load inside its frame: its own inline scripts and styles, and the one
+ * vis-network build graphify's exporter (graphify/exporters/html.py) pulls from unpkg (pinned, with
+ * SRI). No fetch/XHR/WebSocket, no forms, no nested frames, images only inline.
+ */
+export const GRAPH_CSP =
+  "default-src 'none'; script-src 'unsafe-inline' https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; form-action 'none'; frame-src 'none'";
+
+/**
+ * graph.html as the frame's srcdoc, with GRAPH_CSP as the very first thing in the document so no
+ * script in the file runs before it. The file's own doctype is dropped and put back ahead of the
+ * policy (a tag before the doctype would put the page in quirks mode).
+ */
+export function graphSrcDoc(html: string): string {
+  const body = html.replace(/^\uFEFF?\s*<!doctype[^>]*>/i, "");
+  const csp = GRAPH_CSP.replace(/"/g, "&quot;");
+  return `<!DOCTYPE html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">${body}`;
+}

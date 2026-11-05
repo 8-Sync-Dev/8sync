@@ -1,15 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as STATUS } from "@/app/api/codemap/route";
 import { POST as BUILD } from "@/app/api/codemap/build/route";
 import { GET as GRAPH } from "@/app/api/codemap/graph/route";
 import { GET as MAP } from "@/app/api/codemap/map/route";
 import { GET as SEARCH } from "@/app/api/codemap/search/route";
 import { GET as SKELETON } from "@/app/api/codemap/skeleton/route";
-import { deniedText } from "@/lib/access";
-import { buildProgress, checkProjectId, checkQuery, checkRelFile, parseAsk, parseGrep, parseMap, parseSkeleton, type BuildState, type CodeMap, type CodemapStatus, type SearchResult, type Skeleton } from "@/lib/codemap";
+import { deniedText, GUEST_ROLES } from "@/lib/access";
+import { buildProgress, checkProjectId, GRAPH_CSP, graphSrcDoc, checkQuery, checkRelFile, parseAsk, parseGrep, parseMap, parseSkeleton, type BuildState, type CodeMap, type CodemapStatus, type SearchResult, type Skeleton } from "@/lib/codemap";
 import { getToken, sessionSecret } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { createInvite, GUEST_COOKIE, guestCookie } from "@/lib/server/invites";
@@ -64,6 +64,17 @@ describe("trail output → the tab's model (real captured samples)", () => {
       ["binFor", 24],
     ]);
     expect(parseGrep(fixture("map"))).toBeNull();
+  });
+
+  it("puts graph.html under the frame's CSP before anything in the file, keeping standards mode", () => {
+    const doc = graphSrcDoc("\uFEFF<!DOCTYPE html>\n<script>early()</script><html><head><script src=\"https://evil.example/x.js\"></script></head></html>");
+    expect(doc.startsWith(`<!DOCTYPE html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${GRAPH_CSP.replace(/"/g, "&quot;")}">`)).toBe(true);
+    expect(doc.match(/<!doctype/gi)).toHaveLength(1);
+    expect(doc.indexOf("Content-Security-Policy")).toBeLessThan(doc.indexOf("early()"));
+    // The policy itself: no network but the pinned vis-network graphify loads, no forms or frames.
+    expect(GRAPH_CSP).toMatch(/default-src 'none'/);
+    expect(GRAPH_CSP).toMatch(/connect-src 'none'/);
+    expect(GRAPH_CSP).not.toMatch(/https:\/\/[^ ;]*\/(?:;|\s|$)|\*|'unsafe-eval'/);
   });
 
   it("reads build progress from trail's rewritten `parsing N/M` line", () => {
@@ -187,6 +198,23 @@ describe("running trail: argv, timeout, output cap", () => {
     waits.forEach((w) => w());
     resetTrail();
   });
+
+  it("keeps reads and builds server-wide: another bundle's copy of the module sees and counts them", async () => {
+    resetTrail();
+    vi.resetModules();
+    const other = await import("@/lib/server/trail");
+    expect(other.startBuild).not.toBe(startBuild);
+    const { promise, resolve } = Promise.withResolvers<TrailOut>();
+    const done: TrailOut = { ok: true, code: 0, stdout: "{}", stderr: "", timedOut: false, capped: false, missing: false };
+    expect(startBuild({ id: 7, name: "p7", root: cwd }, () => promise)).toMatchObject({ state: "running" });
+    expect(other.buildState(7)).toMatchObject({ state: "running" });
+    expect(other.startBuild({ id: 7, name: "p7", root: cwd }, () => promise)).toMatchObject({ status: 409 });
+    const held = Array.from({ length: READS_MAX }, () => trailRead(cwd, ["map"], () => promise));
+    expect(await other.trailRead(cwd, ["map"], async () => done)).toMatchObject({ status: 429 });
+    resolve(done);
+    await Promise.all(held);
+    resetTrail();
+  });
 });
 
 describe("/api/codemap routes", () => {
@@ -284,6 +312,20 @@ describe("/api/codemap routes", () => {
     expect(argv()).toEqual([]);
   });
 
+  it("keeps every guest role out of each read route", async () => {
+    const urls = [`/api/codemap?project=${id}`, `/api/codemap/map?project=${id}`, `/api/codemap/search?project=${id}&mode=ask&q=x`, `/api/codemap/skeleton?project=${id}&file=src/a.ts`, `/api/codemap/graph?project=${id}`];
+    const routes = [STATUS, MAP, SEARCH, SKELETON, GRAPH];
+    for (const role of GUEST_ROLES) {
+      const { invite } = createInvite({ label: `khách ${role}`, role, days: 1 });
+      const cookie = guestCookie({ id: invite.id, role, issued: Date.now() }, sessionSecret());
+      for (const [i, url] of urls.entries()) {
+        const r = await routes[i](new Request(`${ORIGIN}${url}`, { headers: { host: "127.0.0.1:8740", cookie: `${GUEST_COOKIE}=${cookie}` } }));
+        expect(r.status, `${role} ${url}`).toBe(403);
+      }
+    }
+    expect(argv()).toEqual([]);
+  });
+
   it("builds in the project root, shows progress, then the index and its build time", async () => {
     const r = await BUILD(req("/api/codemap/build", { method: "POST", token, origin: ORIGIN, body: { project: id } }));
     expect(r.status).toBe(202);
@@ -345,5 +387,10 @@ describe("/api/codemap routes", () => {
     expect(r.headers.get("content-security-policy")).toMatch(/^sandbox/);
     expect(await r.text()).toBe("<html>graph</html>");
     expect((await body<CodemapStatus>(await STATUS(get(`/api/codemap?project=${id}`)))).graph).toMatchObject({ dir: true, html: { size: 18 } });
+    // A hard link to a file outside the repo is a regular file with two names: refused.
+    fs.rmSync(path.join(root, "graphify-out", "graph.html"));
+    fs.writeFileSync(path.join(outside, "other.html"), "<html>outside</html>");
+    fs.linkSync(path.join(outside, "other.html"), path.join(root, "graphify-out", "graph.html"));
+    expect((await GRAPH(get(`/api/codemap/graph?project=${id}`))).status).toBe(404);
   });
 });

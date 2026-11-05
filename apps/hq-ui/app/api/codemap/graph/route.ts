@@ -1,6 +1,5 @@
-import fs from "node:fs";
 import { bad, open } from "@/lib/server/http";
-import { graphInfo, projectFor } from "@/lib/server/trail";
+import { graphInfo, projectFor, readGraph } from "@/lib/server/trail";
 
 export const runtime = "nodejs";
 
@@ -16,12 +15,8 @@ export async function GET(req: Request) {
   if (!p.ok) return bad(p.error, p.status);
   const g = graphInfo(p.project.root);
   if (!g.html) return bad(g.dir ? "graphify-out/ chưa có graph.html" : "dự án chưa có graphify-out/", 404);
-  let body: Buffer;
-  try {
-    body = fs.readFileSync(g.html.file);
-  } catch {
-    return bad("không đọc được graph.html", 500);
-  }
+  const body = readGraph(g.html.file);
+  if (!body) return bad("graph.html không đọc được an toàn (link, quá lớn hoặc đã đổi)", 404);
   return new Response(new Uint8Array(body), {
     headers: {
       "content-type": "text/plain; charset=utf-8",

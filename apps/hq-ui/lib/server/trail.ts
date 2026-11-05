@@ -192,16 +192,49 @@ export function graphInfo(root: string): { dir: boolean; html: { file: string; s
   }
 }
 
-let reads = 0;
+/**
+ * graph.html's bytes, read through one handle: the file is opened once (no following a link where
+ * the OS allows it), then that handle must be a regular file with a single name (a hard link to a
+ * file outside the repo has two) and under GRAPH_MAX. Null when not.
+ */
+export function readGraph(file: string): Buffer | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1 || st.size > GRAPH_MAX) return null;
+    const buf = Buffer.alloc(st.size);
+    let at = 0;
+    while (at < buf.length) {
+      const n = fs.readSync(fd, buf, at, buf.length - at, at);
+      if (n === 0) break;
+      at += n;
+    }
+    return buf.subarray(0, at);
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Each route is its own bundle, each with its own copy of this module: reads and builds live on
+// globalThis so the caps hold for the whole server and GET /api/codemap sees a build /build started.
+const G = globalThis as { __hqTrail?: { reads: number; builds: Map<number, BuildState> } };
+const reg = (G.__hqTrail ??= { reads: 0, builds: new Map() });
 
 /** A read-only `trail` query in the project root: READS_MAX at once, 60 s, OUTPUT_CAP. */
 export async function trailRead(root: string, args: string[], run: typeof runTrail = runTrail): Promise<TrailOut | Refusal> {
-  if (reads >= READS_MAX) return { error: "trail đang chạy nhiều việc, thử lại sau vài giây", status: 429 };
-  reads++;
+  if (reg.reads >= READS_MAX) return { error: "trail đang chạy nhiều việc, thử lại sau vài giây", status: 429 };
+  reg.reads++;
   try {
     return await run(args, { cwd: root, timeoutMs: READ_TIMEOUT_MS, cap: OUTPUT_CAP });
   } finally {
-    reads--;
+    reg.reads--;
   }
 }
 
@@ -241,7 +274,7 @@ export const buildArgs = (root: string) => ["build", root];
 
 // ---- builds: one per project, in memory (a restart forgets them; the index on disk stays) ----
 
-const builds = new Map<number, BuildState>();
+const builds = reg.builds;
 /** Lines of a build's output kept for the tab (its last words: counts, where the map went). */
 const TAIL_LINES = 6;
 
@@ -286,5 +319,5 @@ export function startBuild(p: Project, run: typeof runTrail = runTrail, now = Da
 /** Tests: forget builds and reads. */
 export function resetTrail(): void {
   builds.clear();
-  reads = 0;
+  reg.reads = 0;
 }

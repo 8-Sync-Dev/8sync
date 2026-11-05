@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton as Bone } from "@/components/ui/skeleton";
-import { QUERY_MAX, type CodeMap, type CodemapStatus, type MapHub, type SearchMode, type SearchResult, type Skeleton } from "@/lib/codemap";
+import { graphSrcDoc, QUERY_MAX, type CodeMap, type CodemapStatus, type MapHub, type SearchMode, type SearchResult, type Skeleton } from "@/lib/codemap";
 import { bytes } from "@/lib/disk";
 import { useFollowRepo } from "@/lib/follow-repo";
 import { agoVi } from "@/lib/now";
@@ -563,7 +563,7 @@ function GraphNote({ st, now, onOpen }: { st: CodemapStatus; now: number; onOpen
   );
 }
 
-/** graph.html in a sandboxed srcdoc frame: its scripts run in an opaque origin, never as HQ. */
+/** graph.html in a sandboxed srcdoc frame under GRAPH_CSP: its scripts run in an opaque origin, never as HQ. */
 function GraphFrame({ token, project, name, onClose }: { token: string; project: number; name: string; onClose: () => void }) {
   const [st, setSt] = useState<{ html: string | null; error: string | null } | null>(null);
   useEffect(() => {
@@ -574,7 +574,7 @@ function GraphFrame({ token, project, name, onClose }: { token: string; project:
           const body: unknown = await r.json().catch(() => null);
           throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : `HTTP ${r.status}`);
         }
-        setSt({ html: await r.text(), error: null });
+        setSt({ html: graphSrcDoc(await r.text()), error: null });
       })
       .catch((e: Error) => {
         if (!ac.signal.aborted) setSt({ html: null, error: e.message });
@@ -587,7 +587,8 @@ function GraphFrame({ token, project, name, onClose }: { token: string; project:
         <Button type="button" variant="ghost" size="sm" className="-ml-2 max-sm:h-10" onClick={onClose}>
           <ArrowLeftIcon /> Về bản đồ
         </Button>
-        <span className="truncate text-xs text-muted-foreground">graphify-out/graph.html · {name}</span>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">graphify-out/graph.html · {name}</span>
+        <span className="ml-auto shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-800 dark:text-amber-300">Nội dung từ repo: không nhập key vào đây</span>
       </div>
       <div className="min-h-0 flex-1 p-2 sm:p-3">
         {!st ? (
