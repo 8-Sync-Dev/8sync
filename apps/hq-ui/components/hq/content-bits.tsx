@@ -273,7 +273,7 @@ export function AssignBox({ it, api, now, canSave, onSaved }: { it: ContentItem;
         <SelectTrigger size="sm" className={cn("w-full text-xs", TOUCH)} aria-label="Phiên nhận việc">
           <SelectValue placeholder={sessions.data ? "Chọn phiên omp" : "Đang tải phiên…"} />
         </SelectTrigger>
-        <SelectContent className="max-h-80">
+        <SelectContent position="popper" className="max-h-[min(20rem,var(--radix-select-content-available-height))]">
           {savedMissing && (
             <SelectGroup>
               <SelectLabel className="text-[11px]">Đã lưu trên mục</SelectLabel>
