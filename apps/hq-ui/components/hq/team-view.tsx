@@ -24,6 +24,7 @@ import { MessageText, ReplyMedia } from "./attachments";
 import { ComposerDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { ModelPicker } from "./model-picker";
+import { TOUCH } from "./room-send";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
@@ -456,7 +457,7 @@ function Composer({
                       ))}
                     </SelectContent>
                   </Select>
-                  {current && <ModelPicker api={hq.api} session={addressOf(current)} engine={current.engine === "omp" ? "omp" : "claude"} model={current.model} />}
+                  {current && <ModelPicker api={hq.api} session={addressOf(current)} engine={current.engine === "omp" ? "omp" : "claude"} model={current.model} className={TOUCH} />}
                   <AttachButton a={att} disabled={disabled || !current} />
                   <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
                   <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}

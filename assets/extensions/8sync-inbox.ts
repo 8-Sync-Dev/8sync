@@ -185,16 +185,29 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  /** This session only (omp's config is not touched); an unknown model or one without a key is reported, not applied. */
+  /**
+   * This session only (omp's config is not touched). An unknown model, one without a key, a level the
+   * model clamps, or a throw is recorded in `st.error`, never rethrown: a control must always be acked,
+   * or the same one would be retried on every poll and hold back the messages queued with it.
+   * `setModel` resets the level to the new model's default, so the level goes second.
+   */
   async function applyModel(ctx: ExtensionContext, c: ModelControl): Promise<void> {
     st.error = null;
-    if (c.model) {
-      const at = c.model.indexOf("/");
-      const model = ctx.modelRegistry.find(c.model.slice(0, at), c.model.slice(at + 1));
-      if (!model) st.error = `omp không có model ${c.model}`;
-      else if (!(await pi.setModel(model))) st.error = `chưa có key hoặc đăng nhập cho ${c.model}`;
+    try {
+      if (c.model) {
+        const at = c.model.indexOf("/");
+        const model = ctx.modelRegistry.find(c.model.slice(0, at), c.model.slice(at + 1));
+        if (!model) st.error = `omp không có model ${c.model}`;
+        else if (!(await pi.setModel(model))) st.error = `chưa có key hoặc đăng nhập cho ${c.model}`;
+      }
+      if (c.thinking) {
+        pi.setThinkingLevel(c.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
+        const got = pi.getThinkingLevel();
+        if (got && got !== c.thinking) st.error ??= `model này không có mức ${c.thinking}, omp dùng ${got}`;
+      }
+    } catch (e) {
+      st.error = `đổi model lỗi: ${e instanceof Error ? e.message : String(e)}`;
     }
-    if (c.thinking) pi.setThinkingLevel(c.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
     writeModel(ctx);
   }
 

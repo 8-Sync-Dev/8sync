@@ -52,10 +52,15 @@ export function ModelPicker({ api, session, engine, model, className }: { api: A
     };
   }, [open, api, session]);
 
-  // Open on the room's model, not the top of a 300-model list.
+  // Open on the room's model, not the top of a 300-model list. Scroll the list only: `scrollIntoView`
+  // would also scroll the page.
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (open && data) listRef.current?.querySelector("[aria-selected='true']")?.scrollIntoView({ block: "center" });
+    const list = listRef.current;
+    const el = open && data ? list?.querySelector("[aria-selected='true']") : null;
+    if (!list || !el) return;
+    const top = el.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+    list.scrollTop = top - list.clientHeight / 2;
   }, [open, data]);
 
   const shownModel = pending?.model ?? curModel;
