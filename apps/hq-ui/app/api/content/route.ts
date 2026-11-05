@@ -1,6 +1,6 @@
 import path from "node:path";
 import { OWNER_CONTENT_FIELDS } from "@/lib/access";
-import { isFormat, isStatus } from "@/lib/content";
+import { GUEST_CHANNEL_ERROR, isFormat, isStatus, type ChannelPost } from "@/lib/content";
 import { approveAndSend, ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
 import { deliverText } from "@/lib/server/deliver";
 import { bad, json, open, readBody } from "@/lib/server/http";
@@ -22,9 +22,11 @@ function fail(e: unknown): Response {
 /** What a guest (Chia sẻ) reads instead of a DB error: those name paths on the owner's disk. */
 const GUEST_DB_ERROR = "sổ nội dung trên máy chủ HQ chưa sẵn sàng";
 
-/** A guest sees the media (signed URLs), not where it sits on the owner's disk. */
-function guestItem<T extends { media_path?: string | null }>(it: T): T {
-  return { ...it, media_path: it.media_path && path.basename(it.media_path) };
+/** A guest sees the media (signed URLs), not where it sits on the owner's disk, nor the worker's error text (paths, account details). */
+function guestItem<T extends { media_path?: string | null; channel_posts?: ChannelPost[] }>(it: T): T {
+  const out: T = { ...it, media_path: it.media_path && path.basename(it.media_path) };
+  if (it.channel_posts) out.channel_posts = it.channel_posts.map((p) => ({ ...p, error: p.error ? GUEST_CHANNEL_ERROR : null }));
+  return out;
 }
 
 /** The registry for writes: 404 when no DB is configured, 409 with the reason when it cannot be used (a guest gets no path). */
@@ -86,11 +88,12 @@ export async function POST(req: Request) {
  * Migration 0064 (else 400): `channels`, `captions_json` (merged; "" drops a channel's own caption)
  * and `retry_channel` (deletes a failed / blocked / cancelled channel row; 409 otherwise). Entering
  * `approved` answers 409 with what a channel misses.
- * "Duyệt" in one tap (owner only): `{ status: "approved", send: { session, base }, ai_label? }`
+ * "Duyệt" in one tap (owner only): `{ status: "approved", seen: <updated_at on screen>, send: { session, base }, ai_label? }`
  * approves AND sends the posting task to that session (`approveAndSend`): a refusal sends nothing,
  * a failed delivery (502) leaves the status unchanged. Answers `{ item, sent }`.
- * An editor (Chia sẻ) changes the item but not its media path, its agent or `send`; the source it
- * approves is signed with its invite label.
+ * An editor (Chia sẻ) changes the item but not its media path, its agent, `send`, `ai_label` or
+ * `retry_channel`; the source it approves is signed with its invite label. Its edit of what an
+ * approved item posts (title, caption, page, channels, format) sends the item back to "checked".
  */
 export async function PATCH(req: Request) {
   const o = open(req);
@@ -106,14 +109,14 @@ export async function PATCH(req: Request) {
   if ("res" in c) return c.res;
   try {
     if (!("send" in body)) {
-      const item = updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover());
+      const item = updateContent(c.db, id, body, guest ? `chia sẻ: ${guest.label}` : hqApprover(), Date.now(), !!guest);
       return json({ item: guest ? guestItem(item) : item });
     }
     const send = body.send;
-    if (body.status !== "approved" || Object.keys(body).some((k) => !["send", "status", "ai_label"].includes(k)) || !send || typeof send !== "object" || Array.isArray(send))
-      return bad('send: chỉ đi cùng status "approved" (và ai_label), dạng { session, base }', 422);
+    if (body.status !== "approved" || Object.keys(body).some((k) => !["send", "status", "ai_label", "seen"].includes(k)) || !send || typeof send !== "object" || Array.isArray(send))
+      return bad('send: chỉ đi cùng status "approved", seen (và ai_label), dạng { session, base }', 422);
     const { session, base } = send as Record<string, unknown>;
-    const args = { session, base, ...("ai_label" in body ? { ai_label: body.ai_label } : {}) };
+    const args = { session, base, seen: body.seen, ...("ai_label" in body ? { ai_label: body.ai_label } : {}) };
     return json(await approveAndSend(c.db, id, args, hqApprover(), (s, text) => deliverText(o.db, s, text)));
   } catch (e) {
     return fail(e);

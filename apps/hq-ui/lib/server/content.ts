@@ -11,8 +11,8 @@ import {
   CHANNEL_LABEL,
   channelGate,
   CHANNELS,
-  charCount,
   CONTENT_TEXT_FIELDS,
+  GUEST_DROPBACK_FIELDS,
   isChannel,
   isFormat,
   isStatus,
@@ -368,9 +368,11 @@ class DryRun extends Error {}
  * deletes that channel's failed / blocked / cancelled row so the worker plans it again (409 for any
  * other state: a live or posted one must not be posted twice). Entering approved checks the channel
  * rule and clears the item's cancelled rows (left from an earlier un-approve) so it is scheduled again.
+ * `seen` (optional): the `updated_at` the caller had on screen; 409 `CONTENT_CHANGED` when the item changed since.
+ * `guest`: the edit comes from a Chia sẻ guest; see `GUEST_DROPBACK_FIELDS`.
  */
-export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now()): ContentRow {
-  applyUpdate(db, id, body, approver, now, false);
+export function updateContent(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now = Date.now(), guest = false): ContentRow {
+  applyUpdate(db, id, body, approver, now, false, guest);
   return rowsOf(db, [getContent(db, id)!], hasChannels(db))[0];
 }
 
@@ -379,9 +381,13 @@ export function checkUpdate(db: DatabaseSync, id: number, body: Record<string, u
   applyUpdate(db, id, body, approver, now, true);
 }
 
-function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now: number, dry: boolean): void {
+function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>, approver: string, now: number, dry: boolean, guest = false): void {
   const item = getContent(db, id);
   if (!item) throw new ContentError(`không có mục #${id}`, 404);
+  if ("seen" in body) {
+    if (typeof body.seen !== "number" || !Number.isFinite(body.seen)) throw new ContentError("seen: cần updated_at của mục lúc xem (số ms)", 422);
+    if (item.updated_at !== body.seen) throw new ContentError(CONTENT_CHANGED, 409);
+  }
   const has = hasChannels(db);
   const ch = channelFields(body, has, item.captions_json ?? null);
   let retry: Channel | null = null;
@@ -411,6 +417,15 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
     if (body.approve_source !== src) throw new ContentError("Nguồn đã đổi so với lúc anh xem, tải lại rồi duyệt.", 409);
     set.source_approved_by = approver;
     set.source_approved_at = now;
+  }
+  // A guest's change to what an approved item posts sends it back to "checked" (owner 2026-11-05),
+  // whatever status the same body asks for: the owner approves the text that goes out.
+  if (guest && item.status === "approved") {
+    const fields = GUEST_DROPBACK_FIELDS.filter((k) => k in set && (has || (k !== "channels" && k !== "captions_json")));
+    if (fields.length) {
+      const raw = db.prepare(`SELECT ${fields.join(", ")} FROM content_items WHERE id = ?`).get(id) as Record<string, unknown>;
+      if (fields.some((k) => set[k] !== raw[k])) set.status = "checked";
+    }
   }
   const final = (set.status as ContentStatus | undefined) ?? item.status;
   const entering = has && final === "approved" && item.status !== "approved";
@@ -450,14 +465,16 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
 export type Sent = { delivery: string; live?: boolean; error: string | null };
 export type Deliver = (session: string, text: string) => Promise<Sent>;
 
-/** The longest task `/api/messages` takes (`clampText`'s default); captions are shortened first. */
+/** The longest task `/api/messages` takes (`clampText`'s default). */
 const TASK_MAX = 4000;
-/** How much of each caption a shortened task keeps (the worker reads the whole one from the DB). */
-const TASK_CAPTION = 300;
+/** What a stale approval answers: the item changed after the owner opened it. */
+export const CONTENT_CHANGED = "Nội dung vừa được sửa — xem lại rồi duyệt";
 
 /**
  * "Duyệt" in one tap (owner 2026-11-04): approve the item AND send its posting task to the chosen
- * session. Body: `session` (omp room id or Claude session id), `base` (its label), and the optional
+ * session. Body: `session` (omp room id or Claude session id), `base` (its label), `seen` (the
+ * item's `updated_at` the owner had on screen: required, 409 when the item changed since, so an
+ * edit by someone else cannot ride on the owner's approval) and the optional
  * `ai_label` (else the item's stored one, else "not said"). Order: the whole approval is tried and
  * rolled back first (channel rule, the 0062 trigger), so a refusal sends nothing; then the task is delivered,
  * and a delivery that fails leaves the status as it was; then the approval and the assignee are
@@ -470,7 +487,8 @@ export async function approveAndSend(db: DatabaseSync, id: number, body: Record<
   const rawBase = body.base;
   if (rawBase != null && (typeof rawBase !== "string" || rawBase.length > BASE_MAX)) throw new ContentError(`base: chuỗi tối đa ${BASE_MAX} ký tự`, 422);
   const base = typeof rawBase === "string" && rawBase.trim() ? rawBase.trim() : null;
-  const change: Record<string, unknown> = { status: "approved" };
+  if (typeof body.seen !== "number") throw new ContentError("seen: cần updated_at của mục lúc chủ xem (số ms)", 422);
+  const change: Record<string, unknown> = { status: "approved", seen: body.seen };
   if ("ai_label" in body) change.ai_label = body.ai_label;
   if (hasSchedule(db)) Object.assign(change, { assignee_session: session, assignee_base: base });
   checkUpdate(db, id, change, approver, now);
@@ -478,10 +496,7 @@ export async function approveAndSend(db: DatabaseSync, id: number, body: Record<
   const item = getContent(db, id)!;
   // The 0064 column defaults to 0, so a stored 0 is "not said", not "no AI".
   const aiLabel = typeof body.ai_label === "boolean" ? body.ai_label : item.ai_label === true ? true : undefined;
-  let task = publishTaskText(item, aiLabel);
-  if (charCount(task) > TASK_MAX) task = publishTaskText(item, aiLabel, TASK_CAPTION);
-  if (charCount(task) > TASK_MAX) throw new ContentError(`Tin giao việc quá ${TASK_MAX} ký tự kể cả khi cắt caption: rút gọn tiêu đề hoặc media_path.`, 422);
-  const text = clampText(task, TASK_MAX);
+  const text = clampText(publishTaskText(item, aiLabel), TASK_MAX);
   if (!text.ok) throw new ContentError(`Tin giao việc: ${text.error}`, 422);
   let sent: Sent;
   try {

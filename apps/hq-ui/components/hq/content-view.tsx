@@ -19,6 +19,8 @@ import {
   cpaCommand,
   dayKey,
   FORMAT_LABEL,
+  GUEST_DROPBACK_FIELDS,
+  GUEST_DROPBACK_NOTE,
   nextStatuses,
   stepHint,
   parseDay,
@@ -485,7 +487,12 @@ function Items({
             const note = steps.map((s) => stepHint(it, s)).find((h) => h != null);
             const err = errors[it.id];
             const who = assigneeShort(it);
-            const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
+            // A guest's edit of what an approved item posts sends it back to "checked" on the server; say so.
+            const edit = (field: ContentTextField) => async (v: string) => {
+              const ok = await patch(it.id, { [field]: v });
+              if (ok && role !== "owner" && it.status === "approved" && (GUEST_DROPBACK_FIELDS as readonly string[]).includes(field)) toast.info(GUEST_DROPBACK_NOTE);
+              return ok;
+            };
             return (
               <tr key={it.id} className={cn("align-top", warn && "bg-destructive/5")}>
                 <td className="px-2 py-2 font-mono text-muted-foreground tabular">{it.id}</td>

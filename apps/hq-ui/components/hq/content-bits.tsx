@@ -355,7 +355,7 @@ export function AssignBox({
       />
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">
-          Gửi kèm dòng <code className="font-mono">[Nội dung #{it.id} · {it.fb_page}]</code>
+          Gửi kèm dòng <code className="font-mono">[Nội dung #{it.id}]</code>, tiêu đề và trang (đánh dấu là dữ liệu)
           {canSave ? ", lưu phiên vào mục." : "."}
         </p>
         <Button type="submit" size="sm" className={cn("text-xs", TOUCH)} disabled={!session || !text.trim() || busy}>

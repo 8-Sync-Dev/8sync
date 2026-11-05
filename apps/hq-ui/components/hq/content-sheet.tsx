@@ -24,6 +24,8 @@ import {
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
+  GUEST_DROPBACK_FIELDS,
+  GUEST_DROPBACK_NOTE,
   NO_SCHEDULE,
   nextStatuses,
   stepHint,
@@ -210,7 +212,15 @@ function ItemDetail({
   // The owner's optional AI answer, sent as `ai_label` with "Duyệt" (no gate: owner 2026-11-05).
   const [aiChoice, setAiChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
-  const edit = (field: ContentTextField) => (v: string) => patch(it.id, { [field]: v });
+  // A guest's edit of what an approved item posts sends it back to "checked" on the server; say so.
+  const guestDropped = () => {
+    if (role !== "owner" && it.status === "approved") toast.info(GUEST_DROPBACK_NOTE);
+  };
+  const edit = (field: ContentTextField) => async (v: string) => {
+    const ok = await patch(it.id, { [field]: v });
+    if (ok && (GUEST_DROPBACK_FIELDS as readonly string[]).includes(field)) guestDropped();
+    return ok;
+  };
   const at = whenOf(it);
   // The flow's next steps, same as the list: "Duyệt" only once checked, so the 1-tap never meets a
   // trigger refusal it could have avoided; a step the trigger would refuse says why instead.
@@ -221,6 +231,7 @@ function ItemDetail({
   const live = (it.channel_posts ?? []).some((p) => p.state === "scheduled" || p.state === "scheduling");
   const [stale, setStale] = useState(false);
   const channelEdited = () => {
+    guestDropped();
     if (it.status === "approved" && live) setStale(true);
   };
 
@@ -273,19 +284,21 @@ function ItemDetail({
 
   /**
    * One tap (owner 2026-11-04): approve AND send the posting task; nothing changes when either fails.
-   * A guest editor cannot send (`send` is owner only): its "Duyệt" only approves.
+   * A guest editor cannot send nor set the AI label (owner only): its "Duyệt" only approves. Both send
+   * `seen` (the `updated_at` on screen) so an edit made meanwhile answers 409 instead of riding along.
    */
   async function approve() {
-    const ai = aiChoice === null ? {} : { ai_label: aiChoice };
+    const seen = it.updated_at;
     if (!owner) {
       setBusy(true);
       try {
-        await patch(it.id, { status: "approved", ...ai });
+        await patch(it.id, { status: "approved", seen });
       } finally {
         setBusy(false);
       }
       return;
     }
+    const ai = aiChoice === null ? {} : { ai_label: aiChoice };
     const to = known(session) ? session : "";
     if (!to) {
       setNeed(true);
@@ -294,7 +307,7 @@ function ItemDetail({
     }
     setBusy(true);
     try {
-      const ok = await patch(it.id, { status: "approved", send: { session: to, base: labelOf(to) }, ...ai });
+      const ok = await patch(it.id, { status: "approved", seen, send: { session: to, base: labelOf(to) }, ...ai });
       if (ok) toast.success(`Đã duyệt #${it.id} và gửi việc đăng cho ${labelOf(to)}`);
     } finally {
       setBusy(false);
@@ -368,7 +381,7 @@ function ItemDetail({
           {owner && steps.includes("approved") && hints.length === 0 && (
             <span className="text-xs text-muted-foreground">Duyệt sẽ gửi việc đăng cho {known(session) ? labelOf(session) : "phiên chọn ở Giao việc"}.</span>
           )}
-          {steps.includes("approved") && (
+          {owner && steps.includes("approved") && (
             <fieldset className="w-full space-y-1 text-xs">
               <legend className="text-muted-foreground">Nhãn AI khi đăng (không bắt buộc)</legend>
               {AI_CHOICES.map((c) => (
@@ -414,7 +427,7 @@ function ItemDetail({
         )}
         {it.channels !== undefined && (
           <Field label="Kênh">
-            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} />
+            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} canRetry={owner} />
           </Field>
         )}
         <Field label={it.channels !== undefined ? "Caption chung" : "Caption"}>
@@ -500,7 +513,7 @@ function ItemDetail({
 }
 
 /** "Kênh": which platforms get the item, each with its caption and how its post stands. */
-function ChannelsBox({ it, patch, onEdit, canEdit }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean }) {
+function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean }) {
   const selected = it.channels ?? [];
   const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
   const [busy, setBusy] = useState(false);
@@ -539,7 +552,7 @@ function ChannelsBox({ it, patch, onEdit, canEdit }: { it: ContentRow; patch: Pa
         })}
       </div>
       {selected.map((ch) => (
-        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} />
+        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} canRetry={canRetry} />
       ))}
     </div>
   );
@@ -556,7 +569,7 @@ const LINE_TONE: Record<ChannelLine["tone"], string> = {
  * One channel's caption: its own text (`captions_json`) or, until edited, what `captionFor` reads from
  * the shared caption. Saving the shared text back keeps it shared; clearing an own caption returns to it.
  */
-function ChannelCaption({ it, ch, post, patch, onEdit, canEdit }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void; canEdit: boolean }) {
+function ChannelCaption({ it, ch, post, patch, onEdit, canEdit, canRetry }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean }) {
   const own = it.captions_json?.[ch]?.trim() || null;
   const shared = captionFor({ caption: it.caption, captions_json: null }, ch);
   const value = own ?? shared ?? "";
@@ -612,7 +625,7 @@ function ChannelCaption({ it, ch, post, patch, onEdit, canEdit }: { it: ContentR
             Mở bài <ExternalLinkIcon aria-hidden className="size-3" />
           </a>
         )}
-        {line.retry && canEdit && (
+        {line.retry && canRetry && (
           <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px]", TOUCH)} disabled={retrying} onClick={() => void retry()}>
             <RotateCcwIcon aria-hidden /> Thử lại
           </Button>
