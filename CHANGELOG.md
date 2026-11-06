@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Removed
+- HQ Nội dung bỏ hẳn lựa chọn "nhãn AI" (lệnh owner 2026-11-06, chốt): nội dung dùng giọng clone, lip-sync, camera và ảnh thật của owner và nhân sự, mặc định dùng đầy đủ. HQ không còn hỏi, lưu, gửi hay nhắc tới nhãn AI: sheet bỏ khung chọn, việc giao phòng đăng bỏ dòng nhãn, tin tổng kết cuối ngày bỏ câu nhắc, API chỉ đọc các cột đã liệt kê (cột 0064 trong DB của content-post-agency để nguyên, HQ không đọc/ghi). PATCH `/api/content` mang trường lạ (kể cả trường cũ) trả 422 `<trường>: trường này không còn, HQ không nhận`. Test `tests/policy/no-ai-label.test.ts` quét `app/`, `components/`, `hooks/`, `lib/` và báo `file:dòng` nếu nhãn quay lại.
+
+### Changed
+- Sheet Nội dung trượt vào mượt hơn (240 ms, ease-out; đóng 150 ms); máy bật giảm chuyển động thì không trượt.
+- Sheet có khối "Trạng thái đăng" chia 3 nhóm theo từng kênh: Đã lên lịch (giờ + link "Mở bài"/"Mở lịch"), Không lên lịch được (lý do + trạng thái tự giao phòng), Chưa lên lịch. Nút "Thử lại" của owner dời lên khối này. Dùng được ở 390 px và 1440 px.
+
+### Added
+- HQ tự giao phòng đăng tay cho kênh không lên lịch được (`failed`/`blocked`) của bài đã duyệt: từ 2 phút trước giờ đăng tới 12 tiếng sau, mỗi kênh một lần cho mỗi giờ đăng, kiểm mỗi 60 giây. Phòng: phòng đăng của bài, nếu không có thì `manual.room` trong `content.json`, rồi phòng đầu của tổng kết cuối ngày; chỉ giao khi phòng đang sống trong repo nội dung. Việc gửi kèm caption (dạng dữ liệu), media, lý do lỗi, cách đăng bằng ego-browser và câu SQL ghi lại kết quả. Đã giao lưu ở `~/.local/state/8sync/hq/content-manual.json` (giữ 3 ngày). Tắt bằng `manual.off: true` hoặc `EIGHTSYNC_CONTENT_MANUAL=off`; `next dev` không chạy trừ khi `EIGHTSYNC_CONTENT_MANUAL=on`.
+
 ## [0.127.4] — 2026-11-06
 
 ### Fixed

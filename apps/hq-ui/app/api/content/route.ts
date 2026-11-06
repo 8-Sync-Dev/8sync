@@ -1,7 +1,8 @@
 import path from "node:path";
 import { GUEST_STATUS_DENIED, OWNER_CONTENT_FIELDS, OWNER_CONTENT_STATUSES } from "@/lib/access";
-import { GUEST_CHANNEL_ERROR, isFormat, isStatus, type ChannelPost } from "@/lib/content";
+import { CONTENT_TEXT_FIELDS, GUEST_CHANNEL_ERROR, isFormat, isStatus, type ChannelPost } from "@/lib/content";
 import { approveAndSend, ContentError, contentDbPath, contentRepo, createContent, deleteContent, hqApprover, listContent, openContent, updateContent } from "@/lib/server/content";
+import { manualConfig, manualStatuses, readManualState } from "@/lib/server/content-manual";
 import { deliverText } from "@/lib/server/deliver";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { senderOf } from "@/lib/server/sender";
@@ -59,9 +60,17 @@ export async function GET(req: Request) {
   if ("error" in c) return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : c.error });
   try {
     const list = listContent(c.db, { status, format, fb_page: page });
-    if (!guest) return json({ ...list, repo: contentRepo() });
+    // Per failed / blocked channel: how HQ hands it to a room to post by hand (lib/server/content-manual.ts).
+    const cfg = manualConfig();
+    const state = readManualState();
+    const now = Date.now();
+    const items = list.items.map((it) => {
+      const manual = manualStatuses(it, state, cfg, now, guest);
+      return manual ? { ...it, manual } : it;
+    });
+    if (!guest) return json({ ...list, items, repo: contentRepo() });
     // The owner's default posting session is the owner's: a guest cannot send anyway (`send` is owner only).
-    return json({ ...list, assign: null, items: list.items.map(guestItem) });
+    return json({ ...list, assign: null, items: items.map(guestItem) });
   } catch (e) {
     // A DB replaced or damaged since it opened: shown in the view, not a bare 500 on every poll.
     return json({ configured: true, ready: false, error: guest ? GUEST_DB_ERROR : `không đọc được sổ nội dung: ${(e as Error).message}` });
@@ -82,17 +91,32 @@ export async function POST(req: Request) {
   }
 }
 
+/** The fields PATCH takes. Any other (one HQ no longer has, or a typo) is refused with 422, never silently dropped. */
+const PATCH_FIELDS: ReadonlySet<string> = new Set([
+  ...CONTENT_TEXT_FIELDS,
+  "format",
+  "status",
+  "scheduled_at",
+  "assignee_session",
+  "assignee_base",
+  "approve_source",
+  "channels",
+  "captions_json",
+  "retry_channel",
+  "seen",
+  "send",
+]);
+
 /**
- * `?id=`: body = fields to change, `status`, `scheduled_at` (ms | null), `assignee_session` (+
- * `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`, and `ai_label`
- * (optional: true = AI used, label on when posting; false = no AI; kept in the 0064 column).
+ * `?id=`: body = fields to change (`PATCH_FIELDS`), `status`, `scheduled_at` (ms | null),
+ * `assignee_session` (+ `assignee_base`; null clears), `approve_source: "<source URL the owner saw>"`.
  * Migration 0064 (else 400): `channels`, `captions_json` (merged; "" drops a channel's own caption)
  * and `retry_channel` (deletes a failed / blocked / cancelled channel row; 409 otherwise). Entering
  * `approved` answers 409 with what a channel misses.
- * "Duyệt" in one tap (owner only): `{ status: "approved", seen: <updated_at on screen>, send: { session, base }, ai_label? }`
+ * "Duyệt" in one tap (owner only): `{ status: "approved", seen: <updated_at on screen>, send: { session, base } }`
  * approves AND sends the posting task to that session (`approveAndSend`): a refusal sends nothing,
  * a failed delivery (502) leaves the status unchanged. Answers `{ item, sent }`.
- * An editor (Chia sẻ) changes the item but not its media path, its agent, `send`, `ai_label` or
+ * An editor (Chia sẻ) changes the item but not its media path, its agent, `send` or
  * `retry_channel`, and never sets `approved` or `published` (403: only the owner approves what goes
  * out); the source it approves is signed with its invite label. Its edit of what an approved item
  * posts (title, caption, page, channels, format) sends the item back to "checked".
@@ -104,6 +128,8 @@ export async function PATCH(req: Request) {
   if (id === null) return bad("id: cần số mục", 400);
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
+  const unknown = Object.keys(body).find((k) => !PATCH_FIELDS.has(k));
+  if (unknown) return bad(`${unknown}: trường này không còn, HQ không nhận`, 422);
   const guest = o.access.guest;
   const ownerField = guest ? OWNER_CONTENT_FIELDS.find((k) => k in body) : undefined;
   if (ownerField) return bad(`${ownerField}: chỉ chủ HQ sửa được`, 403);
@@ -116,10 +142,10 @@ export async function PATCH(req: Request) {
       return json({ item: guest ? guestItem(item) : item });
     }
     const send = body.send;
-    if (body.status !== "approved" || Object.keys(body).some((k) => !["send", "status", "ai_label", "seen"].includes(k)) || !send || typeof send !== "object" || Array.isArray(send))
-      return bad('send: chỉ đi cùng status "approved", seen (và ai_label), dạng { session, base }', 422);
+    if (body.status !== "approved" || Object.keys(body).some((k) => !["send", "status", "seen"].includes(k)) || !send || typeof send !== "object" || Array.isArray(send))
+      return bad('send: chỉ đi cùng status "approved" và seen, dạng { session, base }', 422);
     const { session, base } = send as Record<string, unknown>;
-    const args = { session, base, seen: body.seen, ...("ai_label" in body ? { ai_label: body.ai_label } : {}) };
+    const args = { session, base, seen: body.seen };
     const sender = senderOf(req, o.access);
     return json(await approveAndSend(c.db, id, args, hqApprover(), (s, text) => deliverText(o.db, s, text, sender)));
   } catch (e) {

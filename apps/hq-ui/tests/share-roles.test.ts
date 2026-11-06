@@ -280,7 +280,7 @@ describe("content as a guest", () => {
     expect((await patchAs({ source_url: "https://s" })).status).toBe(200);
     const approved = await patchAs({ approve_source: "https://s" });
     expect(((await approved.json()) as { item: { source_approved_by: string } }).item.source_approved_by).toBe("chia sẻ: khách editor");
-    for (const field of ["media_path", "assignee_session", "assignee_base", "ai_label", "retry_channel"]) {
+    for (const field of ["media_path", "assignee_session", "assignee_base", "retry_channel"]) {
       const r = await PATCH(guestReq(`/api/content?id=${id}`, cookie, { method: "PATCH", body: { [field]: "C:/x" } }));
       expect(r.status, field).toBe(403);
     }

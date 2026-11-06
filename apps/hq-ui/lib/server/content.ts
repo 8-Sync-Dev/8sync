@@ -1,7 +1,8 @@
 // The content registry HQ reads and writes: `content_items` in content-post-agency's own SQLite
 // (its migration 0062 makes the table and the publish-gate triggers, 0063 the schedule and assignee
-// columns, 0064 the channels, the AI label choice and `content_channel_posts`). HQ never creates or
-// alters that schema; every write goes through the DB's triggers like any other writer.
+// columns, 0064 the channels and `content_channel_posts`). HQ never creates or alters that schema;
+// every write goes through the DB's triggers like any other writer. HQ reads only the columns it
+// knows (`ITEM_COLUMNS`); any other column of the table stays untouched by it.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -163,15 +164,10 @@ export function hasSchedule(db: DatabaseSync): boolean {
   return cols.has("scheduled_at") && cols.has("assignee_session") && cols.has("assignee_base") && cols.has("assigned_at");
 }
 
-/** Migration 0064 is in: the `channels` / `captions_json` / `ai_label` columns and the `content_channel_posts` table exist. */
+/** Migration 0064 is in: the `channels` / `captions_json` columns and the `content_channel_posts` table exist. */
 export function hasChannels(db: DatabaseSync): boolean {
   const cols = new Set((db.prepare("PRAGMA table_info(content_items)").all() as { name: string }[]).map((c) => c.name));
-  return (
-    cols.has("channels") &&
-    cols.has("captions_json") &&
-    cols.has("ai_label") &&
-    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'content_channel_posts'").get() !== undefined
-  );
+  return cols.has("channels") && cols.has("captions_json") && db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'content_channel_posts'").get() !== undefined;
 }
 
 /**
@@ -184,12 +180,46 @@ export function hasChannels0065(db: DatabaseSync): boolean {
   return CHANNELS_0065.every((c) => sql.includes(`'${c}'`));
 }
 
-/** A row as SQLite returns it: 0064's columns are JSON text and a 0/1 flag. */
-type DbItem = Omit<ContentItem, "channels" | "captions_json" | "ai_label"> & { channels?: string; captions_json?: string | null; ai_label?: number };
+/** The `content_items` columns HQ reads: 0062's, then 0063's and 0064's when the DB has them. */
+const ITEM_COLUMNS = [
+  "id",
+  "format",
+  "title",
+  "brief",
+  "caption",
+  "media_path",
+  "fb_page",
+  "source_url",
+  "source_approved_by",
+  "source_approved_at",
+  "check_note",
+  "checked_at",
+  "news_url",
+  "fb_post_url",
+  "published_at",
+  "status",
+  "created_at",
+  "updated_at",
+  "scheduled_at",
+  "assignee_session",
+  "assignee_base",
+  "assigned_at",
+  "channels",
+  "captions_json",
+] as const;
+
+/** `SELECT` list of the `ITEM_COLUMNS` this DB has (an older DB lacks the 0063/0064 ones). */
+function itemSelect(db: DatabaseSync): string {
+  const cols = new Set((db.prepare("PRAGMA table_info(content_items)").all() as { name: string }[]).map((c) => c.name));
+  return ITEM_COLUMNS.filter((c) => cols.has(c)).join(", ");
+}
+
+/** A row as SQLite returns it: 0064's columns are JSON text. */
+type DbItem = Omit<ContentItem, "channels" | "captions_json"> & { channels?: string; captions_json?: string | null };
 
 /** The row as the API hands it: 0064's JSON parsed; unknown channels and non-text captions are left out. */
 function fromRow(r: DbItem): ContentItem {
-  const { channels, captions_json, ai_label, ...rest } = r;
+  const { channels, captions_json, ...rest } = r;
   if (channels === undefined) return rest;
   const raw = captions_json ? (JSON.parse(captions_json) as Record<string, unknown>) : {};
   const captions: Captions = {};
@@ -201,7 +231,6 @@ function fromRow(r: DbItem): ContentItem {
     ...rest,
     channels: [...new Set((JSON.parse(channels) as unknown[]).filter(isChannel))],
     captions_json: Object.keys(captions).length ? captions : null,
-    ai_label: ai_label === 1,
   };
 }
 
@@ -222,14 +251,14 @@ export function listContent(db: DatabaseSync, f: ContentFilter = {}): Extract<Co
   const by = (["status", "format", "fb_page"] as const).filter((k) => f[k]);
   const where = by.map((k) => `${k} = ?`);
   const args = by.map((k) => f[k]!);
-  const sql = `SELECT * FROM content_items${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC, id DESC LIMIT ${LIST_MAX}`;
+  const sql = `SELECT ${itemSelect(db)} FROM content_items${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC, id DESC LIMIT ${LIST_MAX}`;
   const items = rowsOf(db, (db.prepare(sql).all(...args) as unknown as DbItem[]).map(fromRow), hasChannels(db));
   const pages = (db.prepare("SELECT DISTINCT fb_page FROM content_items ORDER BY fb_page").all() as { fb_page: string }[]).map((r) => r.fb_page);
   return { configured: true, ready: true, items, pages, schedule: hasSchedule(db), channels0065: hasChannels0065(db), assign: readAssignPref() };
 }
 
 export function getContent(db: DatabaseSync, id: number): ContentItem | null {
-  const row = db.prepare("SELECT * FROM content_items WHERE id = ?").get(id) as unknown as DbItem | undefined;
+  const row = db.prepare(`SELECT ${itemSelect(db)} FROM content_items WHERE id = ?`).get(id) as unknown as DbItem | undefined;
   return row ? fromRow(row) : null;
 }
 
@@ -289,13 +318,6 @@ function statusStamps(item: Pick<ContentItem, "checked_at" | "published_at"> | n
   if (status === "checked" && item?.checked_at == null) s.checked_at = now;
   if (status === "published" && item?.published_at == null) s.published_at = now;
   return s;
-}
-
-/** `ai_label` of a body (optional boolean, else 422) as its 0064 column; a DB before 0064 takes the choice without keeping it. No gate: owner 2026-11-05. */
-function aiField(body: Record<string, unknown>, has: boolean): Record<string, number> {
-  if (!("ai_label" in body)) return {};
-  if (typeof body.ai_label !== "boolean") throw new ContentError("ai_label: true (có AI, bật nhãn) hoặc false (không dùng AI)", 422);
-  return has ? { ai_label: body.ai_label ? 1 : 0 } : {};
 }
 
 /** The 0064 fields of a body, parsed. Absent on the body = absent here. */
@@ -369,7 +391,6 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
     ...t,
     ...scheduleFields(db, body, now),
     ...channelColumns(ch),
-    ...aiField(body, has),
     format: body.format,
     status,
     ...statusStamps(null, status, now),
@@ -388,7 +409,7 @@ class DryRun extends Error {}
  * Edit one item. Body: any text field, `format`, `status`, `scheduled_at`, `assignee_session` (+
  * `assignee_base`), and `approve_source: "<the source URL the owner saw>"` (records who and when;
  * 409 when the row's source has changed since). A new `source_url` drops an earlier approval: it approved the old source.
- * 0064: `channels`, `captions_json` (see `channelFields`), `ai_label` (optional, kept) and `retry_channel: "<channel>"`, which
+ * 0064: `channels`, `captions_json` (see `channelFields`) and `retry_channel: "<channel>"`, which
  * deletes that channel's failed / blocked / cancelled row so the worker plans it again (409 for any
  * other state: a live or posted one must not be posted twice). Entering approved checks the channel
  * rule and clears the item's cancelled rows (left from an earlier un-approve) so it is scheduled again.
@@ -423,7 +444,7 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
     if (!isChannel(body.retry_channel)) throw new ContentError(`retry_channel: một trong ${CHANNELS.join(", ")}`, 422);
     retry = body.retry_channel;
   }
-  const set: Record<string, string | number | null> = { ...textFields(body), ...scheduleFields(db, body, now), ...channelColumns(ch), ...aiField(body, has) };
+  const set: Record<string, string | number | null> = { ...textFields(body), ...scheduleFields(db, body, now), ...channelColumns(ch) };
   if ("format" in body) {
     if (!isFormat(body.format)) throw new ContentError("format: không hợp lệ", 422);
     set.format = body.format;
@@ -504,8 +525,7 @@ export const CONTENT_CHANGED = "Nội dung vừa được sửa — xem lại r�
  * "Duyệt" in one tap (owner 2026-11-04): approve the item AND send its posting task to the chosen
  * session. Body: `session` (omp room id or Claude session id), `base` (its label), `seen` (the
  * item's `updated_at` the owner had on screen: required, 409 when the item changed since, so an
- * edit by someone else cannot ride on the owner's approval) and the optional
- * `ai_label` (else the item's stored one, else "not said"). Order: the whole approval is tried and
+ * edit by someone else cannot ride on the owner's approval). Order: the whole approval is tried and
  * rolled back first (channel rule, the 0062 trigger), so a refusal sends nothing; then the task is delivered,
  * and a delivery that fails leaves the status as it was; then the approval and the assignee are
  * written, and the session becomes the default for the next approval. No write transaction is held
@@ -519,14 +539,10 @@ export async function approveAndSend(db: DatabaseSync, id: number, body: Record<
   const base = typeof rawBase === "string" && rawBase.trim() ? rawBase.trim() : null;
   if (typeof body.seen !== "number") throw new ContentError("seen: cần updated_at của mục lúc chủ xem (số ms)", 422);
   const change: Record<string, unknown> = { status: "approved", seen: body.seen };
-  if ("ai_label" in body) change.ai_label = body.ai_label;
   if (hasSchedule(db)) Object.assign(change, { assignee_session: session, assignee_base: base });
   checkUpdate(db, id, change, approver, now);
 
-  const item = getContent(db, id)!;
-  // The 0064 column defaults to 0, so a stored 0 is "not said", not "no AI".
-  const aiLabel = typeof body.ai_label === "boolean" ? body.ai_label : item.ai_label === true ? true : undefined;
-  const text = clampText(publishTaskText(item, aiLabel), TASK_MAX);
+  const text = clampText(publishTaskText(getContent(db, id)!), TASK_MAX);
   if (!text.ok) throw new ContentError(`Tin giao việc: ${text.error}`, 422);
   let sent: Sent;
   try {

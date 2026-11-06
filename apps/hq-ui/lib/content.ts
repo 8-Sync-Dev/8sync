@@ -58,8 +58,6 @@ export type ContentItem = {
   channels?: Channel[];
   /** Per-channel caption the owner wrote; a channel without one reads its section of `caption` (`captionFor`). */
   captions_json?: Captions | null;
-  /** The owner's AI choice when approving: true = the worker turns on the platform's AI disclosure. */
-  ai_label?: boolean;
 };
 
 /**
@@ -76,7 +74,7 @@ export type ContentMedia = {
 };
 
 /** One row of the list: the DB row plus what HQ read from its media, and (0064) how each channel went. */
-export type ContentRow = ContentItem & { media: ContentMedia[]; channel_posts?: ChannelPost[] };
+export type ContentRow = ContentItem & { media: ContentMedia[]; channel_posts?: ChannelPost[]; manual?: ManualByChannel };
 
 // ── Channels (migration 0064, widened by 0065): one item, scheduled on each platform's own scheduler by content-ai ──
 
@@ -262,6 +260,49 @@ export function channelLine(it: Pick<ContentItem, "status" | "scheduled_at">, po
       return line(`Bị chặn: ${post.error ?? "không rõ"}`, "bad", null, true);
     case "cancelled":
       return line("Đã huỷ lịch", "muted");
+  }
+}
+
+/** The sheet's three posting groups (owner 2026-11-06): on the platform, could not get there, not yet. */
+export const CHANNEL_GROUPS = ["scheduled", "failed", "waiting"] as const;
+export type ChannelGroup = (typeof CHANNEL_GROUPS)[number];
+export const CHANNEL_GROUP_LABEL: Record<ChannelGroup, string> = { scheduled: "Đã lên lịch", failed: "Không lên lịch được", waiting: "Chưa lên lịch" };
+
+/** Which group a channel row falls in: scheduled/published → scheduled, failed/blocked → failed, no row / scheduling / cancelled → waiting. */
+export function channelGroup(post: Pick<ChannelPost, "state"> | undefined): ChannelGroup {
+  if (!post) return "waiting";
+  if (SCHEDULED_STATES.includes(post.state)) return "scheduled";
+  return post.state === "failed" || post.state === "blocked" ? "failed" : "waiting";
+}
+
+/**
+ * What HQ does with a channel that could not be scheduled (lib/server/content-manual.ts): hands the
+ * post to a room that posts it by hand at its time. `room` is null for a guest (Chia sẻ). `at`:
+ * planned = the post time, dispatched = when it was handed over, stale = the post time it missed.
+ */
+export type ManualStatus =
+  | { kind: "planned"; room: string | null; at: number }
+  | { kind: "dispatched"; room: string | null; at: number }
+  | { kind: "stale"; at: number }
+  | { kind: "noroom" }
+  | { kind: "notime" };
+export type ManualByChannel = Partial<Record<Channel, ManualStatus>>;
+
+/** A manual status in words; times as "HH:mm" today, else "HH:mm dd/MM". */
+export function manualLine(m: ManualStatus, now = Date.now()): string {
+  const at = (ms: number) => (dayKey(ms) === dayKey(now) ? timeOf(ms) : stampOf(ms));
+  const room = (r: string | null) => (r ? `phòng ${r}` : "phòng đăng");
+  switch (m.kind) {
+    case "planned":
+      return `Sẽ giao ${room(m.room)} tự đăng lúc ${at(m.at)}`;
+    case "dispatched":
+      return `Đã giao ${room(m.room)} lúc ${at(m.at)}`;
+    case "stale":
+      return `Quá giờ đăng ${at(m.at)} hơn 12 tiếng: không tự giao nữa`;
+    case "noroom":
+      return "Chưa có phòng — chọn phòng giao việc";
+    case "notime":
+      return "Chưa có giờ đăng — đặt giờ để HQ tự giao phòng";
   }
 }
 
@@ -466,15 +507,6 @@ export function contentTaskText(it: Pick<ContentItem, "id" | "title" | "fb_page"
   ].join("\n");
 }
 
-/**
- * The owner's optional AI answer in the sheet (no gate: owner 2026-11-05 dropped the AI-label
- * warning and tick); the value is `ai_label`, kept in the 0064 column and sent with the posting task.
- */
-export const AI_CHOICES: readonly { value: boolean; label: string }[] = [
-  { value: true, label: "Có AI (giọng clone, lip-sync, ảnh AI): bật nhãn AI khi đăng" },
-  { value: false, label: "Không dùng AI" },
-];
-
 /** Full local stamp "HH:mm dd/MM/yyyy". */
 export const fullStampOf = (ms: number) => `${stampOf(ms)}/${new Date(ms).getFullYear()}`;
 
@@ -482,16 +514,15 @@ export const fullStampOf = (ms: number) => `${stampOf(ms)}/${new Date(ms).getFul
  * The task "Duyệt" sends to the chosen session: the item, where and when it goes, and how to
  * schedule it. No caption: captions are editable by guests, and the worker (`channels:tick --only`)
  * reads them from the DB itself, so nothing a guest typed reaches the agent as text beyond the quoted
- * title and page. Without migration 0064 the item goes to Facebook. `aiLabel` undefined = the owner did not say.
+ * title and page. Without migration 0064 the item goes to Facebook.
  */
-export function publishTaskText(it: ContentItem, aiLabel: boolean | undefined): string {
+export function publishTaskText(it: ContentItem): string {
   const channels = it.channels ?? (["facebook"] as Channel[]);
   const lines = [
     `Đã duyệt, lên lịch đăng bài này.`,
     `Định dạng: ${FORMAT_LABEL[it.format]}`,
     `Giờ đăng: ${it.scheduled_at != null ? `${fullStampOf(it.scheduled_at)} (${it.scheduled_at})` : "chưa có"}`,
     `Kênh: ${channels.map((c) => CHANNEL_LABEL[c]).join(", ")}`,
-    `Nhãn AI: ${aiLabel === true ? "BẬT khi đăng" : aiLabel === false ? "không" : "chủ chưa chọn"}`,
     `Media: ${it.media_path ? dataLine(it.media_path, 400) : "chưa có"}`,
     `Caption: worker đọc từ DB (không gửi trong tin này).`,
     `Lên lịch: trong content-post-agency chạy \`pnpm --dir apps/content-ai channels:tick --only ${it.id}\` (worker lên lịch native qua ego-browser) rồi kiểm trạng thái từng kênh trong HQ.`,
