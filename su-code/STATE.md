@@ -9,7 +9,7 @@ Owner 2026-11-06: HQ ô chat giữ trọn chiều ngang dưới phòng, Báo cá
 - [x] v0.127.0 đã release (PR #329)
 - [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
 - [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
-- [ ] v0.127.3: nút Báo cáo trong hàng nút ô chat cả trên phone (hàng xuống 2 dòng < 640 px) — release + `8sync up`
+- [x] v0.127.3 đã release (PR #335), `8sync up` xong; :8740 trả UI 0.127.3 (nút Báo cáo trong hàng nút ô chat cả trên phone, hàng xuống 2 dòng < 640 px)
 - [ ] Owner chọn A (dựng lại lỗi 2 cảnh qua UI rồi sửa + test, ~20′) hay B (render lại qua UI, ~10′) cho lỗi mất tiếng `hq-demo.mp4`: content-post-agency đo file gốc 1080p, chỉ cảnh deck-0 còn lời + sfx, deck-1…6 mất mọi `<audio>` riêng; gốc chưa xác nhận (asset tiếng các cảnh sau không chép/nạp lúc render?). Kiểu dựng có sẵn trên app: Course Studio → "Demo sản phẩm"
 - [ ] Owner duyệt preset "Highlight Cam" (content-post-agency đề xuất: file mới `scenes/course/highlight-cam.ts`, bản 9:16, gắn /ad-frames + tab trend; không sửa recordly). Luật: 100% output tạo + UAT trên app, không script tay
 - [x] 0065 đã áp vào `daily-dev.db` (content-post-agency, nhánh `wip/content-channels-snapshot` 2f3dc342, backup `daily-dev.db.bak-pre0065-1793925502904`); HQ :8740 kiểm: `channels0065: true`, 52 dòng kênh đều `scheduled`, #77–80 đủ 6 kênh (thêm TikTok/X)
@@ -28,7 +28,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-Worktree `C:/Users/Projects/su-code-rp` (nhánh `feat/hq-report-phone`) đang release v0.127.3.
+Không có worktree nào đang làm dở. Chờ owner: A/B cho lỗi tiếng demo, duyệt "Highlight Cam".
 
 ## Next
 - Đa kênh: đưa 0064 + 0065 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; thiết kế phân biệt "lịch tay chờ duyệt" với "bỏ duyệt" trong `channels:tick`.
