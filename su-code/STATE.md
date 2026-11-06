@@ -43,4 +43,5 @@ Không có worktree su-code nào đang làm dở. Chờ owner: chọn phương �
 - content-post-agency: xác nhận đã gỡ mọi nhãn AI (option, toggle nền tảng, caption/watermark) + test chặn tái xuất hiện (#6079).
 - Sửa gốc inbox phòng do Orca mở (KNOWLEDGE 2026-11-04).
 - `statusline::tests::chained_timeout_kills_group` flake Windows CI; đỏ lại thì `gh run rerun --failed`.
+- `8sync up` không deploy lại bundled skill vào `~/.omp/skills` (KNOWLEDGE 2026-11-06): cho selfup chạy bước refresh skill của `harness global` sau khi cài binary mới.
 - Link không cần đăng nhập lại khi tunnel restart cần host cố định (Cloudflare named tunnel); quick tunnel đổi host. VPS cũ đã huỷ.
