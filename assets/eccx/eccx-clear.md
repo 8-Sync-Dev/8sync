@@ -9,7 +9,7 @@ argument-hint: "<slug>|all [--reason <why>]"
 `$ARGUMENTS` — a loop `<slug>`, or `all`. Owner-only, Level 4 like `/ship-loop`. Clears ONLY: no review, no ship, no new work. `su-code/ship/<slug>/` (PLAN.md, LOOP.md) stays as evidence.
 
 1. **Pick.** No slug → read `su-code/ship/ACTIVE` + `8sync ccc loop ls`. None → say so, done. Several → list one line each `slug · iter/max · min/max` (`8sync ccc loop status <slug>`) and ask ONE question. `all` → steps 2–4 for every ACTIVE slug.
-2. **No cron on omp** — a loop only ticks inside its session; step 3 is the whole stop.
+2. **Stop the run.** omp has no cron: the loop lives in its session, kept going by `8sync-engine` while `.cache/8sync/engine/state.json` has unfinished tasks. If that plan's goal is this loop's, delete the file (the next stop then ends the run).
 3. **Close state.** `8sync ccc loop status <slug>` → brief ≤10 lines into `su-code/ship/<slug>/LOOP.md` (why cleared, criteria green/red + last evidence, iters/minutes used, open items if the owner resumes later) → `8sync ccc loop done <slug> --reason "<why>"` → remove the `<slug>` line from `su-code/ship/ACTIVE`. Never delete `su-code/ship/<slug>/`; never touch git.
 4. **Report** ≤6 lines: each cleared loop (slug · iters used · green/red · cron deleted · `done` exit 0) + what is still in ACTIVE.
 

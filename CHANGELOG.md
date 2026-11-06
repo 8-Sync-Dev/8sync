@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.130.0] — 2026-11-07
+
+### Added
+- omp có đủ `/eccx-loop-<category>` (19 lệnh, trước chỉ Claude Code có): cùng PLAN/tiêu chí/bằng chứng `8sync ccc loop` như bản Claude Code, nhưng chạy trong phiên thay vì cron — lệnh gọi `engine_plan` trước để bật vòng run-to-done của `8sync-engine`, mỗi tiêu chí là một task có `verify`, `engine_verify` → `engine_advance` mới tính là xanh. `--max-iter` mặc định 8 vì omp tự chạy tiếp tối đa 8 lần liên tiếp; hết lượt mà còn việc thì báo và chủ gõ lại `/eccx-loop-<cat> <slug>`. `/eccx-clear` trên omp dừng vòng bằng cách xoá plan của engine.
+
+### Fixed
+- Phòng omp mở bằng Orca (`omp --resume <file>`, không có `EIGHTSYNC_ROOM_ID`) nay nhận tin từ HQ: extension `8sync-inbox` tự tìm room id bằng `8sync . ls --json` trong thư mục dự án, khớp `session_dir` với thư mục chứa session. Trước đây sau mỗi lần khởi động lại máy, Orca mở lại phòng và mọi tin gửi từ ô nhắn HQ nằm im trong inbox.
+
 ## [0.129.1] — 2026-11-06
 
 ### Fixed

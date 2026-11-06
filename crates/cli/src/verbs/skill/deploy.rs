@@ -1845,12 +1845,14 @@ mod command_prefix_tests {
             assert!(body.contains(&format!("\nname: eccx-{c}\n")) && body.contains("$ARGUMENTS"), "{body}");
             assert!(!dir.join(format!("{}eccx-{c}.md", crate::brand::CMD_PREFIX)).exists());
         }
-        // `/hq-*` rides the same bare deploy from the Claude Code source; the CC-only loops do not.
+        // `/hq-*` rides the same bare deploy from the Claude Code source; the loops are omp's own.
         for c in ["ls", "log", "send", "artifact", "metrics"] {
             let body = std::fs::read_to_string(dir.join(format!("hq-{c}.md"))).unwrap();
             assert!(body.contains(&format!("\nname: hq-{c}\n")) && body.contains("hq-control/scripts/hq.mjs"), "{body}");
         }
-        assert!(!dir.join("eccx-loop-full.md").exists(), "loops are Claude Code only");
+        // omp has no cron: its loop is driven by the engine's run-to-done continuation.
+        let lp = std::fs::read_to_string(dir.join("eccx-loop-full.md")).unwrap();
+        assert!(lp.contains("\nname: eccx-loop-full\n") && lp.contains("engine_plan") && !lp.contains("CronCreate"), "{lp}");
         assert_eq!(super::deploy_eccx_commands(&home).unwrap(), 0, "idempotent");
         let _ = std::fs::remove_dir_all(&home);
     }

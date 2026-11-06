@@ -450,7 +450,7 @@ def body(h, c, members, maxw):
 
 
 def loop_body(c):
-    """`/eccx-loop-<cat>` (Claude Code only: the loop rides CronCreate + `/ship-tick`). A thin
+    """`/eccx-loop-<cat>` for Claude Code (the loop rides CronCreate + `/ship-tick`). A thin
     driver: members stay in `eccx-<cat>.md`, the loop machinery is `/ship-loop`'s."""
     title, _ = CATS[c]
     src = f"`~/.claude/commands/eccx-{c}.md` (or the 8sync-kit plugin's `commands/`)"
@@ -491,6 +491,50 @@ def loop_body(c):
             "`CronDelete` the `/ship-tick <slug>` job. Report: criteria + evidence, iterations/minutes used, lessons kept, open items.\n\n"
             "## How to call members\n" + HOW["cc"] + "\n")
 
+def loop_body_omp(c):
+    """`/eccx-loop-<cat>` for omp: no cron, so the loop runs inside the session. `8sync-engine`
+    keeps it going (`session_stop` continues while `engine_next` has work, armed only after this
+    session called `engine_plan`, at most 8 consecutive continuations); `8sync ccc loop` holds the
+    caps and evidence, same state as the Claude Code loop, so `/eccx-clear` closes either."""
+    title, _ = CATS[c]
+    select = ("its Route + Select steps (every relevant category, then each category's members)" if c == "full"
+              else "its Select step")
+    return (head("omp", f"loop-{c}", f"Loop /eccx-{c} on a goal until every acceptance criterion passes: criteria with check commands, "
+                 "engine verify gates, evidence, iteration/time/stuck caps; auto-merge + auto-release when green").replace(
+                     "argument-hint: \"<goal> [--dry-run]\"",
+                     "argument-hint: \"<goal> [--max-iter 8] [--max-min 90] [--no-release] [--dry-run]\"")
+            + f"# /eccx-loop-{c} — {title}, looped until green\n\n"
+            "Goal: `$ARGUMENTS`. Owner-only; \"dừng\"/\"stop\" ends it at once. Defaults `--max-iter 8` (omp auto-continues a "
+            "session at most 8 times in a row, so never more), `--max-min 90`.\n\n"
+            f"1. **Members.** Open `~/.omp/agent/commands/eccx-{c}.md` and do {select} for this goal.\n"
+            "2. **Criteria.** Write `su-code/ship/<slug>/PLAN.md`: acceptance criteria, each with ONE check command "
+            "(exit 0 = pass; light and local, or a CI workflow name for heavy builds), plus "
+            f"`Driver: /eccx-{c}`, `Members: <picks>`, `Release: yes|no` (yes unless `--no-release`). "
+            "No criterion can get a command → say so and stop; never loop on taste. `--dry-run`: print PLAN and stop.\n"
+            "3. **Open the loop.** `<slug>` line in `su-code/ship/ACTIVE`; `8sync ccc loop init <slug> --max-iter <N> --max-min <M>`; "
+            "then `engine_plan` FIRST (it arms the run-to-done continuation): goal = the goal, one slice per criterion, "
+            "each task's `verify` = that criterion's check command, `maxRetries` 2. Mirror the criteria into `todo`.\n"
+            "4. **Iterate**, one red item per iteration, without yielding between them:\n"
+            "   - **Pick:** red CI on the branch first, else `engine_next`.\n"
+            f"   - **Execute** with the `Members:` picks, as the Execute step of `eccx-{c}.md` scoped to that one task; "
+            "independent steps → one `task` call with several `tasks[]`.\n"
+            "   - **Eval:** `engine_verify` on the task, then `8sync ccc loop ev <slug> <C#> -- '<cmd>'` for the evidence line; "
+            "green → `engine_advance` (`commit: true` only on a feature branch). No evidence line = not passed.\n"
+            "   - **Learn:** cause of a red check found → one dated line in `su-code/ship/<slug>/research.md`; "
+            "an evidence-backed lesson → `trail note` (≤1 per iteration, none is fine).\n"
+            "   - **Tick:** all green → step 5, no tick. Else `8sync ccc loop tick --changed <n> --digest \"<diff sha256 16 chars + "
+            "last line of the first red check>\"`; `continue` → next iteration; `stop:<reason>` or anything else → step 5.\n"
+            "   - **Stuck** (same digest twice, or a task BLOCKED by `engine_verify`): research the failure before retrying, "
+            "then re-Select: add skipped members that fit it, `/ecc-agent-introspection-debugging` when the loop itself misbehaves; "
+            "record the change in `Members:`.\n"
+            "5. **Close.** All green → review the diff (`security-review`, `skill://aup-audit`) → CHANGELOG + commit on the feature "
+            "branch → PR, CI green on Windows, macOS and Linux, squash-merge, then the repo's own release path (`Release: no` stops "
+            "at merge; never on red CI), remove worktree + branch. Only irreversible, prod-data, billing, security-policy or "
+            "prod-deploy choices go to the owner (ONE `ask`). Stop or cap → brief ≤10 lines in LOOP.md, `8sync ccc loop done <slug>`, "
+            "drop the `ACTIVE` line. Report: criteria + evidence, iterations/minutes used, lessons kept, open items. "
+            f"8 continuations used with work left → say so; the owner resumes with `/eccx-loop-{c} <slug>` (re-read PLAN/LOOP, skip step 2).\n\n"
+            "## How to call members\n" + HOW["omp"] + "\n")
+
 def clear_body(h):
     """`/eccx-clear` — clear running time-loops (`/eccx-loop-<cat>`, `/ship-loop`): stop the
     waker, close the loop state, keep the evidence. Utility, not a category."""
@@ -498,7 +542,9 @@ def clear_body(h):
     wake = ("2. **Stop the waker.** `CronList` → `CronDelete` every `/ship-tick <slug>` job; "
             "`/goal clear` if that slug's goal is still set.\n"
             if h == "cc" else
-            "2. **No cron on omp** — a loop only ticks inside its session; step 3 is the whole stop.\n")
+            "2. **Stop the run.** omp has no cron: the loop lives in its session, kept going by `8sync-engine` while "
+            "`.cache/8sync/engine/state.json` has unfinished tasks. If that plan's goal is this loop's, delete the file "
+            "(the next stop then ends the run).\n")
     return (head(h, "clear", desc).replace('argument-hint: "<goal> [--dry-run]"',
                                            'argument-hint: "<slug>|all [--reason <why>]"')
             + "# /eccx-clear — clear a running time-loop\n\n"
@@ -540,11 +586,10 @@ def generate():
             with open(p, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)
             print(f"{h:3} eccx-{c:12} {len(text.encode('utf-8')):6} B  purposes<={maxw}w")
-            if h == "cc":
-                p = os.path.join(d, f"eccx-loop-{c}.md")
-                want.add(os.path.basename(p))
-                with open(p, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(loop_body(c))
+            p = os.path.join(d, f"eccx-loop-{c}.md")
+            want.add(os.path.basename(p))
+            with open(p, "w", encoding="utf-8", newline="\n") as f:
+                f.write(loop_body(c) if h == "cc" else loop_body_omp(c))
         p = os.path.join(d, "eccx-clear.md")
         want.add("eccx-clear.md")
         with open(p, "w", encoding="utf-8", newline="\n") as f:

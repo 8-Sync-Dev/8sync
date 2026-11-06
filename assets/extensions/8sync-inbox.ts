@@ -149,10 +149,42 @@ export function pollEvery(empty: number): number {
 }
 
 function run(id: string, cwd: string, args: string[]): Promise<string | null> {
+  return exec(["ccc", "inbox", "--session", id, ...args, "--json"], cwd);
+}
+
+function exec(args: string[], cwd: string): Promise<string | null> {
   // Executor form: the extensions' lib is es2023 (no `Promise.withResolvers`).
   return new Promise((resolve) => {
-    execFile("8sync", ["ccc", "inbox", "--session", id, ...args, "--json"], { cwd, timeout: RUN_TIMEOUT_MS, windowsHide: true }, (err, stdout) => resolve(err ? null : String(stdout)));
+    execFile("8sync", args, { cwd, timeout: RUN_TIMEOUT_MS, windowsHide: true }, (err, stdout) => resolve(err ? null : String(stdout)));
   });
+}
+
+function samePath(a: string, b: string): boolean {
+  const n = (p: string) => {
+    const r = path.resolve(p).replace(/[\\/]+$/, "");
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  return n(a) === n(b);
+}
+
+/**
+ * The room id of the session stored in `dir`, from `8sync . ls --json` run in its project: the row
+ * whose `session_dir` is `dir`. For an omp 8sync did not launch (Orca's `omp --resume <file>`), which
+ * has no `EIGHTSYNC_ROOM_ID` but still writes to the room's session dir. Null when no row matches.
+ */
+export function roomIdFor(lsJson: string | null, dir: string): string | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(lsJson ?? "");
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows) || dir === "") return null;
+  for (const r of rows) {
+    if (r === null || typeof r !== "object" || !("session_dir" in r) || !("inbox_id" in r)) continue;
+    if (typeof r.session_dir === "string" && typeof r.inbox_id === "string" && ROOM_ID.test(r.inbox_id) && samePath(r.session_dir, dir)) return r.inbox_id;
+  }
+  return null;
 }
 
 /** A subagent's context (`ctx.agent.kind === "sub"`; the pinned typings predate `agent`). */
@@ -163,8 +195,8 @@ function isSub(ctx: object): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
-  const id = process.env.EIGHTSYNC_ROOM_ID ?? "";
-  if (!ROOM_ID.test(id)) return;
+  // 8sync's launches export the id; any other launch of a room's session resolves it at start.
+  let id = process.env.EIGHTSYNC_ROOM_ID ?? "";
   const st = { inflight: false, empty: 0, tick: 0, model: "", error: null as string | null };
   const stateDir = path.join(os.homedir(), ".local", "state", "8sync", "hq");
   let tui: Focus | null = null;
@@ -213,6 +245,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     if (isSub(ctx)) return;
+    if (!ROOM_ID.test(id)) id = roomIdFor(await exec([".", "ls", "--json"], ctx.cwd), ctx.sessionManager.getSessionDir()) ?? "";
+    if (!ROOM_ID.test(id)) return;
     try {
       fs.mkdirSync(stateDir, { recursive: true });
       fs.writeFileSync(path.join(stateDir, "omp-commands.json"), commandsJson(pi.getCommands()));
