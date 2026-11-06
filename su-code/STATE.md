@@ -10,7 +10,7 @@ Owner 2026-11-06: HQ v0.127.0 — phòng kiểu IDE ("Thư mục" là pane cạn
 - [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
 - [x] 0065 đã áp vào `daily-dev.db` (content-post-agency, nhánh `wip/content-channels-snapshot` 2f3dc342, backup `daily-dev.db.bak-pre0065-1793925502904`); HQ :8740 kiểm: `channels0065: true`, 52 dòng kênh đều `scheduled`, #77–80 đủ 6 kênh (thêm TikTok/X)
 - [ ] Owner: #77–80 đã lên lịch trên 6 nền tảng khi còn `checked` → Duyệt, hoặc huỷ lịch trên từng nền tảng
-- [ ] Owner: ĐỪNG chạy `pnpm channels:tick` trên DB này: tick coi món không approved là "bỏ duyệt" → huỷ lịch thật (đã vá bỏ qua kênh không driver ở 04239d99; tách "lịch tay chờ duyệt" khỏi "bỏ duyệt" chưa làm)
+- [ ] Owner: ĐỪNG chạy `pnpm channels:tick` trên `daily-dev.db`: tick coi món không approved là "bỏ duyệt" → huỷ lịch thật. Vá 04239d99 chỉ bỏ qua kênh KHÔNG có driver (tiktok/x); FB/LinkedIn/Threads/YouTube có driver nên vẫn bị huỷ: tới 44 dòng (32 + 4 + 4 + 4) khi các món còn `checked`
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
 ## Goal: đa kênh cho tab Nội dung (phiên tu-session-marketing-phong-core)
@@ -18,7 +18,8 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [x] content-post-agency `feat/content-channels` (worktree `C:/Users/Projects/cpa-channels`): 0064 (`channels`, `captions_json`, bảng `content_channel_posts`), `src/services/channels/*`, `pnpm channels:tick`; driver Threads kiểm live
 - [x] HQ `feat/hq-content-channels` (v0.123.0): chip kênh, caption theo kênh, trạng thái từng kênh, Thử lại, luật duyệt 409; kiểm trên dev HQ :8771 với bản sao DB
 - [ ] Driver Facebook / LinkedIn / YouTube kiểm live
-- [ ] Áp 0064 vào DB thật (backup trước), runner chạy định kỳ (Scheduled Task) từ checkout sạch
+- [x] Áp 0064 vào DB thật (backup trước)
+- [ ] BLOCKED: runner `channels:tick` chạy định kỳ (Scheduled Task) — chỉ bật sau khi tick tách "lịch tay chờ duyệt" khỏi "bỏ duyệt", hoặc sau khi mọi món đã lên lịch (#77–80…) được Duyệt
 - [x] PR #297 gộp vào release v0.123.0 (review bảo mật: `send` chỉ chủ, `assign` ẩn với khách)
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
