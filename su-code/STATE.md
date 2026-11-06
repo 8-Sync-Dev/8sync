@@ -10,8 +10,9 @@ Owner 2026-11-06: HQ ô chat giữ trọn chiều ngang dưới phòng, Báo cá
 - [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
 - [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
 - [x] v0.127.3 đã release (PR #335), `8sync up` xong; :8740 trả UI 0.127.3 (nút Báo cáo trong hàng nút ô chat cả trên phone, hàng xuống 2 dòng < 640 px)
-- [ ] Owner chọn A (dựng lại lỗi 2 cảnh qua UI rồi sửa + test, ~20′) hay B (render lại qua UI, ~10′) cho lỗi mất tiếng `hq-demo.mp4`: content-post-agency đo file gốc 1080p, chỉ cảnh deck-0 còn lời + sfx, deck-1…6 mất mọi `<audio>` riêng; gốc chưa xác nhận (asset tiếng các cảnh sau không chép/nạp lúc render?). Kiểu dựng có sẵn trên app: Course Studio → "Demo sản phẩm"
-- [ ] Owner duyệt preset "Highlight Cam" (content-post-agency đề xuất: file mới `scenes/course/highlight-cam.ts`, bản 9:16, gắn /ad-frames + tab trend; không sửa recordly). Luật: 100% output tạo + UAT trên app, không script tay
+- [x] Owner "auto fix với cách tốt nhất" → giao content-post-agency (#6049, #6059): phương án A + Highlight Cam. Gốc mất tiếng cảnh 2+: bump `@hyperframes` 0.7.26 → 0.8.221 (181e9c73) làm producer cộng giờ bắt đầu scene vào `data-start` của media lồng; sửa `data-hf-media-start-basis=global` — PR 8syncdev/content-post-agency#122 (→ `win-dev`), đo qua UI 5 cảnh: giọng lệch ≤ 0.04 s, -14.1 LUFS (master -14 của app, giữ)
+- [ ] content-post-agency: merge #122 (ai `pnpm install` trên `win-dev` trước khi merge sẽ dính lỗi); PR tiếp: clip dài hơn lời → app tự cắt clip cho vừa lời (tăng tốc chỉ khi ≤ 1.25×), hết quãng lặng 4.8 s; quay lại demo HQ bằng Demo sản phẩm qua `localhost:8740` (không link public, không lộ token)
+- [ ] content-post-agency: preset "Highlight Cam" (`scenes/course/highlight-cam.ts`, 9:16, /ad-frames + tab trend; không sửa recordly). Luật: 100% output tạo + UAT trên app, không script tay
 - [x] 0065 đã áp vào `daily-dev.db` (content-post-agency, nhánh `wip/content-channels-snapshot` 2f3dc342, backup `daily-dev.db.bak-pre0065-1793925502904`); HQ :8740 kiểm: `channels0065: true`, 52 dòng kênh đều `scheduled`, #77–80 đủ 6 kênh (thêm TikTok/X)
 - [ ] Owner: #77–80 đã lên lịch trên 6 nền tảng khi còn `checked` → Duyệt, hoặc huỷ lịch trên từng nền tảng
 - [ ] Owner: ĐỪNG chạy `pnpm channels:tick` trên `daily-dev.db`: tick coi món không approved là "bỏ duyệt" → huỷ lịch thật. Vá 04239d99 chỉ bỏ qua kênh KHÔNG có driver (tiktok/x); FB/LinkedIn/Threads/YouTube có driver nên vẫn bị huỷ: tới 44 dòng (32 + 4 + 4 + 4) khi các món còn `checked`
@@ -28,7 +29,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-Không có worktree nào đang làm dở. Chờ owner: A/B cho lỗi tiếng demo, duyệt "Highlight Cam".
+Không có worktree su-code nào đang làm dở. Đang chờ content-post-agency gửi PR + số đo (#122 xong phần gốc; còn quãng lặng, demo HQ quay lại, Highlight Cam).
 
 ## Next
 - Đa kênh: đưa 0064 + 0065 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; thiết kế phân biệt "lịch tay chờ duyệt" với "bỏ duyệt" trong `channels:tick`.
