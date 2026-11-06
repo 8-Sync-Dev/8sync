@@ -2,8 +2,8 @@
 // started in another terminal, every session on Windows, every omp room).
 // The kit's Stop hook (`8sync ccc hook verify-stop`, crates/cli/src/verbs/hq.rs take_inbox)
 // hands them to Claude when the session ends its current turn: delivered once, masked, under one
-// short header naming the source and the room (`[8 Sync HQ · owner → omp core · C:\repo]`, from
-// `by` and `to`; a room's or HQ's own message: `[8 Sync HQ · phòng web → …]`, `tự động`).
+// short header naming the source and the room (`[owner → core · C:\repo]`, from `by` and `to`;
+// a room's or HQ's own message: `[phòng web → …]`, `[tự động → …]`).
 import fs from "node:fs";
 import path from "node:path";
 import { isOmpRoomId } from "../labels";

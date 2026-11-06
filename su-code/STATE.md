@@ -1,13 +1,16 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-06: HQ ô chat giữ trọn chiều ngang dưới phòng, Báo cáo là nút nhỏ cạnh Send mở hộp thoại lớn, cả phone (v0.127.2 + v0.127.3); sheet ngày của tab Nội dung dễ đọc hơn (v0.127.2). Luật bố cục ghi ở `su-code/PREFERENCES.md`.
+Owner 2026-11-06: HQ trên phone dùng được trọn: gợi ý `/` `@` không khuất, Nhật ký tới được bằng thanh "Chat · Nhật ký" (v0.127.4); video demo mới trên site/README; skill `hq-*` chuẩn; quyết định repo public hay private. Luật bố cục ghi ở `su-code/PREFERENCES.md`.
 
 ## Checklist
 - [x] v0.126.0 `--tailnet` + `--at-login` đã release (PR #328)
 - [x] v0.127.0: vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
 - [x] v0.127.0 đã release (PR #329)
 - [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
+- [ ] v0.127.4 (worktree `su-code-ps`, nhánh `feat/hq-phone-suggest`): gợi ý trong sheet phone, thanh Chat · Nhật ký, video demo 13 s, `hq.mjs` đọc tin đầy đủ; smoke dev :8791 ở 390 + 1440 xong, vitest 1012 pass
+- [x] Owner chốt: KHÔNG nhãn AI ở mọi nơi (voice/ảnh thật của owner + nhân viên) → đã giao content-post-agency (#6079): gỡ option/toggle, rule cứng + test, soát artifact đã có
+- [ ] Audit public/private repo 8-Sync-Dev/8sync (agent RepoVisibilityAudit) → báo owner
 - [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
 - [x] v0.127.3 đã release (PR #335), `8sync up` xong; :8740 trả UI 0.127.3 (nút Báo cáo trong hàng nút ô chat cả trên phone, hàng xuống 2 dòng < 640 px)
 - [x] Owner "auto fix với cách tốt nhất" → giao content-post-agency (#6049, #6059): phương án A + Highlight Cam. Gốc mất tiếng cảnh 2+: bump `@hyperframes` 0.7.26 → 0.8.221 (181e9c73) làm producer cộng giờ bắt đầu scene vào `data-start` của media lồng; sửa `data-hf-media-start-basis=global` — PR 8syncdev/content-post-agency#122 (→ `win-dev`), đo qua UI 5 cảnh: giọng lệch ≤ 0.04 s, -14.1 LUFS (master -14 của app, giữ)
@@ -29,14 +32,14 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-Không có worktree su-code nào đang làm dở. Đang chờ content-post-agency gửi PR + số đo (#122 xong phần gốc; còn quãng lặng, demo HQ quay lại, Highlight Cam).
+Đang ship v0.127.4 từ worktree `C:/Users/Projects/su-code-ps`. Chờ content-post-agency báo danh sách artifact đã gỡ nhãn AI.
 
 ## Next
 - Đa kênh: đưa 0064 + 0065 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; thiết kế phân biệt "lịch tay chờ duyệt" với "bỏ duyệt" trong `channels:tick`.
 - content-post-agency: `course_chat_messages` rowid 1, 2 mồ côi (thiếu `course_chat_sessions`), có từ trước 0065, chưa xử lý.
 - Đa kênh: tự động hoá trình duyệt trên LinkedIn/Threads trái điều khoản nền tảng (có thể bị hạn chế tài khoản), báo owner.
 - `--mode codex-cli`: engine kế tiếp (hiện báo "chưa hỗ trợ").
-- `aiLabel` của job ad-frames chưa nối vào `content_items`.
+- content-post-agency: xác nhận đã gỡ mọi nhãn AI (option, toggle nền tảng, caption/watermark) + test chặn tái xuất hiện (#6079).
 - Sửa gốc inbox phòng do Orca mở (KNOWLEDGE 2026-11-04).
 - `statusline::tests::chained_timeout_kills_group` flake Windows CI; đỏ lại thì `gh run rerun --failed`.
 - Link không cần đăng nhập lại khi tunnel restart cần host cố định (Cloudflare named tunnel); quick tunnel đổi host. VPS cũ đã huỷ.

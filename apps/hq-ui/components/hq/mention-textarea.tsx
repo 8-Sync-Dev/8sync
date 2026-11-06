@@ -130,39 +130,16 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
   }
 
   const optionClass = (i: number) => cn("flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs", i === active && "bg-accent text-accent-foreground");
+  // Above the box. On a phone the box sits in the composer dock, a scrolling sheet that clips an
+  // absolute popover at its top edge (owner 2026-11-06: "gợi ý bị khuất"), so there the list is in the
+  // flow above the box and the sheet grows; touch rows are taller.
+  const listClass =
+    "z-50 max-h-64 w-full overflow-y-auto rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md max-sm:mb-2 max-sm:max-h-[min(40dvh,18rem)] max-sm:[&_[role=option]]:min-h-10 sm:absolute sm:bottom-full sm:left-0 sm:mb-1 sm:max-w-md";
 
   return (
-    <div className="relative">
-      <Textarea
-        {...rest}
-        ref={inner}
-        value={value}
-        className={className}
-        role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        aria-activedescendant={open ? `${listId}-${active}` : undefined}
-        onChange={(e) => {
-          onValueChange(e.target.value);
-          sync(e.target.value, e.target.selectionStart ?? e.target.value.length);
-        }}
-        onKeyDown={keys}
-        onClick={(e) => sync(value, e.currentTarget.selectionStart ?? value.length)}
-        onBlur={() =>
-          setTimeout(() => {
-            setM(null);
-            setSl(null);
-          }, 120)
-        }
-      />
+    <div className="relative flex flex-col">
       {open && slash && sl && (
-        <ul
-          id={listId}
-          role="listbox"
-          aria-label="Lệnh"
-          className="absolute bottom-full left-0 z-50 mb-1 max-h-64 w-full max-w-md overflow-y-auto rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md"
-        >
+        <ul id={listId} role="listbox" aria-label="Lệnh" className={listClass}>
           <li aria-hidden className="px-2 py-1 font-mono text-[11px] text-muted-foreground">
             /{sl.prefix} · ↑↓ chọn · Enter/Tab · Esc đóng
           </li>
@@ -188,12 +165,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
         </ul>
       )}
       {open && !slash && m && (
-        <ul
-          id={listId}
-          role="listbox"
-          aria-label={`Tệp và thư mục trong ${m.dir || "./"}`}
-          className="absolute bottom-full left-0 z-50 mb-1 max-h-64 w-full max-w-md overflow-y-auto rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md"
-        >
+        <ul id={listId} role="listbox" aria-label={`Tệp và thư mục trong ${m.dir || "./"}`} className={listClass}>
           <li aria-hidden className="px-2 py-1 font-mono text-[11px] text-muted-foreground">
             @{m.dir || "./"} · ↑↓ chọn · Enter/Tab · ../ lên một cấp
           </li>
@@ -219,6 +191,29 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
           ))}
         </ul>
       )}
+      <Textarea
+        {...rest}
+        ref={inner}
+        value={value}
+        className={className}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open ? `${listId}-${active}` : undefined}
+        onChange={(e) => {
+          onValueChange(e.target.value);
+          sync(e.target.value, e.target.selectionStart ?? e.target.value.length);
+        }}
+        onKeyDown={keys}
+        onClick={(e) => sync(value, e.currentTarget.selectionStart ?? value.length)}
+        onBlur={() =>
+          setTimeout(() => {
+            setM(null);
+            setSl(null);
+          }, 120)
+        }
+      />
     </div>
   );
 });

@@ -61,11 +61,13 @@ export function turnsFrom(events: readonly ActivityEvent[], max = TURNS_MAX): Tu
 }
 
 /**
- * HQ's frame: the source line (`[8 Sync HQ · owner]`, `[8 Sync HQ · owner → omp core · C:\repo]`,
- * a room's `[8 Sync HQ · phòng web → …]` or HQ's own `[8 Sync HQ · tự động]`: lib/sender.ts), or the
- * lead-in older builds sent.
+ * HQ's frame: the source line (`[owner]`, `[owner → core · C:\repo]`, a room's `[phòng web → …]`,
+ * HQ's own `[tự động]` or an unverified line's `[chưa xác minh]`: crates/cli/src/verbs/hq.rs
+ * `header`, lib/sender.ts), or what older builds sent and old transcripts still hold: the
+ * `[8 Sync HQ · …]` line and, before it, the lead-in sentence.
  */
-const FRAME = /^(?:\[8 Sync HQ · [^\]\n]*\]|8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*)\n/;
+const FRAME =
+  /^(?:\[(?:owner|tự động|chưa xác minh|phòng [^\]\n]+?)(?: → [^\]\n]+)?\]|\[8 Sync HQ · [^\]\n]*\]|8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*)\n/;
 
 /** What the sender wrote in a prompt (or a timeline row): HQ's frame dropped. */
 export function promptBody(prompt: string): string {

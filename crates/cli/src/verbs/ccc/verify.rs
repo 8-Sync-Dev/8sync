@@ -362,7 +362,7 @@ mod tests {
         let v = json!({ "session_id": sid, "stop_hook_active": true, "last_assistant_message": "Done." });
         let out = owner_inbox(&v, &home).unwrap();
         let reason: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!((reason["decision"].as_str(), reason["reason"].as_str()), (Some("block"), Some("[8 Sync HQ · owner → Claude Code core · /r]\ndừng lại, review PR #24")), "{out}");
+        assert_eq!((reason["decision"].as_str(), reason["reason"].as_str()), (Some("block"), Some("[owner → core · /r]\ndừng lại, review PR #24")), "{out}");
         assert!(owner_inbox(&v, &home).is_none(), "consumed: no loop");
         let _ = std::fs::remove_dir_all(&home);
     }

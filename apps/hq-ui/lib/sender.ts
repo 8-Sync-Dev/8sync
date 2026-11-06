@@ -1,6 +1,6 @@
 // Who a message HQ hands to a room comes from. The room sees it as the header above the text
 // (crates/cli/src/verbs/hq.rs `header` for an inbox, `senderHeader` below for a typed one), and
-// only the owner header (`[8 Sync HQ · owner …]`) lets a `/solo`, `/autopilot`… grant merge and
+// only the owner header (`[owner]` / `[owner → …]`) lets a `/solo`, `/autopilot`… grant merge and
 // release (crates/cli/src/verbs/ccc/grant.rs). Default-deny: the owner is a request from HQ's own
 // page (UI_HEADER, which components/hq/use-hq.ts `makeApi` adds and hq-control's hq.mjs never
 // sends) made with the owner's login; a room's `hq.mjs send`, a guest, HQ's own timers and
@@ -31,7 +31,7 @@ export function senderRoom(s: unknown): string | null {
 /** The line a typed (tmux / channel) delivery starts with; null for the owner, whose words go in as typed. */
 export function senderHeader(s: Sender): string | null {
   if (s.by === "owner") return null;
-  return s.by === "auto" ? "[8 Sync HQ · tự động]" : `[8 Sync HQ · phòng ${s.room ?? "khác"}]`;
+  return s.by === "auto" ? "[tự động]" : `[phòng ${s.room ?? "khác"}]`;
 }
 
 /** `text` as a room receives it when HQ types it in, and as the timeline stores it. */

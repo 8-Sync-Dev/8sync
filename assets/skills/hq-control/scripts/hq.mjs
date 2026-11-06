@@ -1,55 +1,126 @@
 #!/usr/bin/env node
-// hq-control: drive the local 8 Sync HQ UI API (apps/hq-ui) from an agent.
-// Reads the UI token from ~/.config/8sync/hq/ui-token and never prints it.
-// Usage: node hq.mjs <ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9>
-//                     | artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>
-//                     | metrics add --content N --platform P [--url U] [--at T] [--reach --reactions --comments --shares --views N] [--session ID] | metrics ls [--content N]>
+// hq-control: drive the local 8 Sync HQ UI API (apps/hq-ui) from an agent. `node hq.mjs help` lists the commands.
+// Reads the UI token from ~/.config/8sync/hq/ui-token and never prints it. Lists are compact (one line each,
+// long text cut with a pointer); `--full` and `msg` print whole texts.
 // Permission prompts are read-only here: the owner taps Yes/No in the HQ UI. `answer` picks an
 // option of a room's question, and only when the owner told you which one in this turn.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const USAGE = `usage: node hq.mjs <command>
+  ls [--all]                         rooms, one line each (--all: ended ones too)
+  log <id> [n] [--full]              n latest steps of a room (default 20, max 200)
+  turns <id> [n] [--full]            n latest turns: prompt -> final reply (default 5, max 20)
+  msgs <id> [n] [--full]             n latest messages to/from a room (default 20, max 500)
+  msg <id> <messageId>               one message in full (messageId = #id of msgs)
+  send <id> <text...>                message a room (one whole message per send)
+  dialog <id> <permission|question>  read the dialog blocking a background Claude Code room
+  answer <id> <1-9>                  pick an option of the question just read with dialog
+  artifact add <file> [<file>...] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR]
+  artifact ls [n] [--session ID] [--content N]
+  artifact show <id>
+  metrics add --content N --platform P [--url U] [--at T] [--reach N] [--reactions N] [--comments N] [--shares N] [--views N] [--session ID]
+  metrics ls [--content N]
+env: HQ_UI_PORT (default 8740)`;
+
 const port = Number(process.env.HQ_UI_PORT || 8740);
 const base = `http://127.0.0.1:${port}`;
 const tokenFile = path.join(os.homedir(), ".config", "8sync", "hq", "ui-token");
 const dialogFile = (id) => path.join(os.tmpdir(), `hq-control-dialog-${id}.json`);
 const KEYS = Object.fromEntries([..."123456789"].map((d) => [d, d]));
+const TIMEOUT_MS = 60_000;
 
 function die(msg, code = 1) {
   console.error(`hq-control: ${msg}`);
   process.exit(code);
 }
 
-let token = "";
-try {
-  token = fs.readFileSync(tokenFile, "utf8").trim();
-} catch {
-  die(`no UI token at ${tokenFile}: start HQ with \`8sync hq ui\``);
+// Read on first call, so `help` and usage errors work while HQ is down.
+let token = null;
+function uiToken() {
+  if (token === null) {
+    try {
+      token = fs.readFileSync(tokenFile, "utf8").trim();
+    } catch {
+      token = "";
+    }
+    if (!token) die(`no UI token at ${tokenFile}: ask the owner to start HQ with \`8sync hq ui\``);
+  }
+  return token;
+}
+
+// What a failed call means for the agent, past the route's own error text.
+function hint(status, data) {
+  if (status === 401) return `the token in ${tokenFile} is not the one the HQ on ${base} uses (another HQ on this port, or HQ restarted): ask the owner to restart \`8sync hq ui\`, or set HQ_UI_PORT`;
+  if (status === 404 && !data.error) return "this HQ has no such route: it is older than this skill, ask the owner to run `8sync up`";
+  return "";
+}
+
+async function fetchHq(method, route, body) {
+  try {
+    return await fetch(base + route, {
+      method,
+      // The HQ refuses a mutating call without the UI's own Origin (lib/server/auth.ts checkAuth).
+      headers: { "x-hq-token": uiToken(), ...(method !== "GET" ? { origin: base } : {}), ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (e?.name === "TimeoutError") die(`HQ on ${base} did not answer ${method} ${route} within ${TIMEOUT_MS / 1000} s`);
+    die(`HQ is not answering on ${base}: ask the owner to start it with \`8sync hq ui\` (or set HQ_UI_PORT)`);
+  }
 }
 
 async function call(method, route, body) {
-  let res;
-  try {
-    res = await fetch(base + route, {
-      method,
-      headers: { "x-hq-token": token, ...(body ? { "content-type": "application/json", origin: base } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    die(`HQ is not answering on ${base}: start it with \`8sync hq ui\` (or set HQ_UI_PORT)`);
-  }
+  const res = await fetchHq(method, route, body);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) die(`${method} ${route} → ${res.status} ${data.error ?? ""}${data.dialog ? ` (dialog: ${JSON.stringify(data.dialog)})` : ""}`, 2);
+  if (!res.ok) {
+    const why = [data.error, data.dialog ? `dialog: ${JSON.stringify(data.dialog)}` : "", hint(res.status, data)].filter(Boolean).join(" · ");
+    die(`${method} ${route} → ${res.status} ${why || res.statusText}`, 2);
+  }
   return data;
 }
 
+/** A path as this machine's node sees it: `~` expanded; on Windows, Git Bash `/c/...` and WSL `/mnt/c/...` as `C:/...`. */
+function localPath(p) {
+  let s = String(p);
+  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) s = path.join(os.homedir(), s.slice(1));
+  if (process.platform === "win32") {
+    const m = /^\/(?:mnt\/)?([a-zA-Z])(\/.*)?$/.exec(s);
+    if (m) s = `${m[1].toUpperCase()}:${m[2] ?? "/"}`;
+  }
+  return path.resolve(s);
+}
+
 const one = (s, n = 160) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
-const need = (v, what) => v || die(`missing ${what}`);
+/** One line of `s`, cut at n with how much is left and where to read it whole. */
+const cut = (s, n, more) => {
+  const flat = String(s ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > n ? `${flat.slice(0, n)}… (+${flat.length - n} chars: ${more})` : flat;
+};
+const when = (ms) => (ms ? new Date(ms).toLocaleString("sv-SE").slice(5, 16) : "--");
+const need = (v, what) => v || die(`missing ${what}\n${USAGE}`);
+/** `n` within 1..max, else the default. */
+const count = (v, def, max) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, max) : def;
+};
 const [cmd, id, ...rest] = process.argv.slice(2);
 const enc = (v) => encodeURIComponent(v);
+const full = rest.includes("--full");
+const args = rest.filter((a) => a !== "--full");
+
+const msgFrom = (m) => `${m.from_name ?? m.from_ ?? "?"}→${m.to_name ?? m.to_ ?? "?"}`;
+const msgDelivery = (m) => `${m.delivery ?? "-"}${m.picked_up_at ? " picked" : ""}`;
+const msgHead = (m) => `#${m.id}\t${when(m.ts)}\t${msgFrom(m)}\t${m.kind}\t${msgDelivery(m)}`;
 
 switch (cmd) {
+  case "help":
+  case "--help":
+  case "-h":
+    console.log(USAGE);
+    break;
   case "ls": {
     const all = id === "--all";
     const { sessions } = await call("GET", "/api/sessions");
@@ -60,17 +131,44 @@ switch (cmd) {
     break;
   }
   case "log": {
-    const { events } = await call("GET", `/api/sessions/${enc(need(id, "session id"))}/activity?limit=${Number(rest[0]) || 20}`);
-    for (const e of events) console.log(one(JSON.stringify(e), 300));
+    // Server caps a step's text at 4 000 chars; a turn's final reply reads longer in `turns`.
+    const n = count(args[0], 20, 200);
+    const { events } = await call("GET", `/api/sessions/${enc(need(id, "session id"))}/activity?limit=${n}`);
+    for (const e of events) {
+      const head = `${when(e.at)}\t${e.kind}${e.tool ? `\t${e.tool}${e.status ? ` ${e.status}` : ""}` : ""}${e.error ? `\terror: ${one(e.error, 200)}` : ""}`;
+      console.log(full ? `${head}\n${e.text}\n` : `${head}\t${cut(e.text, 200, `log ${id} ${n} --full`)}`);
+    }
+    break;
+  }
+  case "turns": {
+    // Each turn: the prompt and the reply it ended with ("Kết quả"), up to 8 000 chars server side.
+    const n = count(args[0], 5, 20);
+    const { turns } = await call("GET", `/api/sessions/${enc(need(id, "session id"))}/activity?limit=1`);
+    for (const t of turns.slice(-n)) {
+      const head = `${when(t.at)}\t${t.live ? "live" : "done"}\t${t.steps} steps${t.errors ? ` · ${t.errors} errors` : ""}${t.agents ? ` · ${t.agents} agents` : ""}`;
+      const reply = t.output ?? (t.live ? "(no reply yet)" : "(no reply)");
+      if (full) console.log(`${head}\n> ${t.prompt ?? "(prompt before the log tail)"}\n${reply}\n`);
+      else console.log(`${head}\t${cut(t.prompt ?? "", 100, `turns ${id} ${n} --full`)}\t→ ${cut(reply, 200, `turns ${id} ${n} --full`)}`);
+    }
     break;
   }
   case "msgs": {
-    const { messages } = await call("GET", `/api/messages?session=${enc(need(id, "session id"))}&limit=${Number(rest[0]) || 20}`);
-    for (const m of messages) console.log(one(JSON.stringify(m), 300));
+    const n = count(args[0], 20, 500);
+    const { messages } = await call("GET", `/api/messages?session=${enc(need(id, "session id"))}&limit=${n}`);
+    for (const m of messages) console.log(full ? `${msgHead(m)}\n${m.text ?? ""}\n` : `${msgHead(m)}\t${cut(m.text, 200, `msg ${id} ${m.id}`)}`);
+    break;
+  }
+  case "msg": {
+    // No by-id route: the room's messages from that id on, newest 500, and pick it.
+    const mid = Number(need(args[0], "message id (#id column of `msgs`)").replace(/^#/, ""));
+    if (!Number.isInteger(mid) || mid < 1) die("message id: the number in the #id column of `msgs`");
+    const { messages } = await call("GET", `/api/messages?session=${enc(need(id, "session id"))}&after=${mid - 1}&limit=500`);
+    const m = messages.find((x) => x.id === mid) ?? die(`no message #${mid} in ${id} (or 500+ newer ones): see \`msgs ${id}\``, 2);
+    console.log(`${msgHead(m)}\n${m.text ?? ""}`);
     break;
   }
   case "send": {
-    // HQ delivers it under `[8 Sync HQ · phòng <from> → …]`, never the owner's header: a room's
+    // HQ delivers it under `[phòng <from> → …]`, never the owner's header (`[owner …]`): a room's
     // message is not the owner's prompt (no `/solo`, `/autopilot`… ship grant from it).
     const text = need(rest.join(" ").trim(), "message text");
     const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()) });
@@ -79,7 +177,7 @@ switch (cmd) {
   }
   case "dialog": {
     const kind = rest[0];
-    if (kind !== "permission" && kind !== "question") die("dialog kind: permission | question");
+    if (kind !== "permission" && kind !== "question") die("usage: dialog <id> <permission|question>");
     const r = await call("POST", `/api/sessions/${enc(need(id, "session id"))}/answer`, { kind, keys: [] });
     if (kind === "question") fs.writeFileSync(dialogFile(id), JSON.stringify({ kind, text: r.dialog.text }));
     console.log(JSON.stringify(r.dialog));
@@ -100,6 +198,7 @@ switch (cmd) {
     break;
   }
   case "artifact": {
+    const ARTIFACT_USAGE = "usage: artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>";
     // Flags take the next argument as their value; the rest are positional.
     const flags = {};
     const pos = [];
@@ -107,52 +206,54 @@ switch (cmd) {
       const m = /^--(title|note|session|content|link|for)$/.exec(rest[i]);
       // `--content ""` clears the links to content items; every other flag needs a value.
       if (m) flags[m[1]] = m[1] === "content" && rest[i + 1] === "" ? rest[++i] : need(rest[++i], `value for --${m[1]}`);
+      else if (rest[i].startsWith("--")) die(`unknown flag ${rest[i]}\n${ARTIFACT_USAGE}`);
       else pos.push(rest[i]);
     }
     // --for names the project the file is about (its artifact group), when it sits in another repo.
-    if (flags.for) flags.for = path.resolve(flags.for);
+    if (flags.for) flags.for = localPath(flags.for);
     if (id === "add") {
       // HQ takes an absolute path inside a project it knows; it keeps the path, never a copy. Several files
       // (the proof screenshots of one post) take the same flags: same --link = one report in the room's Báo cáo.
       need(pos[0], "file path");
       for (const p of pos) {
-        const r = await call("POST", "/api/artifacts", { path: path.resolve(p), ...flags });
+        const r = await call("POST", "/api/artifacts", { path: localPath(p), ...flags });
         const a = r.artifact;
         console.log(JSON.stringify({ id: a.id, created: r.created, title: a.title, kind: a.kind, project: a.for_project ?? a.project, size: a.size, content: a.content, link: a.link }));
       }
     } else if (id === "ls") {
-      const q = new URLSearchParams({ limit: String(Number(pos[0]) || 20) });
+      const q = new URLSearchParams({ limit: String(count(pos[0], 20, 500)) });
       if (flags.session) q.set("session", flags.session);
       if (flags.content) q.set("content", flags.content);
       const { artifacts } = await call("GET", `/api/artifacts?${q}`);
       for (const a of artifacts) console.log(`${a.id}\t${a.for_project ?? a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 80)}\t${a.path}${a.content?.length ? `\t#${a.content.join(",#")}` : ""}`);
     } else if (id === "show") {
       // Metadata from the list, then the bytes through HQ (by id, never by path). Text kinds print inline;
-      // image/video/pdf/html print where the file is, for the agent's own reader.
+      // other kinds print where the file is, for the agent's own reader.
       const aid = need(pos[0], "artifact id (first column of `artifact ls`)");
       const { artifacts } = await call("GET", "/api/artifacts?limit=500");
-      const a = artifacts.find((x) => x.id === aid) ?? die(`no artifact ${aid}: see \`artifact ls\``, 2);
-      console.log(`${a.id}\t${a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 120)}\t${a.path}${a.note ? `\nnote: ${one(a.note, 400)}` : ""}`);
+      const a = artifacts.find((x) => x.id === aid) ?? die(`no artifact ${aid} among the newest 500: see \`artifact ls\``, 2);
+      console.log(`${a.id}\t${a.for_project ?? a.project}\t${a.kind}\t${a.missing ? "MISSING" : (a.size ?? "")}\t${one(a.title, 120)}\t${a.path}${a.link ? `\nlink: ${a.link}` : ""}${a.note ? `\nnote: ${a.note}` : ""}`);
       if (a.missing) break;
       if (a.kind !== "markdown" && a.kind !== "text") {
         console.log(`(${a.kind}: open ${a.path} with your image/PDF reader, or in HQ tab Kết quả)`);
         break;
       }
-      const res = await fetch(`${base}/api/artifacts/${enc(a.id)}/file`, { headers: { "x-hq-token": token } }).catch(() => die(`HQ is not answering on ${base}`));
-      if (!res.ok) die(`GET /api/artifacts/${a.id}/file → ${res.status}`, 2);
+      const res = await fetchHq("GET", `/api/artifacts/${enc(a.id)}/file`);
+      if (!res.ok) die(`GET /api/artifacts/${a.id}/file → ${res.status} ${res.statusText}`, 2);
       const text = await res.text();
       const MAX = 40_000;
       console.log(text.length > MAX ? `${text.slice(0, MAX)}\n… (${text.length - MAX} more chars: read ${a.path})` : text);
-    } else die("artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id>");
+    } else die(ARTIFACT_USAGE);
     break;
   }
   case "metrics": {
+    const METRICS_USAGE = "usage: metrics add --content N --platform P [--url U] [--at T] [--reach N] [--reactions N] [--comments N] [--shares N] [--views N] [--session ID] | metrics ls [--content N]";
     // One reading of a published post. Each `add` is kept as its own snapshot (never overwritten);
     // Nội dung shows the newest per post and platform.
     const flags = {};
     for (let i = 0; i < rest.length; i++) {
       const m = /^--(content|platform|url|at|reach|reactions|comments|shares|views|session)$/.exec(rest[i]);
-      if (!m) die(`unknown argument ${rest[i]}`);
+      if (!m) die(`unknown argument ${rest[i]}\n${METRICS_USAGE}`);
       flags[m[1]] = need(rest[++i], `value for --${m[1]}`);
     }
     if (id === "add") {
@@ -163,9 +264,9 @@ switch (cmd) {
       const q = flags.content ? `?content=${enc(flags.content)}` : "";
       const { metrics } = await call("GET", `/api/content/metrics${q}`);
       for (const m of metrics) console.log(`#${m.content_id}\t${m.platform}\t${new Date(m.captured_at).toISOString()}\treach=${m.reach ?? "-"} reactions=${m.reactions ?? "-"} comments=${m.comments ?? "-"} shares=${m.shares ?? "-"} views=${m.views ?? "-"}\t${m.readings} lần\t${m.url ?? ""}`);
-    } else die("metrics add --content N --platform P [--url U] [--at T] [--reach N] [--reactions N] [--comments N] [--shares N] [--views N] [--session ID] | metrics ls [--content N]");
+    } else die(METRICS_USAGE);
     break;
   }
   default:
-    die("usage: hq.mjs ls [--all] | log <id> [n] | msgs <id> [n] | send <id> <text…> | dialog <id> <permission|question> | answer <id> <1-9> | artifact add <file> [<file>…] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR] | artifact ls [n] [--session ID] [--content N] | artifact show <id> | metrics add --content N --platform P [--url U] [--at T] [--reach N …] | metrics ls [--content N]");
+    die(cmd ? `unknown command ${cmd}\n${USAGE}` : USAGE);
 }
