@@ -94,3 +94,41 @@ export function treeListing(p: string, roots: string[] = cachedRoots(), home = o
   if (!dir) return null;
   return { path: dir, parent: treeParent(dir), roots, home, dirs: listTree(dir) };
 }
+
+/** Windows device names: `con`, `nul.txt`… cannot be folders there. */
+const RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
+
+/**
+ * Why `name` cannot be a new folder's name (one level, created by POST /api/tree), null when it can.
+ * The same rules on every OS, so a project made on one machine opens on the others.
+ */
+export function folderNameError(name: string): string | null {
+  if (!name.trim()) return "Nhập tên thư mục.";
+  if (name.length > 100) return "Tên dài quá 100 ký tự.";
+  if (name !== name.trim()) return "Tên không được có khoảng trắng ở đầu hay cuối.";
+  if (name === "." || name === "..") return "Tên này không dùng được.";
+  if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) return 'Tên không được chứa < > : " / \\ | ? * hay ký tự điều khiển.';
+  if (/\.$/.test(name)) return "Tên không được kết thúc bằng dấu chấm.";
+  if (RESERVED.test(name)) return "Windows giữ tên này cho thiết bị, chọn tên khác.";
+  return null;
+}
+
+export type MadeFolder = { ok: true; path: string } | { ok: false; error: string; status: number };
+
+/** A new empty folder `name` inside the existing folder `parent` (never more than one level, never over one that exists). */
+export function makeFolder(parent: string, name: string): MadeFolder {
+  const dir = resolveTreeDir(parent);
+  if (!dir) return { ok: false, error: "Thư mục cha không còn hoặc không đọc được.", status: 404 };
+  const why = folderNameError(name);
+  if (why) return { ok: false, error: why, status: 422 };
+  const target = path.join(dir, name);
+  try {
+    fs.mkdirSync(target);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return { ok: false, error: `Đã có ${name} trong thư mục này.`, status: 409 };
+    if (code === "EACCES" || code === "EPERM") return { ok: false, error: "Không có quyền tạo thư mục ở đây.", status: 403 };
+    return { ok: false, error: (e as Error).message, status: 500 };
+  }
+  return { ok: true, path: target };
+}

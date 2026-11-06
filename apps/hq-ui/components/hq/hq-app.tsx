@@ -24,6 +24,7 @@ import { cycleKey, groupSessions, type TreeSession } from "@/lib/session-tree";
 import { RoomBar, RoomBrief } from "./room-brief";
 import { RoomLogProvider } from "./room-outputs";
 import { RoomReport } from "./room-report";
+import { FilesPane, filesRootOf } from "./files-sheet";
 import type { PreviewState } from "./preview-view";
 import { FloatShell } from "./float-shell";
 import { useEdgeFade } from "./scroll-strip";
@@ -547,6 +548,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   bar={room && roomState ? <RoomBar room={room} n={roomState} token={token} onTerminal={openTerminal} /> : null}
                   split={room && roomState ? <RoomBrief room={room} n={roomState} now={office.office?.at ?? 0} token={token} onTerminal={openTerminal} /> : null}
                   report={room ? <RoomReport key={room.key} room={room} token={token} onOpenPost={openPost} onOpenFile={openArtifact} /> : null}
+                  files={room && filesRootOf(room) ? <FilesPane root={filesRootOf(room)!} token={token} /> : null}
                   header={
                     !(room && roomState) && loaded && !liveRooms.length ? (
                       <FirstRun state={firstRun} onAddProject={focusAddProject} onStartSession={focusStartSession} />

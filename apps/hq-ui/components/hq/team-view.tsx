@@ -26,6 +26,7 @@ import { MentionTextarea } from "./mention-textarea";
 import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
 import { ReportSplit } from "./room-report";
+import { FilesPaneCtx, useFilesPaneState } from "./files-sheet";
 import { TurnLink } from "./room-outputs";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { withQuote } from "@/lib/ask-quote";
@@ -48,6 +49,7 @@ export function TeamView({
   bar,
   report,
   onStartSession,
+  files,
 }: {
   hq: Hq;
   messages: Message[];
@@ -70,6 +72,12 @@ export function TeamView({
   report?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
   onStartSession?: () => void;
+  /**
+   * Chat phòng's "Thư mục" (files-sheet FilesPane): on a wide screen a pane at the right, full height
+   * beside the room, opened by the bar's "Thư mục" button and its width dragged (kept per browser);
+   * on a phone the button opens a sheet instead.
+   */
+  files?: ReactNode;
 }) {
   const groups = useMemo(() => {
     const out: { day: string; rows: Message[] }[] = [];
@@ -94,6 +102,9 @@ export function TeamView({
 
   const mobile = useIsMobile();
   const layout = useDefaultLayout({ id: "hq-room-columns", panelIds: ["chat", "brief"] });
+  const filesPane = useFilesPaneState();
+  const sidePane = !!files && !mobile && filesPane.open;
+  const filesLayout = useDefaultLayout({ id: "hq-room-files", panelIds: sidePane ? ["room", "files"] : ["room"] });
   // Phone: the brief (or header), then Báo cáo, scroll with the chat.
   const head = mobile ? (split ?? header) : header;
   const top = mobile && report ? (
@@ -143,44 +154,60 @@ export function TeamView({
     </Conversation>
   );
 
-  // Its own full-width row under the split (the split is chat | Nhật ký only); centred on one column.
+  // The message box sits under the chat column only, centred at the chat's width (owner 2026-11-06:
+  // "width ô chat bị hơi dài"); Nhật ký runs the full height beside it.
   const wide = !!split && !mobile;
   const composer =
     messageTargets(sessions).length === 0 ? (
       <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
     ) : (
-      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} />
+      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
     );
 
-  const body = (
+  const body = wide ? (
+    <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+      <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
+        {chat}
+        {composer}
+      </ResizablePanel>
+      <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
+      <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
+        <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  ) : (
     <>
-      {wide ? (
-        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
-          <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
-            {chat}
-          </ResizablePanel>
-          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
-          <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
-            <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      ) : (
-        chat
-      )}
+      {chat}
       {composer}
     </>
   );
+  const main = report && !mobile ? <ReportSplit pane={report}>{body}</ReportSplit> : body;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
-      {bar && (
-        <div className="shrink-0 border-b bg-background">
-          <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
-        </div>
-      )}
-      {report && !mobile ? <ReportSplit pane={report}>{body}</ReportSplit> : body}
-    </div>
+    <FilesPaneCtx.Provider value={files && !mobile ? filesPane : null}>
+      <div className="flex h-full min-h-0 flex-col">
+        {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
+        {bar && (
+          <div className="shrink-0 border-b bg-background">
+            <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
+          </div>
+        )}
+        {/* Always the same group around the room: opening Thư mục adds a panel, never remounts the chat (draft, scroll). */}
+        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={filesLayout.defaultLayout} onLayoutChanged={filesLayout.onLayoutChanged}>
+          <ResizablePanel id="room" minSize="35" className="flex min-h-0 flex-col">
+            {main}
+          </ResizablePanel>
+          {sidePane && (
+            <>
+              <ResizableHandle withHandle aria-label="Kéo để đổi chiều rộng Thư mục" />
+              <ResizablePanel id="files" defaultSize="42" minSize="22" maxSize="65" className="min-h-0">
+                {files}
+              </ResizablePanel>
+            </>
+          )}
+        </ResizablePanelGroup>
+      </div>
+    </FilesPaneCtx.Provider>
   );
 }
 
@@ -359,14 +386,11 @@ function Composer({
   sessions,
   target,
   onTarget,
-  wide = false,
 }: {
   hq: Hq;
   sessions: Session[];
   target: string | null;
   onTarget: (s: string) => void;
-  /** Under the chat | Nhật ký split: spans both columns instead of one centred chat column. */
-  wide?: boolean;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -467,7 +491,7 @@ function Composer({
         return (
           <div className="shrink-0 border-t bg-background">
             <form
-              className={cn("mx-auto w-full px-4 py-3 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}
+              className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();

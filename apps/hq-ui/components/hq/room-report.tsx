@@ -5,11 +5,12 @@
 // (files with the same --link fold together), with the open button, proof thumbnails, note and the
 // Nội dung posts it is about. Wide screen: a bottom split, dragged taller or folded to its title row
 // (the size, folded or not, kept per browser). Phone: a section in the room's scroll.
-import { ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, EyeIcon, FileIcon, MegaphoneIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, EyeIcon, FileIcon, Maximize2Icon, MegaphoneIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { usePanelRef, useDefaultLayout } from "react-resizable-panels";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { artifactFileUrl, baseName, KIND_LABEL, openLabel, reportsOf, roomRefs, type ArtifactView, type Report } from "@/lib/artifacts";
 import { dayKey, STATUS_LABEL, whenOf, type ContentRow } from "@/lib/content";
@@ -104,7 +105,10 @@ function useFold(): Pane {
 
 type Scope = "room" | "project";
 
-/** The room's reports, newest first; "Cả dự án" switches to every report about the room's project. */
+/**
+ * The room's reports, newest first; "Cả dự án" switches to every report about the room's project.
+ * "Mở lớn" shows the same list in a wide dialog (bigger proofs), the pane staying as it was.
+ */
 export function RoomReport({ room, token, onOpenPost, onOpenFile }: { room: Room; token: string; onOpenPost: (id: number, day: string | null) => void; onOpenFile: (id: string) => void }) {
   const api = useMemo(() => makeApi(token), [token]);
   const split = useContext(PaneCtx);
@@ -112,6 +116,7 @@ export function RoomReport({ room, token, onOpenPost, onOpenFile }: { room: Room
   const { folded, toggle } = split ?? phone;
   const root = room.project?.root ?? null;
   const [scope, setScope] = useState<Scope>("room");
+  const [big, setBig] = useState(false);
   const cur: Scope = scope === "project" && root ? "project" : "room";
   const refs = roomRefs(room);
   const q = new URLSearchParams({ limit: String(LIST_MAX) });
@@ -129,6 +134,54 @@ export function RoomReport({ room, token, onOpenPost, onOpenFile }: { room: Room
   // When the list was read: its "x phút trước" labels move with each poll.
   const now = list.at;
 
+  const scopes = root && (
+    <ButtonGroup aria-label="Báo cáo của" className="shrink-0">
+      {(
+        [
+          ["room", "Phòng này"],
+          ["project", "Cả dự án"],
+        ] as const
+      ).map(([s, label]) => (
+        <Button key={s} type="button" size="sm" variant={cur === s ? "secondary" : "outline"} aria-pressed={cur === s} className={cn("h-7 text-xs", TOUCH)} onClick={() => setScope(s)}>
+          {label}
+        </Button>
+      ))}
+    </ButtonGroup>
+  );
+  // Opening a post or a file leaves the room view: the dialog closes first.
+  const listOf = (large: boolean) =>
+    list.error && !list.data ? (
+      <ErrorNote what="báo cáo" error={list.error} onRetry={list.reload} />
+    ) : !on || (list.data && reports.length === 0) ? (
+      <p className="py-2 text-xs text-pretty text-muted-foreground">
+        {cur === "project" ? "Dự án này chưa có báo cáo nào." : "Phòng này chưa báo cáo bài nào."} Đăng xong hay lên lịch xong một bài, phòng chạy{" "}
+        <code className="font-mono text-[11px] text-foreground">/hq-artifact add &lt;ảnh chứng minh&gt; --link &lt;link Meta&gt; --note &lt;trạng thái, giờ lên, số liệu&gt; --session &lt;id phòng&gt;</code> và bài hiện ở đây.
+      </p>
+    ) : (
+      <ol aria-label="Báo cáo, mới nhất trước" className="divide-y">
+        {reports.map((r) => (
+          <ReportRow
+            key={r.key}
+            r={r}
+            now={now}
+            token={token}
+            api={api}
+            posts={posts}
+            large={large}
+            onShow={setShown}
+            onOpenPost={(id, day) => {
+              setBig(false);
+              onOpenPost(id, day);
+            }}
+            onOpenFile={(id) => {
+              setBig(false);
+              onOpenFile(id);
+            }}
+          />
+        ))}
+      </ol>
+    );
+
   return (
     <section aria-labelledby="room-report-title" className={cn("flex min-h-0 flex-col bg-background", split ? "h-full" : "mt-6 rounded-xl border")}>
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3 sm:px-4">
@@ -144,40 +197,40 @@ export function RoomReport({ room, token, onOpenPost, onOpenFile }: { room: Room
           <span id="room-report-title">Báo cáo</span>
           {reports.length > 0 && <span className="text-xs font-normal text-muted-foreground tabular-nums">{reports.length}</span>}
         </button>
-        <span className="truncate text-xs text-muted-foreground max-md:hidden">bài đã đăng / lên lịch: link, ảnh chứng minh, ghi chú</span>
-        {root && !folded && (
-          <ButtonGroup aria-label="Báo cáo của" className="ml-auto shrink-0">
-            {(
-              [
-                ["room", "Phòng này"],
-                ["project", "Cả dự án"],
-              ] as const
-            ).map(([s, label]) => (
-              <Button key={s} type="button" size="sm" variant={cur === s ? "secondary" : "outline"} aria-pressed={cur === s} className={cn("h-7 text-xs", TOUCH)} onClick={() => setScope(s)}>
-                {label}
-              </Button>
-            ))}
-          </ButtonGroup>
-        )}
+        <span className="min-w-0 truncate text-xs text-muted-foreground max-md:hidden">bài đã đăng / lên lịch: link, ảnh chứng minh, ghi chú</span>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {!folded && scopes}
+          <Button type="button" size="sm" variant="ghost" className={cn("h-7 gap-1 px-2 text-xs", TOUCH)} onClick={() => setBig(true)} aria-haspopup="dialog" title="Mở Báo cáo cỡ lớn">
+            <Maximize2Icon aria-hidden className="size-3.5" />
+            <span className="max-sm:sr-only">Mở lớn</span>
+          </Button>
+        </div>
       </div>
       {!folded && (
         <div id="room-report-list" className={cn("min-h-0 px-3 py-2 sm:px-4", split && "flex-1 overflow-y-auto")}>
-          {list.error && !list.data ? (
-            <ErrorNote what="báo cáo" error={list.error} onRetry={list.reload} />
-          ) : !on || (list.data && reports.length === 0) ? (
-            <p className="py-2 text-xs text-pretty text-muted-foreground">
-              {cur === "project" ? "Dự án này chưa có báo cáo nào." : "Phòng này chưa báo cáo bài nào."} Đăng xong hay lên lịch xong một bài, phòng chạy{" "}
-              <code className="font-mono text-[11px] text-foreground">/hq-artifact add &lt;ảnh chứng minh&gt; --link &lt;link Meta&gt; --note &lt;trạng thái, giờ lên, số liệu&gt; --session &lt;id phòng&gt;</code> và bài hiện ở đây.
-            </p>
-          ) : (
-            <ol aria-label="Báo cáo, mới nhất trước" className="divide-y">
-              {reports.map((r) => (
-                <ReportRow key={r.key} r={r} now={now} token={token} api={api} posts={posts} onShow={setShown} onOpenPost={onOpenPost} onOpenFile={onOpenFile} />
-              ))}
-            </ol>
-          )}
+          {listOf(false)}
         </div>
       )}
+      <Dialog open={big} onOpenChange={setBig}>
+        <DialogContent className="flex h-[min(88dvh,60rem)] w-full flex-col gap-0 p-0 sm:max-w-[min(72rem,calc(100%-4rem))]">
+          <DialogHeader className="shrink-0 flex-row items-center gap-3 border-b px-5 py-3 pr-14 text-left">
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <MegaphoneIcon aria-hidden className="size-4 text-muted-foreground" />
+                Báo cáo
+                {reports.length > 0 && <span className="text-sm font-normal text-muted-foreground tabular-nums">{reports.length}</span>}
+              </DialogTitle>
+              <DialogDescription className="truncate text-xs">
+                {cur === "project" ? `Cả dự án ${room.project?.name ?? ""}`.trim() : `Phòng ${room.label || room.name}`}: bài đã đăng / lên lịch, link, ảnh chứng minh, ghi chú
+              </DialogDescription>
+            </div>
+            {scopes}
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2">
+            <div className="mx-auto w-full max-w-5xl">{listOf(true)}</div>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Lightbox token={token} shown={shown} onClose={() => setShown(null)} />
     </section>
   );
@@ -189,6 +242,7 @@ function ReportRow({
   token,
   api,
   posts,
+  large = false,
   onShow,
   onOpenPost,
   onOpenFile,
@@ -198,15 +252,17 @@ function ReportRow({
   token: string;
   api: Api;
   posts: Map<number, ContentRow>;
+  /** In the "Mở lớn" dialog: roomier rows and proofs big enough to read. */
+  large?: boolean;
   onShow: (s: Shown) => void;
   onOpenPost: (id: number, day: string | null) => void;
   onOpenFile: (id: string) => void;
 }) {
   return (
-    <li className="space-y-1.5 py-2.5">
+    <li className={cn("space-y-1.5", large ? "py-4" : "py-2.5")}>
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-pretty">{r.title}</p>
+          <p className={cn("font-medium text-pretty", large ? "text-base" : "text-sm")}>{r.title}</p>
           <p className="text-xs text-muted-foreground">
             <time dateTime={new Date(r.at).toISOString()} title={new Date(r.at).toLocaleString("vi-VN")}>
               {agoVi(r.at, now)}
@@ -258,9 +314,9 @@ function ReportRow({
         </ul>
       )}
       {r.proofs.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className={cn("flex flex-wrap", large ? "gap-3" : "gap-2")}>
           {r.proofs.map((a) => (
-            <UploadThumb key={a.id} token={token} file={{ id: a.id, name: a.title, url: artifactFileUrl(a.id) }} onOpen={onShow} className="aspect-[4/3] w-28 sm:w-32" />
+            <UploadThumb key={a.id} token={token} file={{ id: a.id, name: a.title, url: artifactFileUrl(a.id) }} onOpen={onShow} className={large ? "aspect-[4/3] w-48 sm:w-64" : "aspect-[4/3] w-28 sm:w-32"} />
           ))}
         </div>
       )}

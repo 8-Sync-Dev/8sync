@@ -5,6 +5,18 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.127.0] — 2026-11-06
+
+### Added
+- HQ phòng: "Thư mục" thành pane cạnh phòng (kiểu IDE), cao hết phòng, kéo rộng/hẹp được (22–65%), nhớ trạng thái mở trên trình duyệt; cây + file tự xếp theo bề rộng pane (container query). Điện thoại giữ sheet như cũ. Bật/tắt pane không dựng lại khung chat (nháp và vị trí cuộn còn nguyên).
+- HQ "Báo cáo": nút "Mở lớn" mở báo cáo trong hộp thoại lớn (cùng phạm vi Phòng này / Cả dự án, ảnh to hơn); mở bài hay file từ đó thì hộp thoại tự đóng.
+- HQ "Chọn thư mục": nút "Thư mục mới…" (ở danh sách dự án và khi duyệt thư mục) tạo một thư mục dự án trống ngay trong thư mục đang xem, mặc định `git init`, rồi chọn luôn cho phiên mới. Tên kiểm theo luật chung mọi OS (ký tự cấm, tên thiết bị Windows, dấu chấm cuối…); trùng tên báo ngay dưới ô. API `POST /api/tree` (chỉ chủ).
+- HQ sidebar: branch của từng phiên, như Orca. Nhóm "Dự án" giờ gom mọi git worktree của repo (cả thư mục anh em như `su-code-panes` của `su-code`, trước là một dự án riêng) và chia phiên theo branch: worktree chính trước (nhãn "chính"), rồi worktree phụ theo thứ tự phiên đầu tiên; header = branch (detached: `HEAD @ <sha7>`), tên thư mục khi khác branch, số phiên; "⋯" của worktree phụ có Tổng quan worktree và Xóa worktree. Worktree không có phiên nằm sau một dòng "N worktree không có phiên" (gập mặc định). Nhóm theo trạng thái / không nhóm: branch hiện mờ trên dòng phiên. Dữ liệu từ `GET /api/projects/branches` (`git worktree list --porcelain`, cache 20 s). Bỏ glyph worktree trên dòng phiên.
+- HQ "Nội dung" theo nền tảng (chủ 06/11: tối thiểu 10 bài mỗi nền tảng mỗi ngày): khung ngày đếm bài từng nền tảng `n/10` kèm "Đủ"/"Thiếu n" (chữ + icon), bấm một nền tảng để xem khung tách theo nền tảng; lọc "Nền tảng" và "Lên lịch" trên thanh lọc. Mỗi bài có chip "Đã lên lịch x/y kênh" (kênh `scheduled` hoặc `published` trên số kênh của bài), có trong chú giải, lịch và danh sách. Thêm kênh TikTok, X, Instagram, Zalo: DB chưa có migration 0065 (CHECK `content_channel_posts.channel`) thì HQ không cho thêm các kênh này và báo lý do; dòng kênh lạ không làm vỡ danh sách.
+
+### Changed
+- HQ phòng: ô chat nằm trong cột chat, rộng tối đa `max-w-3xl` và canh giữa, không còn kéo dài theo cả phòng; Nhật ký chạy hết chiều cao bên cạnh.
+
 ## [0.126.0] — 2026-11-06
 
 ### Added

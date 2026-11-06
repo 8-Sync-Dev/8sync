@@ -3,9 +3,10 @@
 // The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
 // approve (the owner's also sends the posting task to the chosen session), inline caption / time
 // edits, the channels (0064) with a caption and a post status each, the optional AI-label answer and
-// "Giao việc". Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the owner
-// can share or come back.
-import { AlertTriangleIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, Maximize2Icon, PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
+// "Giao việc". Its header counts the day's posts per platform against the target and splits the
+// sheet by platform. Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the
+// owner can share or come back.
+import { AlertTriangleIcon, CalendarCheckIcon, CalendarClockIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, Maximize2Icon, PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -27,11 +28,16 @@ import {
   fromLocalInput,
   GUEST_DROPBACK_FIELDS,
   GUEST_DROPBACK_NOTE,
+  isChannel0065,
+  NO_CHANNELS_0065,
   NO_SCHEDULE,
+  PLATFORM_DAILY_TARGET,
   nextStatuses,
   stepHint,
   parseDay,
+  scheduledOf,
   STATUS_LABEL,
+  targetState,
   timeOf,
   toLocalInput,
   unapprovedLive,
@@ -44,6 +50,7 @@ import {
   type ContentRow,
   type ContentTextField,
   type AssignPref,
+  type PlatformCounts,
 } from "@/lib/content";
 import { atLeast, GUEST_AWAITS_APPROVAL } from "@/lib/access";
 import { bytes } from "@/lib/disk";
@@ -70,6 +77,10 @@ export function ContentSheet({
   day,
   item,
   items,
+  platform,
+  onPlatform,
+  counts,
+  channels0065,
   schedule,
   assign,
   api,
@@ -86,8 +97,15 @@ export function ContentSheet({
   /** null = closed. */
   day: string | null;
   item: number | null;
-  /** That day's items, in time order. */
+  /** That day's items, in time order (only those going out on `platform` when one is picked). */
   items: ContentRow[];
+  /** The platform the sheet is split by; null = all. */
+  platform: Channel | null;
+  onPlatform: (c: Channel | null) => void;
+  /** The day's posts per platform (`platformDays`); null for the items with no time yet. */
+  counts: PlatformCounts | null;
+  /** Migration 0065 is in: TikTok / X / Instagram / Zalo can be picked. */
+  channels0065: boolean;
   schedule: boolean;
   /** The saved default session for "Duyệt" (GET /api/content `assign`). */
   assign: AssignPref | null;
@@ -113,8 +131,10 @@ export function ContentSheet({
           <SheetTitle className="text-base">{day ? dayTitle(day) : ""}</SheetTitle>
           <SheetDescription className="text-xs">
             {items.length ? `${items.length} bài` : "Không có bài nào"}
+            {platform && ` trên ${CHANNEL_LABEL[platform]}`}
             {!schedule && ` · ${NO_SCHEDULE}`}
           </SheetDescription>
+          <PlatformBar counts={counts} platform={platform} onPlatform={onPlatform} />
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {items.length === 0 ? (
@@ -133,6 +153,7 @@ export function ContentSheet({
                       patch={patch}
                       error={errors[it.id]}
                       schedule={schedule}
+                      channels0065={channels0065}
                       assign={assign}
                       onCollapse={items.length > 1 ? () => onItem(null) : undefined}
                       reload={reload}
@@ -180,6 +201,7 @@ function ItemLine({ it, results = NO_RESULTS }: { it: ContentRow; results?: Resu
         </span>
       )}
       <ResultMark arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} />
+      <ScheduledChip it={it} compact />
       <span className={cn("shrink-0 text-xs", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</span>
     </span>
   );
@@ -203,6 +225,7 @@ function ItemDetail({
   patch,
   error,
   schedule,
+  channels0065,
   assign,
   onCollapse,
   reload,
@@ -216,6 +239,7 @@ function ItemDetail({
   patch: Patch;
   error: string | undefined;
   schedule: boolean;
+  channels0065: boolean;
   assign: AssignPref | null;
   onCollapse?: () => void;
   reload: () => void;
@@ -440,7 +464,7 @@ function ItemDetail({
         )}
         {it.channels !== undefined && (
           <Field label="Kênh">
-            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} canRetry={owner} />
+            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} canRetry={owner} wide={channels0065} />
           </Field>
         )}
         <Field label={it.channels !== undefined ? "Caption chung" : "Caption"}>
@@ -525,8 +549,11 @@ function ItemDetail({
   );
 }
 
-/** "Kênh": which platforms get the item, each with its caption and how its post stands. */
-function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean }) {
+/**
+ * "Kênh": which platforms get the item, each with its caption and how its post stands. Before
+ * migration 0065 (`wide` false) TikTok / X / Instagram / Zalo cannot be added (one already on stays removable).
+ */
+function ChannelsBox({ it, patch, onEdit, canEdit, canRetry, wide }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean; wide: boolean }) {
   const selected = it.channels ?? [];
   const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
   const [busy, setBusy] = useState(false);
@@ -546,13 +573,14 @@ function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow;
         {CHANNELS.map((ch) => {
           const on = selected.includes(ch);
           const last = on && selected.length === 1;
+          const locked = !wide && !on && isChannel0065(ch);
           return (
             <button
               key={ch}
               type="button"
               aria-pressed={on}
-              disabled={!canEdit || busy || last}
-              title={last ? "Cần ít nhất một kênh" : undefined}
+              disabled={!canEdit || busy || last || locked}
+              title={last ? "Cần ít nhất một kênh" : locked ? NO_CHANNELS_0065 : undefined}
               onClick={() => void toggle(ch)}
               className={cn(
                 "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed max-sm:min-h-11 motion-reduce:transition-none",
@@ -565,10 +593,80 @@ function ChannelsBox({ it, patch, onEdit, canEdit, canRetry }: { it: ContentRow;
           );
         })}
       </div>
+      {!wide && canEdit && <p className="text-[11px] text-muted-foreground">{NO_CHANNELS_0065}.</p>}
       {selected.map((ch) => (
         <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} canRetry={canRetry} />
       ))}
     </div>
+  );
+}
+
+/**
+ * The day's posts per platform against `PLATFORM_DAILY_TARGET` ("Đủ" / "Thiếu n", with an icon), each
+ * a toggle that splits the sheet by that platform. `counts` null (items with no time): toggles only.
+ */
+function PlatformBar({ counts, platform, onPlatform }: { counts: PlatformCounts | null; platform: Channel | null; onPlatform: (c: Channel | null) => void }) {
+  const pill =
+    "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] whitespace-nowrap tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none";
+  const tone = (on: boolean) => (on ? "border-primary bg-primary/10 text-foreground" : "border-border hover:bg-accent/50");
+  return (
+    <div role="group" aria-label="Xem theo nền tảng" className="mt-2 flex flex-wrap gap-1.5">
+      <button type="button" aria-pressed={platform === null} onClick={() => onPlatform(null)} className={cn(pill, TOUCH, tone(platform === null))}>
+        Tất cả
+      </button>
+      {CHANNELS.map((ch) => {
+        const c = counts?.[ch];
+        const t = c ? targetState(c.planned) : null;
+        const on = platform === ch;
+        return (
+          <button
+            key={ch}
+            type="button"
+            aria-pressed={on}
+            aria-label={c && t ? `${CHANNEL_LABEL[ch]}: ${c.planned}/${PLATFORM_DAILY_TARGET} bài, ${t.text}, ${c.scheduled} đã lên lịch` : CHANNEL_LABEL[ch]}
+            title={c ? `${CHANNEL_LABEL[ch]}: ${c.planned}/${PLATFORM_DAILY_TARGET} bài trong ngày, ${c.scheduled} đã lên lịch hoặc đã đăng` : CHANNEL_LABEL[ch]}
+            onClick={() => onPlatform(on ? null : ch)}
+            className={cn(pill, TOUCH, tone(on))}
+          >
+            <span className="font-medium">{CHANNEL_SHORT[ch]}</span>
+            {c && t && (
+              <>
+                <span>
+                  {c.planned}/{PLATFORM_DAILY_TARGET}
+                </span>
+                <span className={cn("inline-flex items-center gap-0.5", t.met ? "text-st-running" : "text-st-needs")}>
+                  {t.met ? <CheckIcon aria-hidden className="size-3" /> : <AlertTriangleIcon aria-hidden className="size-3" />}
+                  {t.text}
+                </span>
+              </>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * "Đã lên lịch x/y kênh": of the item's channels, those scheduled or already posted (`scheduledOf`).
+ * Nothing before 0064. `compact`: the words hide on a phone, the numbers stay.
+ */
+export function ScheduledChip({ it, compact = false }: { it: ContentRow; compact?: boolean }) {
+  const s = scheduledOf(it);
+  if (!s || s.total === 0) return null;
+  const full = s.done === s.total;
+  const Icon = full ? CalendarCheckIcon : CalendarClockIcon;
+  const words = compact ? "max-sm:sr-only" : undefined;
+  return (
+    <span
+      className={cn("inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] whitespace-nowrap tabular-nums", full ? "border-st-running/40 text-st-running" : "text-muted-foreground")}
+      title={`Đã lên lịch ${s.done}/${s.total} kênh (đã lên lịch hoặc đã đăng trên nền tảng)`}
+    >
+      <Icon aria-hidden className="size-3" />
+      <span className={words}>Đã lên lịch </span>
+      {s.done}/{s.total}
+      <span className={words}> kênh</span>
+    </span>
   );
 }
 

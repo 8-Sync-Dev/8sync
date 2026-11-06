@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { branchIndex, dirOf, folderNote, groupBranches, homeOf, shownOrder, spotOf, type WorktreeSpot } from "@/lib/branches";
 import { agoShort } from "@/lib/now";
 import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, moveKey, orderGroups, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
 import { groupKey, sidebarGroups, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
@@ -59,7 +60,7 @@ import { MORE_LABEL, MORE_TABS, moreTabs } from "@/lib/tabs";
 import { cn } from "@/lib/utils";
 import { ErrorNote } from "./bits";
 import { BrandMark } from "./brand-mark";
-import { CloseDialog, OmpDeleteDialog, ProjectDeleteDialog, RoomEndDialog, WorktreeDialog, useWorktreeKeys, type Confirm } from "./nav-actions";
+import { CloseDialog, OmpDeleteDialog, ProjectDeleteDialog, RoomEndDialog, WorktreeDialog, useBranches, useWorktreeKeys, type Confirm } from "./nav-actions";
 import { useArchive, useTreeOrder, useTreePrefs, useUnread, type SessionTree } from "./use-session-tree";
 import type { Hq, Live } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
@@ -156,33 +157,50 @@ export function Nav({
   }, [data, overlay]);
   const [showing, setShowing] = useState<string | null>(null);
 
+  // Git's worktrees of every known project (null until the first answer: no branch headers yet),
+  // asked again from git when the sessions' folders change.
+  const dirs = useMemo(() => [...new Set(tree.sessions.map((s) => groupKey(dirOf(s) ?? "")))].sort().join("\n"), [tree.sessions]);
+  const repos = useBranches(hq.api, dirs);
+  const branches = useMemo(() => (repos ? branchIndex(repos) : null), [repos]);
+
   // A hidden project comes back by itself on new activity or when a session waits on the owner.
+  // A session in a linked worktree hides with its repo's project too (it shows under it).
   const hiddenAt = useMemo(() => new Map(hidden.map((h) => [h.key, h.hidden_at])), [hidden]);
   const isHidden = (s: TreeSession) => {
-    const at = s.root ? hiddenAt.get(groupKey(s.root)) : undefined;
+    const at = (s.root ? hiddenAt.get(groupKey(s.root)) : undefined) ?? hiddenAt.get(homeOf(s, branches).key);
     return at != null && s.state !== "needs" && (s.at ?? 0) <= at;
   };
   const q = query ? fold(query.trim()) : "";
-  const visible = tree.sessions.filter((s) => !archive.keys.includes(s.key) && !isHidden(s) && (!q || fold(`${s.title} ${s.name} ${s.folder}`).includes(q)));
+  const visible = tree.sessions.filter(
+    (s) => !archive.keys.includes(s.key) && !isHidden(s) && (!q || fold(`${s.title} ${s.name} ${s.folder} ${spotOf(dirOf(s), branches)?.label ?? ""}`).includes(q)),
+  );
   const stored = tree.sessions.filter((s) => archive.keys.includes(s.key));
-  // Folders added in HQ with no session yet: a heading with "+" to start one there.
+  // Folders added in HQ with no session yet: a heading with "+" to start one there. A linked worktree
+  // of a repo already on screen is not one: it is listed under that repo's branches.
   const groups = useMemo(() => {
-    const gs = groupSessions(visible, prefs.group, prefs.sort, order);
+    const gs = groupSessions(visible, prefs.group, prefs.sort, order, branches);
     if (prefs.group !== "project" || q) return gs;
+    const onScreen = (p: string) => gs.some((g) => g.root && groupKey(g.root) === groupKey(p));
     const extra: TreeGroup[] = hq.projects.data
-      .filter((p) => !p.missing && !gs.some((g) => g.root && groupKey(g.root) === groupKey(p.path)) && !hiddenAt.has(groupKey(p.path)))
+      .filter((p) => {
+        const spot = spotOf(p.path, branches);
+        return !p.missing && !onScreen(p.path) && !(spot && !spot.main && spot.key === groupKey(p.path) && onScreen(spot.repo)) && !hiddenAt.has(groupKey(p.path));
+      })
       .map((p) => ({ key: groupKey(p.path), label: p.name, root: p.path, sessions: [] }));
     return prefs.sort === "manual" ? orderGroups([...gs, ...extra], order) : [...gs, ...extra];
     // `visible` is rebuilt every render; its inputs are the real dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree.sessions, archive.keys, hidden, q, prefs.group, prefs.sort, order, hq.projects.data]);
+  }, [tree.sessions, archive.keys, hidden, q, prefs.group, prefs.sort, order, hq.projects.data, branches]);
+  // By project: each group's sessions under their worktree's branch (lib/branches.ts).
+  const branchesOf = useMemo(() => new Map(groups.map((g) => [g.key, prefs.group === "project" ? groupBranches(g, branches) : null])), [groups, branches, prefs.group]);
 
   // Drag & drop: a session moves inside its own group, a project heading among the projects (not
-  // while searching: the list on screen is then a subset). A drop pins the whole list as it is now.
+  // while searching: the list on screen is then a subset). A drop pins the whole list as it is now,
+  // read across the branch headers (a session keeps its branch: that is git's, not the order's).
   const [drag, setDrag] = useState<{ kind: "s" | "g"; key: string; group: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const groupDrag = prefs.group === "project" && !q;
-  const shownSessions = groups.flatMap((g) => g.sessions.map((s) => s.key));
+  const shownSessions = groups.flatMap((g) => shownOrder(g, branchesOf.get(g.key) ?? null).map((s) => s.key));
   const shownGroups = groups.map((g) => g.key);
   const dropOn = (kind: "s" | "g", to: string) => {
     if (!drag || drag.kind !== kind || drag.key === to) return;
@@ -394,6 +412,36 @@ export function Nav({
                   const folded = prefs.collapsed.includes(`g:${g.key}`);
                   const listId = `grp-${g.key.replace(/[^\w-]/g, "_")}`;
                   const gl = landing("g", g.key);
+                  const b = branchesOf.get(g.key) ?? null;
+                  // Folded by default: `w:<group>` in the prefs list means the owner opened it.
+                  const idleOpen = prefs.collapsed.includes(`w:${g.key}`);
+                  const sessionRow = (s: TreeSession) => (
+                    <SessionRow
+                      key={s.key}
+                      dnd={dnd("s", s.key, g.key, true)}
+                      dragging={drag?.key === s.key}
+                      landing={landing("s", s.key)}
+                      s={s}
+                      branch={prefs.group === "project" ? null : (spotOf(dirOf(s), branches)?.label ?? null)}
+                      now={now}
+                      current={active === s.key || (s.room != null && active === s.room)}
+                      unread={isUnread(s, unread.keys)}
+                      folded={prefs.collapsed.includes(`s:${s.key}`)}
+                      onFold={() => toggleCollapsed(`s:${s.key}`)}
+                      onOpen={open}
+                      onChat={() => {
+                        const x = roomOf(s);
+                        if (x) onOpenRoom(x.room);
+                      }}
+                      onArchive={() => {
+                        archive.toggle(s.key);
+                        toast.success(`Đã lưu trữ “${s.title}”`, { description: "Chỉ ẩn trong HQ trên trình duyệt này; không xoá gì trên máy.", action: { label: "Hoàn tác", onClick: () => archive.toggle(s.key) } });
+                      }}
+                      room={roomOf(s)}
+                      onEnd={(x, action) => setConfirm({ kind: "room", x, action })}
+                      onDelete={() => setConfirm({ kind: "omp", s })}
+                    />
+                  );
                   return (
                     <li key={g.key} {...dnd("g", g.key, "", groupDrag)} className={cn(drag?.key === g.key && "opacity-50", gl === "above" && "shadow-[inset_0_2px_0_var(--primary)]", gl === "below" && "shadow-[inset_0_-2px_0_var(--primary)]")}>
                       <div className="group/row flex h-7 items-center gap-0.5 pr-0.5 max-md:h-10">
@@ -417,32 +465,32 @@ export function Nav({
                         )}
                       </div>
                       <ul id={listId} hidden={folded} className="space-y-px">
-                        {g.sessions.map((s) => (
-                          <SessionRow
-                            key={s.key}
-                            dnd={dnd("s", s.key, g.key, true)}
-                            dragging={drag?.key === s.key}
-                            landing={landing("s", s.key)}
-                            s={s}
-                            now={now}
-                            current={active === s.key || (s.room != null && active === s.room)}
-                            unread={isUnread(s, unread.keys)}
-                            folded={prefs.collapsed.includes(`s:${s.key}`)}
-                            onFold={() => toggleCollapsed(`s:${s.key}`)}
-                            onOpen={open}
-                            onChat={() => {
-                              const x = roomOf(s);
-                              if (x) onOpenRoom(x.room);
-                            }}
-                            onArchive={() => {
-                              archive.toggle(s.key);
-                              toast.success(`Đã lưu trữ “${s.title}”`, { description: "Chỉ ẩn trong HQ trên trình duyệt này; không xoá gì trên máy.", action: { label: "Hoàn tác", onClick: () => archive.toggle(s.key) } });
-                            }}
-                            room={roomOf(s)}
-                            onEnd={(x, action) => setConfirm({ kind: "room", x, action })}
-                            onDelete={() => setConfirm({ kind: "omp", s })}
-                          />
-                        ))}
+                        {b
+                          ? b.sections.map((sec) =>
+                              sec.spot ? (
+                                <li key={sec.key}>
+                                  <BranchHeader
+                                    spot={sec.spot}
+                                    count={sec.sessions.length}
+                                    onOverview={sec.spot.main ? null : () => onOpenRepo(sec.spot!.path, sec.spot!.name)}
+                                    onDelete={
+                                      !sec.spot.main && worktrees.worktrees.includes(sec.spot.key)
+                                        ? () => setConfirm({ kind: "worktree", g: groupOf({ key: sec.spot!.key, label: sec.spot!.name, root: sec.spot!.path, sessions: [] })! })
+                                        : null
+                                    }
+                                  />
+                                  <ul className="space-y-px" aria-label={`Phiên trên branch ${sec.spot.label}`}>
+                                    {sec.sessions.map(sessionRow)}
+                                  </ul>
+                                </li>
+                              ) : (
+                                <Fragment key={sec.key}>{sec.sessions.map(sessionRow)}</Fragment>
+                              ),
+                            )
+                          : g.sessions.map(sessionRow)}
+                        {b && b.idle.length > 0 && (
+                          <IdleWorktrees id={`${listId}-idle`} spots={b.idle} open={idleOpen} onToggle={() => toggleCollapsed(`w:${g.key}`)} onOpen={(sp) => onOpenRepo(sp.path, sp.name)} />
+                        )}
                       </ul>
                     </li>
                   );
@@ -609,16 +657,93 @@ function Mark({ state, unread }: { state: TreeSession["state"]; unread: boolean 
   return null;
 }
 
+/** "chính": the repo's main worktree (a word, not a colour). */
+function MainBadge() {
+  return <span className="shrink-0 rounded border border-sidebar-border px-1 text-[10px] leading-4 font-normal text-muted-foreground">chính</span>;
+}
+
+/**
+ * A branch over its sessions (Orca's layout): the branch, the worktree folder when its name says
+ * something else, "chính" on the main worktree, the session count. A linked worktree's "⋯" opens its
+ * Tổng quan and, when HQ may remove it, "Xóa worktree" (it is no project of its own any more).
+ */
+function BranchHeader({ spot, count, onOverview, onDelete }: { spot: WorktreeSpot; count: number; onOverview: (() => void) | null; onDelete: (() => void) | null }) {
+  const note = folderNote(spot);
+  const tip = [`branch ${spot.label}`, spot.path, spot.main ? "Worktree chính của repo" : "Worktree phụ (git worktree)", spot.locked ? "Đang khóa (git worktree lock)" : null].filter(Boolean).join("\n");
+  return (
+    <div className="group/row flex h-7 min-w-0 items-center gap-1.5 pr-0.5 pl-2 text-xs text-muted-foreground max-md:h-10" title={tip}>
+      <GitBranchIcon className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 truncate font-medium text-sidebar-foreground/80">{spot.label}</span>
+      {note && <span className="min-w-0 shrink-[2] truncate">· {note}</span>}
+      {spot.main && <MainBadge />}
+      {spot.locked && <span className="shrink-0 text-[11px]">· đang khóa</span>}
+      <span className="ml-auto shrink-0 pl-1 text-[11px] tabular" aria-label={`${count} phiên`}>
+        {count}
+      </span>
+      {onOverview && (
+        <span className={HOVER}>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger className={ICON_BTN} aria-label={`Thao tác với worktree ${spot.name}`} title="Thao tác với worktree">
+              <EllipsisIcon className="size-3.5" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem className="max-md:min-h-10" onSelect={onOverview}>
+                <LayoutDashboardIcon aria-hidden /> Tổng quan worktree
+              </DropdownMenuItem>
+              {onDelete && (
+                <DropdownMenuItem className="max-md:min-h-10" variant="destructive" onSelect={onDelete}>
+                  <Trash2Icon aria-hidden /> Xóa worktree…
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The repo's worktrees with no session, folded behind one row; each opens that worktree's Tổng quan. */
+function IdleWorktrees({ id, spots, open, onToggle, onOpen }: { id: string; spots: WorktreeSpot[]; open: boolean; onToggle: () => void; onOpen: (s: WorktreeSpot) => void }) {
+  return (
+    <li>
+      <button type="button" className={cn(row, "h-7 text-xs text-muted-foreground max-md:h-10")} aria-expanded={open} aria-controls={id} onClick={onToggle}>
+        <ChevronDownIcon className={cn("size-3 shrink-0 transition-transform motion-reduce:transition-none", !open && "-rotate-90")} aria-hidden />
+        <span className="truncate">
+          <span className="tabular">{spots.length}</span> worktree không có phiên
+        </span>
+      </button>
+      <ul id={id} hidden={!open} className="space-y-px">
+        {spots.map((sp) => {
+          const note = folderNote(sp);
+          return (
+            <li key={sp.key}>
+              <button type="button" className={cn(row, "h-7 text-xs text-muted-foreground max-md:h-10")} title={`Mở Tổng quan của worktree\nbranch ${sp.label}\n${sp.path}`} onClick={() => onOpen(sp)}>
+                <GitBranchIcon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+                <span className="min-w-0 truncate">{sp.label}</span>
+                {note && <span className="min-w-0 shrink-[2] truncate opacity-80">· {note}</span>}
+                {sp.main && <MainBadge />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </li>
+  );
+}
+
 /**
  * One session: the plain title (ellipsis), a ▾ after it when it has sub-sessions, and at the right
- * the worktree glyph, the mark and how long ago (the "⋯" menu takes their place on hover). Its
+ * the sub-session count, the mark and how long ago (the "⋯" menu takes their place on hover). Its
  * sub-sessions hang under it on a └ line: running and recent ones, the rest behind "+N cũ hơn".
+ * `branch`: the session's git branch, shown on the row when no branch header above carries it.
  */
 function SessionRow({
   dnd,
   dragging,
   landing,
   s,
+  branch,
   now,
   current,
   unread,
@@ -636,6 +761,7 @@ function SessionRow({
   dragging: boolean;
   landing: "above" | "below" | null;
   s: TreeSession;
+  branch: string | null;
   now: number;
   current: boolean;
   unread: boolean;
@@ -653,13 +779,21 @@ function SessionRow({
   const kids = more ? [...shown, ...older] : shown;
   const hasKids = s.children.length > 0;
   const click = (e: MouseEvent) => onOpen(s, e.altKey);
-  const tip = [s.title !== s.name ? `${s.title} (${s.name})` : s.title, TREE_WORD[s.state], s.doing, s.cwd, s.ompId ? "Alt+click: mở cạnh nhau" : null].filter(Boolean).join("\n");
+  const tip = [s.title !== s.name ? `${s.title} (${s.name})` : s.title, TREE_WORD[s.state], s.doing, branch && `branch ${branch}`, s.cwd, s.ompId ? "Alt+click: mở cạnh nhau" : null]
+    .filter(Boolean)
+    .join("\n");
   const kidsId = `kids-${s.key.replace(/[^\w-]/g, "_")}`;
   return (
     <li {...dnd} className={cn("rounded-md", dragging && "opacity-50", landing === "above" && "shadow-[inset_0_2px_0_var(--primary)]", landing === "below" && "shadow-[inset_0_-2px_0_var(--primary)]")}>
       <div className={cn("group/row relative flex h-7 items-center rounded-md transition-colors hover:bg-sidebar-accent max-md:h-10 motion-reduce:transition-none", current && "bg-sidebar-accent")}>
         <button type="button" className="flex h-full min-w-0 shrink items-center rounded-md pl-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-current={current} title={tip} onClick={click}>
           <span className={cn("truncate", current && "font-medium")}>{s.title}</span>
+          {branch && (
+            <span className="ml-1.5 inline-flex max-w-28 min-w-0 shrink-[0.5] items-center gap-0.5 text-[11px] text-muted-foreground">
+              <GitBranchIcon className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{branch}</span>
+            </span>
+          )}
           <span className="sr-only">
             {" "}
             · {unread && s.state !== "needs" ? "xong, chưa xem" : TREE_WORD[s.state]}
@@ -673,13 +807,7 @@ function SessionRow({
         {/* The rest of the row opens the session too (a mouse target only; the title is the button). */}
         <span className="h-full min-w-2 flex-1 cursor-pointer" aria-hidden onClick={click} />
         <span className="flex shrink-0 items-center gap-1.5 pr-2 group-focus-within/row:hidden group-hover/row:hidden max-md:hidden [@media(hover:none)]:hidden">
-          {s.worktree && (
-            <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground" title={`worktree ${s.worktree}`}>
-              <GitBranchIcon className="size-3" aria-hidden />
-              {hasKids && <span className="tabular">{s.children.length}</span>}
-            </span>
-          )}
-          {!s.worktree && hasKids && (
+          {hasKids && (
             <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground tabular" title={`${s.children.length} phiên con`}>
               <GitBranchIcon className="size-3 rotate-90" aria-hidden />
               {s.children.length}

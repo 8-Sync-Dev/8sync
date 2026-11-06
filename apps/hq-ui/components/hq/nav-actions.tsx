@@ -1,8 +1,9 @@
 "use client";
 
 // The sidebar's close / delete actions: a "⋯" menu on every project and room row, the confirm
-// dialogs, and the list of closed projects. Server side: app/api/sessions/[name]/end,
-// app/api/projects/sidebar, app/api/projects/worktree.
+// dialogs, and the list of closed projects; plus the git worktree lists behind the branch headers.
+// Server side: app/api/sessions/[name]/end, app/api/projects/sidebar, app/api/projects/worktree,
+// app/api/projects/branches.
 import { AlertTriangleIcon, ChevronRightIcon, EllipsisIcon, EyeIcon, EyeOffIcon, FolderIcon, PowerIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_WORD, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
+import type { RepoWorktrees } from "@/lib/branches";
 import type { TreeGroup, TreeSession } from "@/lib/session-tree";
 import type { WorktreeFacts, WorktreeVerdict } from "@/lib/worktree";
 import type { Hq } from "./use-hq";
@@ -47,6 +49,37 @@ export function useWorktreeKeys(api: Hq["api"], keys: string) {
     return () => ac.abort();
   }, [api, keys, nonce]);
   return { worktrees: data, reload: useCallback(() => setNonce((n) => n + 1), []) };
+}
+
+/** How often the branch headers ask git again (the server keeps each answer 20 s). */
+const BRANCHES_MS = 30_000;
+
+/**
+ * Every git worktree of the projects HQ knows (GET /api/projects/branches), every 30 s, and fresh from
+ * git when `dirs` (the sessions' folders) changes: a new worktree shows its branch at once. Null until
+ * the first answer; the sidebar then renders without branch headers.
+ */
+export function useBranches(api: Hq["api"], dirs: string) {
+  const [data, setData] = useState<RepoWorktrees[] | null>(null);
+  useEffect(() => {
+    let ac = new AbortController();
+    const load = (fresh: boolean) => {
+      ac.abort();
+      ac = new AbortController();
+      api<{ repos: RepoWorktrees[] }>(`/api/projects/branches${fresh ? "?fresh=1" : ""}`, { signal: ac.signal })
+        // Same lists: keep the old array, so nothing downstream recomputes.
+        .then((r) => setData((old) => (old && JSON.stringify(old) === JSON.stringify(r.repos) ? old : r.repos)))
+        // Without it the sidebar just has no branch headers; the next poll asks again.
+        .catch(() => {});
+    };
+    load(true);
+    const t = setInterval(() => load(false), BRANCHES_MS);
+    return () => {
+      clearInterval(t);
+      ac.abort();
+    };
+  }, [api, dirs]);
+  return data;
 }
 
 export function ProjectMenu({ g, worktree, busy, onClose, onDelete }: { g: SidebarGroup<Room>; worktree: boolean; busy: boolean; onClose: () => void; onDelete: () => void }) {

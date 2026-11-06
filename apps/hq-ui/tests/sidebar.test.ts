@@ -148,7 +148,9 @@ describe("sidebar UI", () => {
       [],
       "core",
     );
-    for (const s of ["Phiên mới", "Tổng quan", "Văn phòng", "Vòng lặp", ">8sync-startup<", ">core<", ">dev<", "Đang làm", "Chờ anh", "worktree card-12", "Alex · 8 Sync", "Cài đặt máy"]) expect(html).toContain(s);
+    for (const s of ["Phiên mới", "Tổng quan", "Văn phòng", "Vòng lặp", ">8sync-startup<", ">core<", ">dev<", "Đang làm", "Chờ anh", "Alex · 8 Sync", "Cài đặt máy"]) expect(html).toContain(s);
+    // The worktree now shows as a branch header (git's lists, fetched after mount), not a glyph on the row.
+    expect(html).not.toContain("worktree card-12");
     expect(html).toContain('aria-current="true"');
     // A folder added in HQ with no session yet: its heading with "+" to start one there.
     expect(html).toContain("Phiên mới trong new-repo");

@@ -5,9 +5,42 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST } from "@/app/api/content/route";
 import { PUT as PUT_PREFS } from "@/app/api/content/prefs/route";
 import { GET as MEDIA } from "@/app/api/content/media/route";
-import { addDays, byDay, capDay, captionFor, channelLine, CONTENT_DATA_NOTE, contentTaskText, contentWarning, cpaCommand, dataLine, dayKey, fromLocalInput, monthGrid, nextStatuses, NO_CHANNELS, NO_SCHEDULE, stepCursor, stepHint, toLocalInput, unapprovedLive, weekStart } from "@/lib/content";
+import {
+  addDays,
+  byDay,
+  capDay,
+  captionFor,
+  channelLine,
+  CONTENT_DATA_NOTE,
+  contentTaskText,
+  contentWarning,
+  cpaCommand,
+  dataLine,
+  dayKey,
+  fromLocalInput,
+  monthGrid,
+  nextStatuses,
+  NO_CHANNELS,
+  NO_CHANNELS_0065,
+  NO_SCHEDULE,
+  PLATFORM_DAILY_TARGET,
+  platformDays,
+  platformItems,
+  scheduledMatch,
+  scheduledOf,
+  stepCursor,
+  stepHint,
+  targetState,
+  toLocalInput,
+  unapprovedLive,
+  weekStart,
+  type ChannelPost,
+  type ChannelState,
+  type Channel,
+  type ContentRow,
+} from "@/lib/content";
 import { getToken } from "@/lib/server/auth";
-import { CONTENT_CHANGED, contentConfigPath, NO_REGISTRY } from "@/lib/server/content";
+import { CONTENT_CHANGED, contentConfigPath, hasChannels0065, NO_REGISTRY } from "@/lib/server/content";
 import { mediaSigValid } from "@/lib/server/content-media";
 import { contentPrefsPath } from "@/lib/server/content-prefs";
 import { inboxDir, inboxFile } from "@/lib/server/inbox";
@@ -66,6 +99,29 @@ CREATE TABLE IF NOT EXISTS content_channel_posts (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   PRIMARY KEY (item_id, channel)
 );
+`;
+/**
+ * 0065, as handed to content-post-agency: the CHECK on `content_channel_posts.channel` widened by a
+ * table rebuild (SQLite cannot alter a CHECK), every row kept. The runner wraps it in one transaction
+ * with `PRAGMA foreign_keys = OFF` around it.
+ */
+const MIGRATION_0065 = `
+CREATE TABLE content_channel_posts_new (
+  item_id INTEGER NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL CHECK (channel IN ('facebook','linkedin','threads','youtube','tiktok','x','instagram','zalo')),
+  state TEXT NOT NULL CHECK (state IN ('scheduling','scheduled','published','failed','blocked','cancelled')),
+  scheduled_for INTEGER,
+  permalink TEXT,
+  published_at INTEGER,
+  error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  PRIMARY KEY (item_id, channel)
+);
+INSERT INTO content_channel_posts_new (item_id, channel, state, scheduled_for, permalink, published_at, error, attempts, updated_at)
+  SELECT item_id, channel, state, scheduled_for, permalink, published_at, error, attempts, updated_at FROM content_channel_posts;
+DROP TABLE content_channel_posts;
+ALTER TABLE content_channel_posts_new RENAME TO content_channel_posts;
 `;
 
 let home = "";
@@ -451,7 +507,10 @@ describe("/api/content channels (0064)", () => {
     expect(of(V1, { linkedin: "X" })).toEqual(["A", "X", "C", null]);
     expect(of(V1, { threads: "  " })).toEqual(["A", "B", "C", null]);
     // A section under an unknown header is dropped; an empty section is no caption.
-    expect(of("=== TIKTOK ===\nT\n=== LINKEDIN ===\n  \n=== YOUTUBE ===\nY")).toEqual([null, null, null, "Y"]);
+    expect(of("=== PINTEREST ===\nT\n=== LINKEDIN ===\n  \n=== YOUTUBE ===\nY")).toEqual([null, null, null, "Y"]);
+    // 0065's channels read their own sections ("=== X ===" is X).
+    expect(captionFor({ caption: "=== X ===\nngắn\n=== TIKTOK ===\nT", captions_json: null }, "x")).toBe("ngắn");
+    expect(captionFor({ caption: "=== X ===\nngắn\n=== TIKTOK ===\nT", captions_json: null }, "tiktok")).toBe("T");
     expect(of(null)).toEqual([null, null, null, null]);
   });
 
@@ -461,8 +520,8 @@ describe("/api/content channels (0064)", () => {
     const { item } = await (await POST(call("POST", "", { format: "text", title: "A", caption: V1 }))).json();
     expect(item).toMatchObject({ channels: ["facebook"], captions_json: null, channel_posts: [] });
     const q = `?id=${item.id}`;
-    for (const channels of [[], ["facebook", "facebook"], ["tiktok"], "facebook", null]) expect((await PATCH(call("PATCH", q, { channels }))).status).toBe(422);
-    for (const captions_json of [{ tiktok: "x" }, { threads: 5 }, ["x"], "x"]) expect((await PATCH(call("PATCH", q, { captions_json }))).status).toBe(422);
+    for (const channels of [[], ["facebook", "facebook"], ["pinterest"], "facebook", null]) expect((await PATCH(call("PATCH", q, { channels }))).status).toBe(422);
+    for (const captions_json of [{ pinterest: "x" }, { threads: 5 }, ["x"], "x"]) expect((await PATCH(call("PATCH", q, { captions_json }))).status).toBe(422);
 
     let res = await PATCH(call("PATCH", q, { channels: ["threads", "facebook"], captions_json: { threads: "  T  " } }));
     expect((await res.json()).item).toMatchObject({ channels: ["threads", "facebook"], captions_json: { threads: "T" } });
@@ -532,7 +591,7 @@ describe("/api/content channels (0064)", () => {
 
     expect((await PATCH(call("PATCH", q, { retry_channel: "facebook" }))).status).toBe(409);
     expect((await PATCH(call("PATCH", q, { retry_channel: "youtube" }))).status).toBe(409);
-    expect((await PATCH(call("PATCH", q, { retry_channel: "tiktok" }))).status).toBe(422);
+    expect((await PATCH(call("PATCH", q, { retry_channel: "pinterest" }))).status).toBe(422);
     // A refused retry leaves the other changes of the same write undone too.
     expect((await PATCH(call("PATCH", q, { retry_channel: "facebook", caption: "khác" }))).status).toBe(409);
     const res = await PATCH(call("PATCH", q, { retry_channel: "linkedin" }));
@@ -570,6 +629,143 @@ describe("/api/content channels (0064)", () => {
     expect(items[0]).not.toHaveProperty("channel_posts");
     // No caption at all: without 0064 there is no channel rule to meet.
     expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+  });
+});
+
+describe("per platform and Đã lên lịch (owner 2026-11-06)", () => {
+  const post = (channel: Channel, state: ChannelState, scheduled_for: number | null = null): ChannelPost => ({
+    item_id: 1, channel, state, scheduled_for, permalink: null, published_at: null, error: null, attempts: 1, updated_at: 1,
+  });
+  const at = (h: number, d = 6) => new Date(2026, 10, d, h, 0).getTime();
+  type Src = Pick<ContentRow, "status" | "scheduled_at" | "published_at" | "channels" | "channel_posts">;
+  const item = (over: Partial<Src> = {}): Src => ({ status: "approved", scheduled_at: at(9), published_at: null, channels: ["facebook"], channel_posts: [], ...over });
+
+  it("Đã lên lịch x/y kênh: no channel rows is 0/y, published counts, failed / cancelled and rows of a dropped channel do not", () => {
+    const three: Channel[] = ["facebook", "linkedin", "threads"];
+    expect(scheduledOf({ channels: three, channel_posts: [] })).toEqual({ done: 0, total: 3 });
+    expect(scheduledOf({ channels: three })).toEqual({ done: 0, total: 3 });
+    const rows = [post("facebook", "scheduled"), post("linkedin", "published"), post("threads", "failed"), post("youtube", "scheduled")];
+    expect(scheduledOf({ channels: three, channel_posts: rows })).toEqual({ done: 2, total: 3 });
+    expect(scheduledOf({ channels: ["facebook"], channel_posts: [post("facebook", "cancelled")] })).toEqual({ done: 0, total: 1 });
+    expect(scheduledOf({ channels: ["facebook"], channel_posts: [post("facebook", "scheduling")] })).toEqual({ done: 0, total: 1 });
+    // A DB before 0064 has no channel rows: no chip.
+    expect(scheduledOf({ channel_posts: rows })).toBeNull();
+
+    const full = { channels: ["facebook", "linkedin"] as Channel[], channel_posts: [post("facebook", "scheduled"), post("linkedin", "published")] };
+    const part = { channels: ["facebook", "linkedin"] as Channel[], channel_posts: [post("facebook", "scheduled")] };
+    const none = { channels: ["facebook"] as Channel[], channel_posts: [post("facebook", "scheduling")] };
+    const filters = ["full", "partial", "none"] as const;
+    expect([full, part, none].map((it) => filters.map((f) => scheduledMatch(it, f)))).toEqual([
+      [true, false, false],
+      [false, true, false],
+      [false, false, true],
+    ]);
+    expect(filters.map((f) => scheduledMatch({ channel_posts: [] }, f))).toEqual([false, false, false]);
+  });
+
+  it("per platform per day: each channel on its own slot, rejected and untimed left out, scheduled counted, the target in words", () => {
+    const items: Src[] = [
+      ...Array.from({ length: 12 }, () => item({ channel_posts: [post("facebook", "scheduled", at(9))] })),
+      // LinkedIn's row puts it on the 7th; Facebook and TikTok (no row yet) go with the item on the 6th.
+      item({ channels: ["facebook", "linkedin", "tiktok"], channel_posts: [post("linkedin", "published", at(10, 7))] }),
+      item({ status: "rejected", channels: ["tiktok"] }),
+      item({ channels: ["x"], scheduled_at: null }),
+      // A DB before 0064: everything goes to Facebook.
+      { status: "checked", scheduled_at: at(11), published_at: null },
+    ];
+    const by = platformDays(items);
+    expect([...by.keys()].sort()).toEqual([dayKey(at(9)), dayKey(at(10, 7))]);
+    const d6 = by.get(dayKey(at(9)))!;
+    expect(d6.facebook).toEqual({ planned: 14, scheduled: 12 });
+    expect(d6.tiktok).toEqual({ planned: 1, scheduled: 0 });
+    expect(d6.linkedin).toEqual({ planned: 0, scheduled: 0 });
+    expect(d6.x).toEqual({ planned: 0, scheduled: 0 });
+    expect(by.get(dayKey(at(10, 7)))!.linkedin).toEqual({ planned: 1, scheduled: 1 });
+
+    expect(PLATFORM_DAILY_TARGET).toBe(10);
+    expect(targetState(d6.facebook.planned)).toEqual({ met: true, text: "Đủ" });
+    expect(targetState(PLATFORM_DAILY_TARGET)).toEqual({ met: true, text: "Đủ" });
+    expect(targetState(d6.tiktok.planned)).toEqual({ met: false, text: "Thiếu 9" });
+    expect(targetState(0)).toEqual({ met: false, text: "Thiếu 10" });
+
+    // The sheet split by platform follows the same slots.
+    expect(platformItems(items, "linkedin", dayKey(at(9)))).toHaveLength(0);
+    expect(platformItems(items, "linkedin", dayKey(at(10, 7)))).toHaveLength(1);
+    expect(platformItems(items, "facebook", dayKey(at(9)))).toHaveLength(14);
+    expect(platformItems(items, "x", null)).toHaveLength(1);
+  });
+});
+
+describe("/api/content new channels TikTok / X / Instagram / Zalo (0065)", () => {
+  const ALL = MIGRATION_0062 + MIGRATION_0063 + MIGRATION_0064;
+  const idOf = (q: string) => Number(new URLSearchParams(q).get("id"));
+
+  it("on a 0064 DB adding one is refused with the reason; clearing, the old four and reads still go", async () => {
+    const file = makeDb("pre65.db", ALL);
+    configure(file);
+    const q = await readyToApprove({ format: "text", caption: "=== FACEBOOK ===\nA\n=== TIKTOK ===\nT" });
+    let list = await (await GET(call("GET", ""))).json();
+    expect(list.channels0065).toBe(false);
+    for (const body of [{ channels: ["facebook", "tiktok"] }, { channels: ["x"] }, { captions_json: { instagram: "IG" } }, { captions_json: { zalo: "Z" } }]) {
+      const res = await PATCH(call("PATCH", q, body));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect((await res.json()).error).toBe(NO_CHANNELS_0065);
+    }
+    expect((await POST(call("POST", "", { format: "text", title: "B", channels: ["zalo"] }))).status).toBe(400);
+    expect((await PATCH(call("PATCH", q, { captions_json: { tiktok: "" } }))).status).toBe(200);
+    expect((await PATCH(call("PATCH", q, { channels: ["facebook", "linkedin"] }))).status).toBe(200);
+
+    // An item holding a new channel anyway (written by another tool) is not approved into a schedule the worker cannot write.
+    const db = new DatabaseSync(file);
+    db.prepare("UPDATE content_items SET channels = ? WHERE id = ?").run('["facebook","tiktok"]', idOf(q));
+    db.close();
+    const res = await PATCH(call("PATCH", q, { status: "approved" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(NO_CHANNELS_0065);
+    list = await (await GET(call("GET", ""))).json();
+    expect(list.items[0]).toMatchObject({ status: "checked", channels: ["facebook", "tiktok"] });
+  });
+
+  it("detection reads the table's CHECK; the 0065 rebuild keeps every row, then the new channels go", async () => {
+    const memory = new DatabaseSync(":memory:");
+    expect(hasChannels0065(memory)).toBe(false);
+    memory.close();
+    const file = makeDb("to65.db", ALL);
+    configure(file);
+    const q = await readyToApprove({ format: "text", caption: "=== FACEBOOK ===\nA\n=== TIKTOK ===\nT" });
+    const db = new DatabaseSync(file);
+    db.prepare("INSERT INTO content_channel_posts (item_id, channel, state, scheduled_for) VALUES (?, 'facebook', 'scheduled', 5)").run(idOf(q));
+    expect(hasChannels0065(db)).toBe(false);
+    db.exec(`PRAGMA foreign_keys = OFF; BEGIN; ${MIGRATION_0065} COMMIT; PRAGMA foreign_keys = ON;`);
+    expect(hasChannels0065(db)).toBe(true);
+    expect(db.prepare("SELECT item_id, channel, state, scheduled_for FROM content_channel_posts").all()).toEqual([{ item_id: idOf(q), channel: "facebook", state: "scheduled", scheduled_for: 5 }]);
+    db.close();
+
+    expect((await (await GET(call("GET", ""))).json()).channels0065).toBe(true);
+    const res = await PATCH(call("PATCH", q, { channels: ["facebook", "tiktok"] }));
+    expect(res.status).toBe(200);
+    const w = new DatabaseSync(file);
+    w.prepare("INSERT INTO content_channel_posts (item_id, channel, state) VALUES (?, 'tiktok', 'published')").run(idOf(q));
+    w.close();
+    const listed = (await (await GET(call("GET", ""))).json()).items[0];
+    expect(listed.channel_posts.map((p: ChannelPost) => p.channel)).toEqual(["facebook", "tiktok"]);
+    expect(scheduledOf(listed)).toEqual({ done: 2, total: 2 });
+  });
+
+  it("a channel row HQ does not know is left out of the list, never a crash", async () => {
+    const file = makeDb("open.db", ALL.replace("CHECK (channel IN ('facebook','linkedin','threads','youtube'))", ""));
+    configure(file);
+    const { item } = await (await POST(call("POST", "", { format: "text", title: "A" }))).json();
+    const db = new DatabaseSync(file);
+    for (const ch of ["facebook", "pinterest"]) db.prepare("INSERT INTO content_channel_posts (item_id, channel, state) VALUES (?, ?, 'scheduled')").run(item.id, ch);
+    db.prepare("UPDATE content_items SET channels = ? WHERE id = ?").run('["facebook","pinterest"]', item.id);
+    db.close();
+    const res = await GET(call("GET", ""));
+    expect(res.status).toBe(200);
+    const list = await res.json();
+    expect(list.channels0065).toBe(false);
+    expect(list.items[0].channels).toEqual(["facebook"]);
+    expect(list.items[0].channel_posts.map((p: ChannelPost) => p.channel)).toEqual(["facebook"]);
   });
 });
 
