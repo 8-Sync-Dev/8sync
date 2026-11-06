@@ -54,6 +54,8 @@ const item = (extra: Partial<ManualItem> = {}): ManualItem => ({
   captions_json: { threads: "Cap Threads\ndòng 2" },
   media_path: "C:/media/7.mp4",
   source_url: "https://example.com/nguon",
+  fb_post_url: null,
+  published_at: null,
   channels: ["facebook", "threads"],
   scheduled_at: T,
   assignee_session: null,
@@ -126,6 +128,25 @@ describe("auto-post fallback: due window, rooms, text", () => {
     expect(dueManual([missing({ channel_posts: undefined })], T + MIN, new Set()).due).toHaveLength(0);
   });
 
+  it("a channel with no row is not handed over when the item shows it already went out (posted by hand, no row written)", () => {
+    const bare = (extra: Partial<ManualItem> = {}) => item({ channels: ["facebook", "linkedin"], channel_posts: [], ...extra });
+    const due = (it: ManualItem) => dueManual([it], T + MIN, new Set()).due.map((c) => c.channel);
+    expect(due(bare())).toEqual(["facebook", "linkedin"]);
+    // Posted somewhere: the item's own post time is set, so no channel without a row goes.
+    expect(due(bare({ published_at: T - 5 * MIN }))).toEqual([]);
+    // A Facebook post link only covers Facebook.
+    expect(due(bare({ fb_post_url: "https://www.facebook.com/8syncdev/posts/1" }))).toEqual(["linkedin"]);
+    expect(due(bare({ status: "published" }))).toEqual([]);
+    // A row that says it failed still goes: the evidence is about rows nobody wrote.
+    expect(due(bare({ published_at: T - 5 * MIN, channel_posts: [post("linkedin", "failed", { error: "x" })] }))).toEqual(["linkedin"]);
+    // An older book without those columns reads them as undefined: no evidence.
+    expect(due(bare({ published_at: undefined, fb_post_url: undefined }))).toEqual(["facebook", "linkedin"]);
+    expect(manualStatuses(bare({ published_at: T - 5 * MIN }), { dispatched: {}, noroom: {} }, cfg, T + MIN)).toBeUndefined();
+    expect(manualStatuses(bare({ fb_post_url: "https://www.facebook.com/8syncdev/posts/1" }), { dispatched: {}, noroom: {} }, cfg, T + MIN)).toEqual({
+      linkedin: { kind: "planned", room: "cpa-live", at: T },
+    });
+  });
+
   it("a row HQ already handed to a room is not a candidate again, whatever the state file says", () => {
     const claimed = item({ channel_posts: [post("threads", "blocked", { error: CLAIM, scheduled_for: T })] });
     expect(dueManual([claimed], T + MIN, new Set()).due.map((c) => c.channel)).toEqual(["facebook"]);
@@ -173,6 +194,8 @@ describe("auto-post fallback: due window, rooms, text", () => {
     expect(text).not.toContain("AND state =");
     expect(text).not.toContain("15 phút");
     expect(text).toContain("C:/repo/cpa");
+    expect(text).toContain("2. Kiểm trên trang/kênh Threads thật (tab Đã đăng / Đã lên lịch) xem bài này đã lên chưa. Đã lên thì KHÔNG đăng lại");
+    expect(text).toContain("SET state = 'scheduled', scheduled_for = <ms giờ hẹn>");
     expect(text).not.toMatch(AI_WORDS);
   });
 
@@ -200,6 +223,7 @@ describe("auto-post fallback: due window, rooms, text", () => {
     expect(text).toContain("có thể dòng chưa từng tồn tại");
     expect(text).toContain("UPDATE content_channel_posts SET state = 'published'");
     expect(text).toContain("WHERE item_id = 7 AND channel = 'linkedin'");
+    expect(text).toContain("2. Kiểm trên trang/kênh LinkedIn thật (tab Đã đăng / Đã lên lịch)");
   });
 
   it("statuses for the sheet: planned, dispatched, stale, no room, no time; none when off; a guest sees no room", () => {

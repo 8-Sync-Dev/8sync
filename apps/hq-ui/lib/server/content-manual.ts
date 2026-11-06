@@ -127,7 +127,7 @@ export function writeManualState(s: ManualState, now: number, file = manualState
 
 export type ManualItem = Pick<
   ContentItem,
-  "id" | "title" | "fb_page" | "status" | "caption" | "captions_json" | "media_path" | "source_url" | "channels" | "scheduled_at" | "assignee_session" | "assignee_base"
+  "id" | "title" | "fb_page" | "status" | "caption" | "captions_json" | "media_path" | "source_url" | "fb_post_url" | "published_at" | "channels" | "scheduled_at" | "assignee_session" | "assignee_base"
 > & {
   /** Undefined = the book predates migration 0064 (no channel rows at all): only rows count then, never a missing one. */
   channel_posts?: ChannelPost[];
@@ -141,7 +141,17 @@ export type ManualCand = { item: ManualItem; channel: Channel; post: ChannelPost
 
 export const manualKey = (id: number, ch: Channel, at: number) => `${id}:${ch}:${at}`;
 
-/** The approved items' channels whose row is failed or blocked (not by HQ's own claim), or missing. */
+/**
+ * Signs on the item itself that it already went out (posted by hand without a channel row, owner
+ * 2026-11-06 #16/#38/#39/#76): `published_at`, or a Facebook post link for the Facebook channel. Columns
+ * of an older DB that lacks them read as undefined.
+ */
+const postedOutside = (item: ManualItem, channel: Channel) => item.status === "published" || item.published_at != null || (channel === "facebook" && !!item.fb_post_url);
+
+/**
+ * The approved items' channels whose row is failed or blocked (not by HQ's own claim), or missing (not
+ * when the item shows it was posted already).
+ */
 export function manualCandidates(items: readonly ManualItem[]): ManualCand[] {
   const out: ManualCand[] = [];
   for (const item of items) {
@@ -150,7 +160,7 @@ export function manualCandidates(items: readonly ManualItem[]): ManualCand[] {
     const posts = new Map((rows ?? []).map((p) => [p.channel, p]));
     for (const channel of channelsOf(item)) {
       const post = posts.get(channel) ?? null;
-      if (post ? channelGroup(post) !== "failed" || isHqClaim(post) : rows === undefined) continue;
+      if (post ? channelGroup(post) !== "failed" || isHqClaim(post) : rows === undefined || postedOutside(item, channel)) continue;
       const at = post?.scheduled_for ?? item.scheduled_at ?? null;
       out.push({ item, channel, post, at, key: at == null ? "" : manualKey(item.id, channel, at) });
     }
@@ -228,6 +238,7 @@ export function manualText(c: ManualCand, repo: string, dbFile: string, now: num
     `«${caption ? captionData(caption, Math.min(CAPTION_LIMIT[ch], CAPTION_MAX)) : "chưa có caption"}»`,
     "",
     `1. HQ đã giữ chỗ dòng này trước khi giao: state = 'blocked', error = '${claim}'. Trước khi đăng, kiểm lại: SELECT state, error FROM content_channel_posts ${where}; không còn đúng state 'blocked' với error bắt đầu bằng '${HQ_CLAIM_PREFIX}' (đã đăng, đã huỷ, không còn dòng) thì DỪNG, không đăng, trả lời "đã có người xử lý".`,
+    `2. Kiểm trên trang/kênh ${label} thật (tab Đã đăng / Đã lên lịch) xem bài này đã lên chưa. Đã lên thì KHÔNG đăng lại: ghi published (permalink nếu có, published_at = giờ thật) hoặc scheduled theo bước 4, rồi báo.`,
   ];
   if (late) {
     lines.push(
@@ -236,14 +247,15 @@ export function manualText(c: ManualCand, repo: string, dbFile: string, now: num
   }
   if (now - at > MANUAL_TOPIC_MS) {
     lines.push(
-      `   Trễ hơn 24 giờ: nếu bài bám trend, duet hay tin tức, kiểm chủ đề còn đúng (link nguồn ${c.item.source_url ? `«${dataLine(c.item.source_url, 300)}»` : "của bài"} còn sống, chưa bị sửa hay đóng). Không còn đúng thì KHÔNG đăng: ghi state = 'failed' kèm lý do (bước 3) và báo chủ.`,
+      `   Trễ hơn 24 giờ: nếu bài bám trend, duet hay tin tức, kiểm chủ đề còn đúng (link nguồn ${c.item.source_url ? `«${dataLine(c.item.source_url, 300)}»` : "của bài"} còn sống, chưa bị sửa hay đóng). Không còn đúng thì KHÔNG đăng: ghi state = 'failed' kèm lý do (bước 4) và báo chủ.`,
     );
   }
   lines.push(
-    `2. Mở ego-browser profile đã đăng nhập ${label} (Facebook: "${EGO_PROFILE}") và đăng bài lên ${label} ngay, đúng caption và media trên. Đăng như bài thường: không bật thêm nhãn, công tắc hay tuỳ chọn khai báo nào của nền tảng.`,
-    `3. Ghi kết quả vào content_channel_posts trong DB nội dung (${dbFile}). Đăng được: UPDATE content_channel_posts SET state = 'published', permalink = '<link bài>', published_at = <ms lúc đăng>, error = NULL, updated_at = <ms bây giờ> ${where};`,
+    `3. Mở ego-browser profile đã đăng nhập ${label} (Facebook: "${EGO_PROFILE}") và đăng bài lên ${label} ngay, đúng caption và media trên. Đăng như bài thường: không bật thêm nhãn, công tắc hay tuỳ chọn khai báo nào của nền tảng.`,
+    `4. Ghi kết quả vào content_channel_posts trong DB nội dung (${dbFile}). Đăng được: UPDATE content_channel_posts SET state = 'published', permalink = '<link bài>', published_at = <ms lúc đăng>, error = NULL, updated_at = <ms bây giờ> ${where};`,
+    `   Đã lên lịch sẵn trên nền tảng: UPDATE content_channel_posts SET state = 'scheduled', scheduled_for = <ms giờ hẹn>, error = NULL, updated_at = <ms bây giờ> ${where};`,
     `   Không đăng được: UPDATE content_channel_posts SET state = 'failed', error = '<lý do>', updated_at = <ms bây giờ> ${where};`,
-    `4. Trả lời một dòng: link bài, hoặc lý do không đăng được (HQ hiện kết quả trong sheet của bài).`,
+    `5. Trả lời một dòng: link bài, hoặc lý do không đăng được (HQ hiện kết quả trong sheet của bài).`,
     `(Sổ nội dung: ${repo}; HQ giao lúc ${fullStampOf(now)})`,
   );
   return contentTaskText(c.item, lines.join("\n"));
@@ -341,7 +353,11 @@ export type ManualDeps = {
   release: (c: ManualCand, claim: string, now: number) => void;
 };
 
-/** The approved items with their channel rows (a missing row is a candidate too), read straight from the book. */
+/**
+ * The approved items with their channel rows (a missing row is a candidate too), read straight from the
+ * book. `getContent` reads only the columns this DB has (`itemSelect`'s PRAGMA list), so `published_at` /
+ * `fb_post_url` (the "already posted" evidence) are undefined on a book without them.
+ */
 function loadBook(): Book | null {
   const p = contentDbPath();
   if (!p || "error" in p) return null;
