@@ -11,12 +11,15 @@ import {
   CHANNEL_LABEL,
   channelGate,
   CHANNELS,
+  CHANNELS_0065,
   CONTENT_TEXT_FIELDS,
   GUEST_DROPBACK_FIELDS,
   isChannel,
+  isChannel0065,
   isFormat,
   isStatus,
   NO_CHANNELS,
+  NO_CHANNELS_0065,
   NO_SCHEDULE,
   publishTaskText,
   RETRYABLE_STATES,
@@ -171,6 +174,16 @@ export function hasChannels(db: DatabaseSync): boolean {
   );
 }
 
+/**
+ * Migration 0065 is in: the CHECK on `content_channel_posts.channel` names every `CHANNELS_0065`
+ * channel (read from the table's CREATE sql, as SQLite keeps it). False before 0064 too.
+ */
+export function hasChannels0065(db: DatabaseSync): boolean {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'content_channel_posts'").get() as { sql: string | null } | undefined;
+  const sql = row?.sql ?? "";
+  return CHANNELS_0065.every((c) => sql.includes(`'${c}'`));
+}
+
 /** A row as SQLite returns it: 0064's columns are JSON text and a 0/1 flag. */
 type DbItem = Omit<ContentItem, "channels" | "captions_json" | "ai_label"> & { channels?: string; captions_json?: string | null; ai_label?: number };
 
@@ -200,7 +213,8 @@ function rowsOf(db: DatabaseSync, items: ContentItem[], channels: boolean): Cont
     .prepare("SELECT * FROM content_channel_posts WHERE item_id IN (SELECT value FROM json_each(?)) ORDER BY item_id, channel")
     .all(JSON.stringify(rows.map((r) => r.id))) as unknown as ChannelPost[];
   const by = new Map<number, ChannelPost[]>();
-  for (const p of posts) by.set(p.item_id, [...(by.get(p.item_id) ?? []), p]);
+  // A channel this HQ does not know (a newer content-ai) is left out, as `fromRow` leaves it out of `channels`.
+  for (const p of posts) if (isChannel(p.channel)) by.set(p.item_id, [...(by.get(p.item_id) ?? []), p]);
   return rows.map((r) => ({ ...r, channel_posts: by.get(r.id) ?? [] }));
 }
 
@@ -211,7 +225,7 @@ export function listContent(db: DatabaseSync, f: ContentFilter = {}): Extract<Co
   const sql = `SELECT * FROM content_items${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC, id DESC LIMIT ${LIST_MAX}`;
   const items = rowsOf(db, (db.prepare(sql).all(...args) as unknown as DbItem[]).map(fromRow), hasChannels(db));
   const pages = (db.prepare("SELECT DISTINCT fb_page FROM content_items ORDER BY fb_page").all() as { fb_page: string }[]).map((r) => r.fb_page);
-  return { configured: true, ready: true, items, pages, schedule: hasSchedule(db), assign: readAssignPref() };
+  return { configured: true, ready: true, items, pages, schedule: hasSchedule(db), channels0065: hasChannels0065(db), assign: readAssignPref() };
 }
 
 export function getContent(db: DatabaseSync, id: number): ContentItem | null {
@@ -288,11 +302,13 @@ function aiField(body: Record<string, unknown>, has: boolean): Record<string, nu
 type ChannelFields = { channels?: Channel[]; captions_json?: Captions | null };
 
 /**
- * `channels`: a non-empty list of the four channels, no repeats. `captions_json`: `{channel: text}`
+ * `channels`: a non-empty list of `CHANNELS`, no repeats. `captions_json`: `{channel: text}`
  * merged into the item's own (an empty text drops that channel's own caption, so it reads the shared
- * caption again), or null to drop them all. A DB before 0064 refuses both.
+ * caption again), or null to drop them all. A DB before 0064 refuses both; one before 0065 (`wide`
+ * false) refuses putting a `CHANNELS_0065` channel or its caption on the item (the worker's
+ * `content_channel_posts` CHECK would reject its row), while dropping one still goes.
  */
-function channelFields(body: Record<string, unknown>, has: boolean, current: Captions | null): ChannelFields {
+function channelFields(body: Record<string, unknown>, has: boolean, wide: boolean, current: Captions | null): ChannelFields {
   const out: ChannelFields = {};
   if (!("channels" in body) && !("captions_json" in body)) return out;
   if (!has) throw new ContentError(NO_CHANNELS, 400);
@@ -300,6 +316,7 @@ function channelFields(body: Record<string, unknown>, has: boolean, current: Cap
     const v = body.channels;
     if (!Array.isArray(v) || v.length === 0 || !v.every(isChannel) || new Set(v).size !== v.length)
       throw new ContentError(`channels: danh sách không rỗng, không trùng, trong ${CHANNELS.join(", ")}`, 422);
+    if (!wide && v.some(isChannel0065)) throw new ContentError(NO_CHANNELS_0065, 400);
     out.channels = v;
   }
   if ("captions_json" in body) {
@@ -311,6 +328,7 @@ function channelFields(body: Record<string, unknown>, has: boolean, current: Cap
       if (typeof s !== "string") throw new ContentError(`captions_json.${k}: phải là chuỗi`, 422);
       const t = s.trim();
       if (t.length > TEXT_MAX) throw new ContentError(`captions_json.${k}: quá ${TEXT_MAX} ký tự`, 422);
+      if (t && !wide && isChannel0065(k)) throw new ContentError(NO_CHANNELS_0065, 400);
       if (t) next[k] = t;
       else delete next[k];
     }
@@ -327,8 +345,12 @@ function channelColumns(c: ChannelFields): Record<string, string | null> {
   return out;
 }
 
-/** Contract 0064: entering approved needs every channel's caption within its limit, and YouTube a video and a title. */
-function channelApproval(it: Pick<ContentItem, "title" | "caption" | "captions_json" | "channels" | "media_path">): void {
+/**
+ * Contract 0064: entering approved needs every channel's caption within its limit, and YouTube a video
+ * and a title. Before 0065 (`wide` false) an item still holding a `CHANNELS_0065` channel cannot be scheduled.
+ */
+function channelApproval(it: Pick<ContentItem, "title" | "caption" | "captions_json" | "channels" | "media_path">, wide: boolean): void {
+  if (!wide && it.channels?.some(isChannel0065)) throw new ContentError(NO_CHANNELS_0065, 400);
   const why = channelGate({ ...it, media: mediaFiles(it.media_path) });
   if (why) throw new ContentError(why, 409);
 }
@@ -339,9 +361,10 @@ export function createContent(db: DatabaseSync, body: Record<string, unknown>, n
   if (!t.title) throw new ContentError("title: không được trống", 422);
   const status: ContentStatus = (body.status as ContentStatus | undefined) ?? "ordered";
   const has = hasChannels(db);
-  const ch = channelFields(body, has, null);
+  const wide = has && hasChannels0065(db);
+  const ch = channelFields(body, has, wide, null);
   if (has && status === "approved")
-    channelApproval({ title: t.title, caption: t.caption ?? null, captions_json: ch.captions_json ?? null, channels: ch.channels ?? ["facebook"], media_path: t.media_path ?? null });
+    channelApproval({ title: t.title, caption: t.caption ?? null, captions_json: ch.captions_json ?? null, channels: ch.channels ?? ["facebook"], media_path: t.media_path ?? null }, wide);
   const row: Record<string, string | number | null> = {
     ...t,
     ...scheduleFields(db, body, now),
@@ -392,7 +415,8 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
     if (item.updated_at !== body.seen) throw new ContentError(CONTENT_CHANGED, 409);
   }
   const has = hasChannels(db);
-  const ch = channelFields(body, has, item.captions_json ?? null);
+  const wide = has && hasChannels0065(db);
+  const ch = channelFields(body, has, wide, item.captions_json ?? null);
   let retry: Channel | null = null;
   if ("retry_channel" in body) {
     if (!has) throw new ContentError(NO_CHANNELS, 400);
@@ -433,13 +457,16 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
   const final = (set.status as ContentStatus | undefined) ?? item.status;
   const entering = has && final === "approved" && item.status !== "approved";
   if (entering)
-    channelApproval({
-      title: "title" in set ? (set.title as string) : item.title,
-      caption: "caption" in set ? (set.caption as string | null) : item.caption,
-      captions_json: "captions_json" in ch ? (ch.captions_json ?? null) : (item.captions_json ?? null),
-      channels: ch.channels ?? item.channels,
-      media_path: nextMedia,
-    });
+    channelApproval(
+      {
+        title: "title" in set ? (set.title as string) : item.title,
+        caption: "caption" in set ? (set.caption as string | null) : item.caption,
+        captions_json: "captions_json" in ch ? (ch.captions_json ?? null) : (item.captions_json ?? null),
+        channels: ch.channels ?? item.channels,
+        media_path: nextMedia,
+      },
+      wide,
+    );
   const cols = Object.keys(set);
   if (cols.length === 0 && retry === null) throw new ContentError("không có gì để sửa", 400);
   try {

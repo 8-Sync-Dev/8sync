@@ -78,17 +78,35 @@ export type ContentMedia = {
 /** One row of the list: the DB row plus what HQ read from its media, and (0064) how each channel went. */
 export type ContentRow = ContentItem & { media: ContentMedia[]; channel_posts?: ChannelPost[] };
 
-// ── Channels (migration 0064): one item, scheduled on each platform's own scheduler by content-ai ──
+// ── Channels (migration 0064, widened by 0065): one item, scheduled on each platform's own scheduler by content-ai ──
 
-export const CHANNELS = ["facebook", "linkedin", "threads", "youtube"] as const;
+export const CHANNELS = ["facebook", "linkedin", "threads", "youtube", "tiktok", "x", "instagram", "zalo"] as const;
 export type Channel = (typeof CHANNELS)[number];
 export type Captions = Partial<Record<Channel, string>>;
 
-export const CHANNEL_LABEL: Record<Channel, string> = { facebook: "Facebook", linkedin: "LinkedIn", threads: "Threads", youtube: "YouTube" };
+/**
+ * The channels `content_channel_posts.channel` takes only once content-ai's migration 0065 widened
+ * its CHECK (0064 knows the first four). HQ refuses to put them on an item before that (`NO_CHANNELS_0065`).
+ */
+export const CHANNELS_0065: readonly Channel[] = ["tiktok", "x", "instagram", "zalo"];
+
+export const CHANNEL_LABEL: Record<Channel, string> = {
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  threads: "Threads",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  x: "X",
+  instagram: "Instagram",
+  zalo: "Zalo",
+};
 /** The list row's compact form ("FB · LI · TH"). */
-export const CHANNEL_SHORT: Record<Channel, string> = { facebook: "FB", linkedin: "LI", threads: "TH", youtube: "YT" };
-/** Caption limits in characters (code points); YouTube's is the description, its title is the item title. */
-export const CAPTION_LIMIT: Record<Channel, number> = { facebook: 63206, linkedin: 3000, threads: 500, youtube: 5000 };
+export const CHANNEL_SHORT: Record<Channel, string> = { facebook: "FB", linkedin: "LI", threads: "TH", youtube: "YT", tiktok: "TT", x: "X", instagram: "IG", zalo: "ZL" };
+/**
+ * Caption limits in characters (code points); YouTube's is the description, its title is the item title.
+ * X is the standard (non-Premium) post; Zalo has no published limit, 2000 keeps a post readable.
+ */
+export const CAPTION_LIMIT: Record<Channel, number> = { facebook: 63206, linkedin: 3000, threads: 500, youtube: 5000, tiktok: 2200, x: 280, instagram: 2200, zalo: 2000 };
 export const YOUTUBE_TITLE_LIMIT = 100;
 
 export const CHANNEL_STATES = ["scheduling", "scheduled", "published", "failed", "blocked", "cancelled"] as const;
@@ -113,12 +131,24 @@ export const isChannel = (v: unknown): v is Channel => typeof v === "string" && 
 
 /** What a channel write answers on a DB before migration 0064. */
 export const NO_CHANNELS = "DB chưa có migration 0064 (kênh đăng): mở app content-ai một lần để chạy migration.";
+/** What a write putting a `CHANNELS_0065` channel on an item answers on a DB whose `content_channel_posts` CHECK predates 0065. */
+export const NO_CHANNELS_0065 = "DB chưa có migration 0065 (kênh tiktok/x/instagram/zalo): phòng content-post-agency cần chạy 0065";
+export const isChannel0065 = (c: Channel) => CHANNELS_0065.includes(c);
 
 /** Characters as the platforms count them (code points, so an emoji is one). */
 export const charCount = (s: string) => [...s].length;
 
 const SECTION = /^===\s*([A-Za-z]+)\b[^\n]*===\s*$/;
-const SECTION_CHANNEL: Record<string, Channel> = { FACEBOOK: "facebook", LINKEDIN: "linkedin", THREADS: "threads", YOUTUBE: "youtube" };
+const SECTION_CHANNEL: Record<string, Channel> = {
+  FACEBOOK: "facebook",
+  LINKEDIN: "linkedin",
+  THREADS: "threads",
+  YOUTUBE: "youtube",
+  TIKTOK: "tiktok",
+  X: "x",
+  INSTAGRAM: "instagram",
+  ZALO: "zalo",
+};
 
 /**
  * The per-channel sections of a shared caption: a whole line `=== WORD ... ===` opens a section,
@@ -245,6 +275,97 @@ export function unapprovedLive(it: Pick<ContentItem, "status"> & { channel_posts
   return (it.channel_posts ?? []).filter((p) => p.state === "scheduling" || p.state === "scheduled" || p.state === "published").map((p) => p.channel);
 }
 
+// ── Per platform (owner 2026-11-06: "mỗi nền tảng min là 10 bài mỗi ngày", and a scheduled state the team can check) ──
+
+/** The owner's floor: posts per platform per day. */
+export const PLATFORM_DAILY_TARGET = 10;
+
+/** Channel rows that count as "Đã lên lịch" for the team: on the platform's scheduler, or already out. */
+export const SCHEDULED_STATES: readonly ChannelState[] = ["scheduled", "published"];
+
+/** Where an item goes: its channels, or Facebook on a DB before 0064 (everything went there). */
+export const channelsOf = (it: Pick<ContentItem, "channels">): Channel[] => it.channels ?? ["facebook"];
+
+/**
+ * "Đã lên lịch x/y kênh": of the item's channels (y), how many have a row scheduled or published (x).
+ * Rows of a channel the item no longer has do not count. Null on a DB before 0064 (no channel rows to read).
+ */
+export function scheduledOf(it: Pick<ContentRow, "channels" | "channel_posts">): { done: number; total: number } | null {
+  if (it.channels === undefined) return null;
+  const live = new Set((it.channel_posts ?? []).filter((p) => SCHEDULED_STATES.includes(p.state)).map((p) => p.channel));
+  return { done: it.channels.filter((c) => live.has(c)).length, total: it.channels.length };
+}
+
+export const SCHEDULED_FILTERS = ["full", "partial", "none"] as const;
+export type ScheduledFilter = (typeof SCHEDULED_FILTERS)[number];
+export const SCHEDULED_FILTER_LABEL: Record<ScheduledFilter, string> = {
+  full: "Đã lên lịch đủ kênh",
+  partial: "Đã lên lịch một phần",
+  none: "Chưa lên lịch kênh nào",
+};
+export const isScheduledFilter = (v: unknown): v is ScheduledFilter => typeof v === "string" && (SCHEDULED_FILTERS as readonly string[]).includes(v);
+
+/** Whether an item falls under a "Lên lịch" filter value; a DB before 0064 has nothing to filter on (never matches). */
+export function scheduledMatch(it: Pick<ContentRow, "channels" | "channel_posts">, f: ScheduledFilter): boolean {
+  const s = scheduledOf(it);
+  if (!s || s.total === 0) return false;
+  if (f === "full") return s.done === s.total;
+  if (f === "partial") return s.done > 0 && s.done < s.total;
+  return s.done === 0;
+}
+
+type PlatformSource = Pick<ContentRow, "status" | "scheduled_at" | "published_at" | "channels" | "channel_posts">;
+
+/** When one channel of an item goes out: its row's time (the worker may pick its own slot), else the item's. */
+export function channelWhen(it: PlatformSource, ch: Channel): number | null {
+  const post = it.channel_posts?.find((p) => p.channel === ch);
+  return post?.scheduled_for ?? post?.published_at ?? whenOf(it);
+}
+
+/** One platform on one day: posts planned on it, and how many of them are scheduled or published there. */
+export type PlatformDay = { planned: number; scheduled: number };
+export type PlatformCounts = Record<Channel, PlatformDay>;
+
+export const emptyPlatforms = (): PlatformCounts => Object.fromEntries(CHANNELS.map((c) => [c, { planned: 0, scheduled: 0 }])) as PlatformCounts;
+
+/**
+ * Per local day ("YYYY-MM-DD") and platform: how many posts it carries (`channelWhen`) and how many of
+ * those are scheduled/published. Rejected items and channels with no time yet are left out.
+ */
+export function platformDays(items: PlatformSource[]): Map<string, PlatformCounts> {
+  const out = new Map<string, PlatformCounts>();
+  for (const it of items) {
+    if (it.status === "rejected") continue;
+    for (const ch of channelsOf(it)) {
+      const at = channelWhen(it, ch);
+      if (at == null) continue;
+      const key = dayKey(at);
+      const day = out.get(key) ?? emptyPlatforms();
+      out.set(key, day);
+      day[ch].planned++;
+      const post = it.channel_posts?.find((p) => p.channel === ch);
+      if (post && SCHEDULED_STATES.includes(post.state)) day[ch].scheduled++;
+    }
+  }
+  return out;
+}
+
+/**
+ * The items going out on one platform on one day (`day` null = channels with no time yet), by time:
+ * the sheet split by platform.
+ */
+export function platformItems<T extends PlatformSource>(items: T[], ch: Channel, day: string | null): T[] {
+  const at = (it: T) => channelWhen(it, ch);
+  return items
+    .filter((it) => channelsOf(it).includes(ch) && (day === null ? at(it) == null : at(it) != null && dayKey(at(it)!) === day))
+    .sort((a, b) => (at(a) ?? 0) - (at(b) ?? 0));
+}
+
+/** A platform's day against the target, in words (never colour alone). */
+export function targetState(planned: number, target = PLATFORM_DAILY_TARGET): { met: boolean; text: string } {
+  return planned >= target ? { met: true, text: "Đủ" } : { met: false, text: `Thiếu ${target - planned}` };
+}
+
 /** Text fields the owner edits in place (status, approval and the `*_at` stamps go through their own actions). */
 export const CONTENT_TEXT_FIELDS = ["title", "brief", "caption", "media_path", "fb_page", "source_url", "check_note", "news_url", "fb_post_url"] as const;
 export type ContentTextField = (typeof CONTENT_TEXT_FIELDS)[number];
@@ -260,6 +381,8 @@ export type ContentList =
       pages: string[];
       /** Migration 0063 is in: schedule + assignee columns exist. */
       schedule: boolean;
+      /** Migration 0065 is in: `content_channel_posts` takes TikTok / X / Instagram / Zalo (`CHANNELS_0065`). */
+      channels0065: boolean;
       /** The session "Duyệt" sends the posting task to unless the owner picks another (saved server-side; null for a guest). */
       assign: AssignPref | null;
       /** The content-post-agency checkout (owner only): where `8sync . cpa-live` opens its omp session. */

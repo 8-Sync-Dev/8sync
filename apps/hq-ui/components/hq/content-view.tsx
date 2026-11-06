@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangleIcon, BarChart3Icon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, SquareTerminalIcon, Trash2Icon } from "lucide-react";
+import { AlertTriangleIcon, BarChart3Icon, CalendarCheckIcon, CalendarClockIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, SquareTerminalIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   byDay,
+  CHANNEL_LABEL,
+  CHANNELS,
+  channelsOf,
+  emptyPlatforms,
   CONTENT_FORMATS,
   CONTENT_STATUSES,
   contentWarning,
@@ -19,7 +23,15 @@ import {
   FORMAT_LABEL,
   GUEST_DROPBACK_FIELDS,
   GUEST_DROPBACK_NOTE,
+  isChannel,
+  isScheduledFilter,
   nextStatuses,
+  PLATFORM_DAILY_TARGET,
+  platformDays,
+  platformItems,
+  SCHEDULED_FILTER_LABEL,
+  SCHEDULED_FILTERS,
+  scheduledMatch,
   stepHint,
   parseDay,
   NO_SCHEDULE,
@@ -42,7 +54,7 @@ import { useAccess } from "./access";
 import { ErrorNote } from "./bits";
 import { ALL, assigneeShort, Editable, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, STATUS_TONE, StatusIcon, useContentPatch, type Patch } from "./content-bits";
 import { ContentCalendar, periodLabel } from "./content-calendar";
-import { ChannelStates, ContentSheet, NO_DAY } from "./content-sheet";
+import { ChannelStates, ContentSheet, NO_DAY, ScheduledChip } from "./content-sheet";
 import { ContentOverview, indexResults } from "./content-results";
 import { TOUCH } from "./room-send";
 import { makeApi, type Api } from "./use-hq";
@@ -129,6 +141,9 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
   const [status, setStatus] = useState(ALL);
   const [format, setFormat] = useState(ALL);
   const [page, setPage] = useState(ALL);
+  // Client-side (owner 2026-11-06): the platform an item goes out on, and how far its channels are scheduled.
+  const [platform, setPlatform] = useState(ALL);
+  const [sched, setSched] = useState(ALL);
   const query = useMemo(() => {
     const q = new URLSearchParams();
     if (status !== ALL) q.set("status", status);
@@ -159,7 +174,15 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
   // "Bỏ" takes an item off the calendar and the list; the Trạng thái filter "Bỏ" shows them again (to reopen one).
   const all = useMemo(() => ready?.items ?? [], [ready]);
   const rejected = useMemo(() => (status === ALL ? all.filter((it) => it.status === "rejected").length : 0), [all, status]);
-  const items = useMemo(() => (status === ALL ? all.filter((it) => it.status !== "rejected") : all), [all, status]);
+  const kept = useMemo(() => (status === ALL ? all.filter((it) => it.status !== "rejected") : all), [all, status]);
+  // Per platform per day, before the Nền tảng / Lên lịch filters narrow the view: the target counts every post.
+  const counts = useMemo(() => platformDays(kept), [kept]);
+  const onPlatform = isChannel(platform) ? platform : null;
+  const items = useMemo(
+    () => kept.filter((it) => (onPlatform === null || channelsOf(it).includes(onPlatform)) && (!isScheduledFilter(sched) || scheduledMatch(it, sched))),
+    [kept, onPlatform, sched],
+  );
+  const channelRows = all.some((it) => it.channels !== undefined);
   const days = useMemo(() => byDay(items), [items]);
   const unscheduled = useMemo(() => items.filter((it) => whenOf(it) == null), [items]);
   const openItem = useCallback((it: ContentRow) => {
@@ -173,7 +196,9 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
   const pickedDay = picked ? (whenOf(picked) != null ? dayKey(whenOf(picked)!) : NO_DAY) : null;
   const sheetDay = pickedDay ?? sel.day;
   useEffect(() => writeSel(active ? { day: sheetDay, item: sel.item } : { day: null, item: null }), [sheetDay, sel.item, active]);
-  const sheetItems = sheetDay === NO_DAY ? unscheduled : sheetDay ? (days.get(sheetDay) ?? []) : [];
+  // Split by platform, a day holds the items going out on it that day (a channel may have its own slot).
+  const sheetItems =
+    onPlatform !== null && sheetDay ? platformItems(items, onPlatform, sheetDay === NO_DAY ? null : sheetDay) : sheetDay === NO_DAY ? unscheduled : sheetDay ? (days.get(sheetDay) ?? []) : [];
   const today = dayKey(list.at || 0);
 
   return (
@@ -191,6 +216,8 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
               <Filter label="Trạng thái" value={status} onChange={setStatus} options={CONTENT_STATUSES.map((s) => [s, STATUS_LABEL[s]])} />
               <Filter label="Định dạng" value={format} onChange={setFormat} options={CONTENT_FORMATS.map((f) => [f, FORMAT_LABEL[f]])} />
               {(pages.length > 1 || page !== ALL) && <Filter label="Trang FB" value={page} onChange={setPage} options={pages.map((p) => [p, p])} />}
+              {channelRows && <Filter label="Nền tảng" value={platform} onChange={setPlatform} options={CHANNELS.map((c) => [c, CHANNEL_LABEL[c]])} />}
+              {channelRows && <Filter label="Lên lịch" value={sched} onChange={setSched} options={SCHEDULED_FILTERS.map((f) => [f, SCHEDULED_FILTER_LABEL[f]])} />}
               {owner && (
                 <Button type="button" size="sm" variant={adding ? "secondary" : "default"} className={cn("text-xs", TOUCH)} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
                   <PlusIcon aria-hidden /> Mục mới
@@ -284,7 +311,7 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
                     setMode("month");
                   }}
                 />
-                <Legend />
+                <Legend channels={channelRows} />
               </>
             ) : view === "overview" ? (
               <ContentOverview items={items} results={res.data} error={res.error} now={list.at} onOpen={openItem} />
@@ -295,6 +322,10 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
               day={sheetDay}
               item={sel.item}
               items={sheetItems}
+              platform={onPlatform}
+              onPlatform={(c) => setPlatform(c ?? ALL)}
+              counts={sheetDay && sheetDay !== NO_DAY ? (counts.get(sheetDay) ?? emptyPlatforms()) : null}
+              channels0065={data.channels0065}
               schedule={data.schedule}
               assign={data.assign}
               api={api}
@@ -315,8 +346,11 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
   );
 }
 
-/** What the chip colours and edges mean: format by hue, status by edge (plus a tick when approved/published). */
-function Legend() {
+/**
+ * What the chip colours and edges mean: format by hue, status by edge (plus a tick when approved/published);
+ * on a 0064 DB also the "Đã lên lịch x/y kênh" chip and the per-platform target of the day sheet.
+ */
+function Legend({ channels }: { channels: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground">
       <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -335,6 +369,31 @@ function Legend() {
           </span>
         ))}
       </span>
+      {channels && (
+        <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className="inline-flex items-center gap-1 rounded-md border border-st-running/40 px-1.5 text-st-running tabular-nums">
+            <CalendarCheckIcon aria-hidden className="size-3" />
+            Đã lên lịch 2/2 kênh
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-md border px-1.5 tabular-nums">
+            <CalendarClockIcon aria-hidden className="size-3" />
+            Đã lên lịch 1/2 kênh
+          </span>
+          <span>= kênh của bài đã lên lịch hoặc đã đăng / số kênh của bài</span>
+          <span className="tabular-nums">
+            Mở một ngày: mỗi nền tảng n/{PLATFORM_DAILY_TARGET} bài,{" "}
+            <span className="inline-flex items-center gap-0.5 text-st-running">
+              <CheckIcon aria-hidden className="size-3" />
+              Đủ
+            </span>{" "}
+            hoặc{" "}
+            <span className="inline-flex items-center gap-0.5 text-st-needs">
+              <AlertTriangleIcon aria-hidden className="size-3" />
+              Thiếu
+            </span>
+          </span>
+        </span>
+      )}
     </div>
   );
 }
@@ -534,6 +593,9 @@ function Items({
                 <td className="px-2 py-2">
                   <p className={cn("whitespace-nowrap", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</p>
                   {it.channels && <ChannelStates it={it} />}
+                  <div className="mt-1">
+                    <ScheduledChip it={it} />
+                  </div>
                   <div className="mt-1 flex flex-col items-start gap-1">
                     {canEdit &&
                       steps

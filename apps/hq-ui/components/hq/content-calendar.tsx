@@ -5,7 +5,7 @@
 // opens the sheet on that item.
 import { UserRoundIcon } from "lucide-react";
 import { useMemo } from "react";
-import { addDays, capDay, dayKey, FORMAT_LABEL, monthGrid, STATUS_LABEL, timeOf, weekStart, whenOf, type CalendarMode, type ContentRow } from "@/lib/content";
+import { addDays, capDay, dayKey, FORMAT_LABEL, monthGrid, scheduledOf, STATUS_LABEL, timeOf, weekStart, whenOf, type CalendarMode, type ContentRow } from "@/lib/content";
 import { cn } from "@/lib/utils";
 import { assigneeShort, FORMAT_DOT, FORMAT_TONE, STATUS_EDGE, StatusIcon } from "./content-bits";
 
@@ -29,12 +29,18 @@ export function periodLabel(mode: CalendarMode, d: Date): string {
   return a.getMonth() === b.getMonth() ? `${a.getDate()} – ${b.getDate()}/${b.getMonth() + 1}/${b.getFullYear()}` : `${a.getDate()}/${a.getMonth() + 1} – ${b.getDate()}/${b.getMonth() + 1}/${b.getFullYear()}`;
 }
 
+/** "Đã lên lịch x/y kênh" (`scheduledOf`); null before 0064 or with no channel. */
+const scheduledText = (it: ContentRow) => {
+  const s = scheduledOf(it);
+  return s && s.total > 0 ? `Đã lên lịch ${s.done}/${s.total} kênh` : null;
+};
+
 const chipTitle = (it: ContentRow) =>
   [
     `#${it.id} ${it.title}`,
     `${FORMAT_LABEL[it.format]} · ${STATUS_LABEL[it.status]}`,
+    scheduledText(it),
     it.assignee_session ? `đang xử lý: ${it.assignee_base ?? it.assignee_session}` : null,
-
   ]
     .filter(Boolean)
     .join("\n");
@@ -43,11 +49,13 @@ const chipTitle = (it: ContentRow) =>
 export function Chip({ it, onOpen, wide = false }: { it: ContentRow; onOpen: (it: ContentRow) => void; wide?: boolean }) {
   const at = whenOf(it);
   const who = assigneeShort(it);
+  const sched = scheduledOf(it);
+  const schedText = scheduledText(it);
   return (
     <button
       type="button"
       title={chipTitle(it)}
-      aria-label={`${at != null ? `${timeOf(at)}, ` : ""}${it.title}, ${FORMAT_LABEL[it.format]}, ${STATUS_LABEL[it.status]}${who ? `, đang xử lý: ${it.assignee_base ?? who}` : ""}`}
+      aria-label={`${at != null ? `${timeOf(at)}, ` : ""}${it.title}, ${FORMAT_LABEL[it.format]}, ${STATUS_LABEL[it.status]}${schedText ? `, ${schedText}` : ""}${who ? `, đang xử lý: ${it.assignee_base ?? who}` : ""}`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(it);
@@ -62,6 +70,11 @@ export function Chip({ it, onOpen, wide = false }: { it: ContentRow; onOpen: (it
       <StatusIcon status={it.status} />
       {at != null && <span className="shrink-0 font-mono tabular-nums opacity-80">{timeOf(at)}</span>}
       <span className={cn("min-w-0 flex-1 truncate font-medium", it.status === "rejected" && "line-through")}>{it.title}</span>
+      {sched && sched.total > 0 && (
+        <span aria-hidden className="shrink-0 font-mono tabular-nums opacity-80">
+          {sched.done}/{sched.total}
+        </span>
+      )}
       {who && (
         // Narrow cells: the holder gets its own line so the title keeps the width.
         <span className={cn("inline-flex min-w-0 items-center gap-0.5 rounded bg-background/70 px-1 text-[10px] font-normal text-foreground", wide ? "max-w-60 shrink-0" : "basis-full")}>

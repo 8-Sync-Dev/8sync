@@ -1,17 +1,14 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-06: HQ từ xa qua Tailscale, link cố định, tự sống lại khi bật máy (`8sync hq ui --tailnet` + `--at-login`, v0.126.0). Tailnet `tail5204e3.ts.net`, máy `desktop-hrgdu0t`, HTTPS Certificates đã bật (console Tailscale, ego profile "8sync FB").
+Owner 2026-11-06: HQ v0.127.0 — phòng kiểu IDE ("Thư mục" là pane cạnh phòng, kéo rộng được; "Báo cáo" có nút Mở lớn; ô chat không kéo dài), sidebar hiện branch/worktree như Orca, "Chọn thư mục" có "Thư mục mới…", tab Nội dung theo nền tảng (mục tiêu 10 bài/nền tảng/ngày, chip "Đã lên lịch x/y kênh", kênh TikTok/X/Instagram/Zalo chờ migration 0065 của content-post-agency).
 
 ## Checklist
-- [x] v0.124.0 + v0.124.1 đã release (grant ship chỉ từ trang HQ của chủ)
-- [x] Thứ tự ảnh dán (`useAttach` slot theo lúc dán, `- 1. <path>`), báo cáo trong sheet ngày, nút `#id` → Nội dung, "Xem" → Kết quả, panel "Thư mục" + `/api/files`
-- [x] vitest + next build + smoke UI trên sandbox HQ :8751 (phòng thật qua JSON của HQ live, ghi file chỉ trong worktree)
-- [x] v0.125.0 đã release (PR #326)
-- [x] v0.125.1: reply media không đánh số · Danh sách hiện trạng thái từng kênh + báo "lịch khi chưa duyệt" · bỏ `/rules` sót; vitest 996/996 + build + smoke sandbox :8752 (#77–80)
-- [x] v0.125.1 đã release (PR #327)
-- [ ] v0.126.0 `--tailnet` + `--at-login`: test → PR → release → `8sync up` → owner chạy `8sync hq ui --at-login` + `--relink`, cài Tailscale trên điện thoại (GitHub `8syncdev`)
-- [ ] Owner: #77–80 đã lên lịch trên nền tảng khi còn `checked` → huỷ trên nền tảng hoặc Duyệt trước 15:00 06/11
+- [x] v0.126.0 `--tailnet` + `--at-login` đã release (PR #328)
+- [x] v0.127.0 trong worktree `C:/Users/Projects/su-code-panes` (nhánh `feat/hq-room-panes`, đã cherry-pick `feat/hq-content-platforms`): vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
+- [ ] v0.127.0: cargo test → PR → CI → merge → tag → release.yml → `8sync up` → kiểm :8740
+- [ ] Nhắn phòng `omp-058138a5c9bdb509` (content-post-agency): DDL 0065 để họ áp vào repo/DB của họ, rồi backfill TikTok/X cho #77–80
+- [ ] Owner: #77–80 đã lên lịch trên nền tảng khi còn `checked`
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
 ## Goal: đa kênh cho tab Nội dung (phiên tu-session-marketing-phong-core)
@@ -24,7 +21,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.126.0 trong worktree `C:/Users/Projects/su-code-tailnet` (nhánh `feat/hq-tailnet`). HQ live đang tắt (owner tắt).
+v0.127.0 trong `C:/Users/Projects/su-code-panes`; sau khi merge xoá worktree `su-code-panes` + `su-code-content` và nhánh của chúng.
 
 ## Next
 - Đa kênh: đưa 0064 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; tới lúc đó HQ chạy như DB chưa có kênh.
