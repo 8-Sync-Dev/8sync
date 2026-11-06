@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- HQ sidebar: branch của từng phiên, như Orca. Nhóm "Dự án" giờ gom mọi git worktree của repo (cả thư mục anh em như `su-code-panes` của `su-code`, trước là một dự án riêng) và chia phiên theo branch: worktree chính trước (nhãn "chính"), rồi worktree phụ theo thứ tự phiên đầu tiên; header = branch (detached: `HEAD @ <sha7>`), tên thư mục khi khác branch, số phiên; "⋯" của worktree phụ có Tổng quan worktree và Xóa worktree. Worktree không có phiên nằm sau một dòng "N worktree không có phiên" (gập mặc định). Nhóm theo trạng thái / không nhóm: branch hiện mờ trên dòng phiên. Dữ liệu từ `GET /api/projects/branches` (`git worktree list --porcelain`, cache 20 s). Bỏ glyph worktree trên dòng phiên.
+
 ## [0.126.0] — 2026-11-06
 
 ### Added

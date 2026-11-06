@@ -2,7 +2,9 @@
 
 // The room's "Thư mục" panel (owner 2026-11-05: "không có nút mở folder sidebar như IDE"): the repo as a
 // lazily loaded tree, one file at a time in a viewer (markdown rendered, code with line numbers, media,
-// HTML in a sandboxed frame) and a plain editor for text files. Server side: app/api/files/**.
+// HTML in a sandboxed frame) and a plain editor for text files. Wide room view: a resizable pane beside
+// the room, full height (owner 2026-11-06: "phải là span chứ sao lại sheet"); phone: a sheet.
+// Server side: app/api/files/**.
 import {
   AlertTriangleIcon,
   ArrowLeftIcon,
@@ -17,8 +19,9 @@ import {
   RotateCwIcon,
   SaveIcon,
   SearchIcon,
+  XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent, type RefObject } from "react";
 import { toast } from "sonner";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
@@ -38,12 +41,69 @@ import { ApiError, makeApi, type Api } from "./use-hq";
 
 const DISCARD = "Bỏ phần sửa chưa lưu?";
 
-/** "Thư mục" in the room bar: opens the room's repo (its git root, else its cwd) in a right sheet. */
+/** The wide room view's "Thư mục" pane (TeamView provides it): open or not, kept per browser. */
+export type FilesPaneState = { open: boolean; setOpen: (o: boolean) => void; dirtyRef: RefObject<boolean> };
+export const FilesPaneCtx = createContext<FilesPaneState | null>(null);
+const PANE_KEY = "hq-room-files-open";
+const paneListeners = new Set<() => void>();
+/** This visit's choice, so it holds when storage is off. */
+let paneOpen: boolean | null = null;
+function readPane(): boolean {
+  if (paneOpen != null) return paneOpen;
+  try {
+    return localStorage.getItem(PANE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** State for FilesPaneCtx (closed on the server). Closing with unsaved edits asks first. */
+export function useFilesPaneState(): FilesPaneState {
+  const dirtyRef = useRef(false);
+  const open = useSyncExternalStore(
+    (l) => (paneListeners.add(l), () => paneListeners.delete(l)),
+    readPane,
+    () => false,
+  );
+  const setOpen = useCallback((o: boolean) => {
+    if (!o && dirtyRef.current && !window.confirm(DISCARD)) return;
+    if (!o) dirtyRef.current = false;
+    paneOpen = o;
+    try {
+      localStorage.setItem(PANE_KEY, o ? "1" : "0");
+    } catch {
+      /* storage off: this visit only */
+    }
+    paneListeners.forEach((l) => l());
+  }, []);
+  return useMemo(() => ({ open, setOpen, dirtyRef }), [open, setOpen]);
+}
+
+/** The repo a room's "Thư mục" shows: its git root, else its cwd. */
+export const filesRootOf = (room: Room): string | null => room.project?.root ?? room.cwd ?? null;
+
+/** "Thư mục" in the room bar: toggles the room's pane on a wide screen, opens a right sheet on a phone. */
 export function FilesButton({ room, token }: { room: Room; token: string }) {
-  const root = room.project?.root ?? room.cwd;
+  const root = filesRootOf(room);
+  const pane = useContext(FilesPaneCtx);
   const [open, setOpen] = useState(false);
   const dirtyRef = useRef(false);
   if (!root) return null;
+  if (pane)
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant={pane.open ? "secondary" : "outline"}
+        className="shrink-0"
+        aria-pressed={pane.open}
+        aria-controls="room-files-pane"
+        onClick={() => pane.setOpen(!pane.open)}
+        title={`${pane.open ? "Đóng" : "Mở"} cây thư mục: ${root}`}
+      >
+        <FolderTreeIcon aria-hidden /> Thư mục
+      </Button>
+    );
   const change = (o: boolean) => {
     if (!o && dirtyRef.current && !window.confirm(DISCARD)) return;
     if (!o) dirtyRef.current = false;
@@ -66,6 +126,30 @@ export function FilesButton({ room, token }: { room: Room; token: string }) {
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+/** The pane itself (TeamView puts it beside the room): title row, the tree and the open file. */
+export function FilesPane({ root, token }: { root: string; token: string }) {
+  const pane = useContext(FilesPaneCtx);
+  if (!pane) return null;
+  return (
+    <aside id="room-files-pane" aria-labelledby="room-files-title" className="flex h-full min-h-0 flex-col bg-background">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b pr-1.5 pl-3">
+        <FolderTreeIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <h2 id="room-files-title" className="shrink-0 text-sm font-semibold">
+          Thư mục
+        </h2>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={root} dir="rtl">
+          {/* rtl + bdi: a long path keeps its end (the repo name) visible. */}
+          <bdi>{root}</bdi>
+        </span>
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => pane.setOpen(false)} aria-label="Đóng Thư mục" title="Đóng">
+          <XIcon />
+        </Button>
+      </div>
+      <FilesPanel key={root} root={root} token={token} dirtyRef={pane.dirtyRef} />
+    </aside>
   );
 }
 
@@ -133,8 +217,10 @@ function FilesPanel({ root, token, dirtyRef }: { root: string; token: string; di
   }, [dirs, q]);
 
   return (
-    <div className="grid min-h-0 flex-1 sm:grid-cols-[15rem_minmax(0,1fr)]">
-      <nav aria-label="Cây thư mục" className={cn("flex min-h-0 flex-col border-r", file && "max-sm:hidden")}>
+    // Two columns once the panel itself is ≥ 36rem wide (a pane can be narrow on a wide screen).
+    <div className="@container/files flex min-h-0 flex-1 flex-col">
+    <div className="grid min-h-0 flex-1 @xl/files:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)]">
+      <nav aria-label="Cây thư mục" className={cn("flex min-h-0 flex-col border-r", file && "@max-xl/files:hidden")}>
         <div className="flex shrink-0 items-center gap-1 border-b p-2">
           <div className="relative min-w-0 flex-1">
             <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -173,13 +259,14 @@ function FilesPanel({ root, token, dirtyRef }: { root: string; token: string; di
           )}
         </div>
       </nav>
-      <section aria-label="Xem file" className={cn("flex min-h-0 flex-col", !file && "max-sm:hidden")}>
+      <section aria-label="Xem file" className={cn("flex min-h-0 flex-col", !file && "@max-xl/files:hidden")}>
         {file ? (
           <FileViewer root={root} rel={file} api={api} token={token} nonce={nonce} dirtyRef={dirtyRef} onOpen={openFile} onBack={() => openFile(null)} />
         ) : (
           <p className="m-auto max-w-xs px-4 text-center text-sm text-pretty text-muted-foreground">Chọn một file bên trái để xem, sửa hoặc mở link trong đó.</p>
         )}
       </section>
+    </div>
     </div>
   );
 }
@@ -312,7 +399,7 @@ function FileViewer({
   return (
     <article aria-label={baseName(rel)} className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b px-3 py-2">
-        <Button type="button" variant="ghost" size="icon-sm" className="-ml-1 shrink-0 sm:hidden max-sm:size-10" onClick={onBack} aria-label="Về cây thư mục">
+        <Button type="button" variant="ghost" size="icon-sm" className="-ml-1 shrink-0 @xl/files:hidden max-sm:size-10" onClick={onBack} aria-label="Về cây thư mục">
           <ArrowLeftIcon />
         </Button>
         <nav aria-label="Đường dẫn file" className="min-w-0 flex-1">

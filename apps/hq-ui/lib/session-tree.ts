@@ -2,9 +2,10 @@
 // session → sub-session. HQ rooms (ccc/omp) and every omp session of a folder are one row type; omp `task`
 // subagents (and a Claude Code room's running agents) nest under their session. Grouping, sorting, the
 // local archive and the prefs live here, pure. Tested in tests/session-tree.test.ts.
+import { homeOf, type BranchIndex } from "./branches";
 import type { FloorState } from "./floor";
 import { isOmpSessionName } from "./omp-workspace";
-import { groupKey, repoOf } from "./sidebar";
+import { repoOf } from "./sidebar";
 
 /** One state vocabulary for sessions and sub-sessions (words, never colour alone). */
 export type TreeState = "needs" | "working" | "done" | "error" | "idle";
@@ -213,8 +214,9 @@ export function moveKey(saved: readonly string[], shown: readonly string[], from
 /**
  * Groups in display order. By project: the group with the newest activity first (by name when sorting
  * by name); by state: Chờ anh, Đang làm, Xong, Lỗi, Nghỉ (empty states skipped); none: one group.
+ * `branches` (git's worktree lists): a session in a linked worktree goes under its repo (lib/branches.ts).
  */
-export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy, order: TreeOrder = NO_ORDER): TreeGroup[] {
+export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy, order: TreeOrder = NO_ORDER, branches: BranchIndex | null = null): TreeGroup[] {
   if (by === "none") return list.length ? [{ key: "all", label: "Phiên", root: null, sessions: sortSessions(list, sort, order) }] : [];
   if (by === "state") {
     return TREE_STATES.flatMap((st) => {
@@ -224,9 +226,9 @@ export function groupSessions(list: TreeSession[], by: GroupBy, sort: SortBy, or
   }
   const groups = new Map<string, TreeGroup>();
   for (const s of list) {
-    const key = s.root ? groupKey(s.root) : "";
-    let g = groups.get(key);
-    if (!g) groups.set(key, (g = { key: key || "none", label: s.folder, root: s.root, sessions: [] }));
+    const home = homeOf(s, branches);
+    let g = groups.get(home.key);
+    if (!g) groups.set(home.key, (g = { key: home.key || "none", label: home.label, root: home.root, sessions: [] }));
     g.sessions.push(s);
   }
   const sorted = [...groups.values()].map((g) => ({ ...g, sessions: sortSessions(g.sessions, sort, order) }));
