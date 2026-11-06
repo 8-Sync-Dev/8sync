@@ -6,6 +6,7 @@ import {
   ChevronDownIcon,
   MessagesSquareIcon,
   PlayIcon,
+  ScrollTextIcon,
   SendHorizontalIcon,
   SquareIcon,
 } from "lucide-react";
@@ -59,7 +60,9 @@ export function TeamView({
   /**
    * Chat phòng: the room's brief and Nhật ký (Kết quả · Từng bước). On a wide screen it is the right
    * column beside the chat (the chat and its message box on the left), the border between them dragged
-   * to give either more room (size kept per browser); on a phone it scrolls with the chat as `header` does.
+   * to give either more room (size kept per browser); on a phone a pinned "Chat · Nhật ký" switch shows
+   * one or the other, each with its own scroll (owner 2026-11-06: scrolling the whole chat up to reach
+   * Nhật ký was hard).
    */
   split?: ReactNode;
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
@@ -105,8 +108,10 @@ export function TeamView({
   const filesPane = useFilesPaneState();
   const sidePane = !!files && !mobile && filesPane.open;
   const filesLayout = useDefaultLayout({ id: "hq-room-files", panelIds: sidePane ? ["room", "files"] : ["room"] });
-  // Phone: the brief (or header) scrolls with the chat.
-  const top = mobile ? (split ?? header) : header;
+  // Phone: Chat or Nhật ký, switched by a pinned control (`split` no longer scrolls above the chat).
+  const [pane, setPane] = useState<"chat" | "log">("chat");
+  const phoneSplit = mobile && !!split;
+  const top = phoneSplit ? null : header;
 
   const chat = (
     <Conversation className="min-h-0 flex-1">
@@ -168,6 +173,8 @@ export function TeamView({
             <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
           </ResizablePanel>
         </ResizablePanelGroup>
+      ) : phoneSplit && pane === "log" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-3">{split}</div>
       ) : (
         chat
       )}
@@ -179,9 +186,10 @@ export function TeamView({
     <FilesPaneCtx.Provider value={files && !mobile ? filesPane : null}>
       <div className="flex h-full min-h-0 flex-col">
         {/* Outside the scroller: opaque, never overlaps the log, and the day separators stick at the scroller's own top. */}
-        {bar && (
+        {(bar || phoneSplit) && (
           <div className="shrink-0 border-b bg-background">
-            <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>
+            {bar && <div className={cn("mx-auto w-full px-4 py-2 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}>{bar}</div>}
+            {phoneSplit && <PaneSwitch pane={pane} onPane={setPane} />}
           </div>
         )}
         {/* Always the same group around the room: opening Thư mục adds a panel, never remounts the chat (draft, scroll). */}
@@ -200,6 +208,34 @@ export function TeamView({
         </ResizablePanelGroup>
       </div>
     </FilesPaneCtx.Provider>
+  );
+}
+
+/** Phone: which half of Chat phòng fills the screen. A tab list, pinned under the room's bar. */
+function PaneSwitch({ pane, onPane }: { pane: "chat" | "log"; onPane: (p: "chat" | "log") => void }) {
+  const tabs = [
+    { id: "chat", label: "Chat", Icon: MessagesSquareIcon },
+    { id: "log", label: "Nhật ký", Icon: ScrollTextIcon },
+  ] as const;
+  return (
+    <div role="tablist" aria-label="Chat phòng" className="grid grid-cols-2 gap-1 px-4 pb-2">
+      {tabs.map(({ id, label, Icon }) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={pane === id}
+          onClick={() => onPane(id)}
+          className={cn(
+            "flex min-h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            pane === id ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon aria-hidden className="size-4" />
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

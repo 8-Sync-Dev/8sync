@@ -5,6 +5,17 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.127.4] — 2026-11-06
+
+### Fixed
+- HQ trên điện thoại: danh sách gợi ý `/lệnh` và `@tệp` trong ô chat (sheet ở đáy) không còn bị khuất. Dưới 640 px danh sách nằm ngay trên ô nhập, trong sheet (sheet cao lên, tối đa 40% màn hình, cuộn được, dòng cao 40 px cho ngón tay); từ 640 px vẫn là popover nổi phía trên như cũ.
+- Skill `hq-control` (`hq.mjs`) đọc được tin dài: `msgs`/`log` mặc định một dòng gọn, dòng bị cắt ghi `(+N chars: msg <id> <#id>)`; thêm `msg <id> <#id>` (một tin đầy đủ), `turns <id>` (prompt + câu trả lời cuối của từng lượt), `--full`, `help`. Lỗi 401/404/HQ không chạy có gợi ý cách xử lý; đường dẫn Git Bash `/c/...`, `/mnt/c/...`, `~/...` đổi đúng sang Windows; `log` giới hạn 1–200 thay vì HQ âm thầm trả 80. SKILL.md liệt kê đủ 7 trạng thái giao tin, giới hạn 30 MB, `dialog` chỉ cho phòng Claude Code; 5 lệnh `/hq-*` thành lớp mỏng trỏ về SKILL.md.
+
+### Changed
+- HQ Chat phòng trên điện thoại: thanh "Chat · Nhật ký" ghim dưới tiêu đề phòng, mỗi bên một vùng cuộn riêng, thay vì phải vuốt lên hết chat mới tới Nhật ký. Màn rộng giữ hai cột như cũ.
+- Video demo HQ trên site và README: thay bản 81 giây (giọng chỉ có ở ~10 giây đầu, phần còn lại câm) bằng bản 13 giây mới (giọng Việt + phụ đề, nút Cách dùng), 720p, 1,1 MB.
+- Dòng đầu mỗi tin HQ gửi vào phòng ngắn lại: bỏ "8 Sync HQ" và tên engine, chỉ còn ai gửi, phiên nào, thư mục, vd `[owner → mkt · C:\Users\Projects\startup\8sync-startup]` (trước: `[8 Sync HQ · owner → omp mkt · …]`). Quyền `/solo`, `/autopilot`… chỉ nhận dòng owner mới; dòng cũ không còn cấp quyền. Nhật ký vẫn ẩn được dòng khung cũ trong transcript đã có.
+
 ## [0.127.3] — 2026-11-06
 
 ### Changed

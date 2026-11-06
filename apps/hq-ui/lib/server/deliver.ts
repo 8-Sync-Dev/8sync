@@ -14,7 +14,7 @@ import { ownerMessage } from "./queries";
  * sees above it (`live`: the room is polling, enters as soon as it is idle; otherwise at its next
  * turn end). An hq-* tmux room gets it typed in (`deliverWatched`), which throws `SessionWaiting`
  * while the pane shows a dialog; anyone but the owner's text goes in under its source line
- * (`[8 Sync HQ · phòng web]`), so it never reads as a prompt the owner typed. The timeline row holds
+ * (`[phòng web]`), so it never reads as a prompt the owner typed. The timeline row holds
  * the text as the room got it.
  */
 export async function deliverText(db: DatabaseSync, session: string, text: string, sender: Sender) {

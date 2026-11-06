@@ -71,7 +71,7 @@ Pick the engine with `--mode`; set `SUSYNC_MODE` to change your default.
 
 ![HQ results: a release note a session posted, open in the preview pane](docs/assets/hq-03-ket-qua-roadmap.webp)
 
-Screenshots and the [81-second walkthrough](docs/assets/hq-demo.mp4) (Vietnamese voice-over) come from a real HQ; private data is blurred.
+Screenshots and the [13-second demo](docs/assets/hq-demo.mp4) (Vietnamese voice-over) come from a real HQ; private data is blurred.
 
 ## Project memory
 
