@@ -119,7 +119,7 @@ export function RoomReport({ room, token, onOpenPost, onOpenFile }: { room: Room
             aria-label={reports.length > 0 ? `Báo cáo, ${reports.length} bài` : "Báo cáo"}
           >
             <MegaphoneIcon aria-hidden className="size-3.5" />
-            <span>Báo cáo</span>
+            <span className="max-sm:sr-only">Báo cáo</span>
             {reports.length > 0 && <span className="tabular-nums">{reports.length}</span>}
           </Button>
         </DialogTrigger>

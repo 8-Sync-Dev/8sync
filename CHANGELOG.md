@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.127.3] — 2026-11-06
+
+### Changed
+- HQ Chat phòng trên điện thoại: nút Báo cáo về lại hàng nút của ô chat, cạnh Send (chỉ icon + số bài), thay vì nằm dưới tóm tắt phòng. Dưới 640 px hàng đó xuống 2 dòng: chọn phiên chiếm trọn dòng trên, model · đính kèm · Báo cáo · Send ở dòng dưới; từ 640 px trở lên vẫn một dòng như cũ.
+
 ## [0.127.2] — 2026-11-06
 
 ### Changed

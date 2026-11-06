@@ -65,9 +65,9 @@ export function TeamView({
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
   bar?: ReactNode;
   /**
-   * Chat phòng's "Báo cáo" button (room-report RoomReport, opens its dialog): on a wide screen in the
-   * message box's bottom row, right before Send (owner 2026-11-06: the message box keeps its full-width
-   * space under the room, Báo cáo is a compact button in it); on a phone under the room's brief.
+   * Chat phòng's "Báo cáo" button (room-report RoomReport, opens its dialog): in the message box's
+   * bottom row, right before Send, on every screen (owner 2026-11-06: the message box keeps its
+   * full-width space under the room, Báo cáo is a compact button in it; icon + count on a phone).
    */
   report?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
@@ -105,18 +105,8 @@ export function TeamView({
   const filesPane = useFilesPaneState();
   const sidePane = !!files && !mobile && filesPane.open;
   const filesLayout = useDefaultLayout({ id: "hq-room-files", panelIds: sidePane ? ["room", "files"] : ["room"] });
-  // Phone: the brief (or header) scrolls with the chat, Báo cáo under it (the phone's message box row
-  // has no room for one more button: it is a sheet behind the send button).
-  const head = mobile ? (split ?? header) : header;
-  const top =
-    mobile && report ? (
-      <>
-        {head}
-        <div className="mt-3 flex justify-end">{report}</div>
-      </>
-    ) : (
-      head
-    );
+  // Phone: the brief (or header) scrolls with the chat.
+  const top = mobile ? (split ?? header) : header;
 
   const chat = (
     <Conversation className="min-h-0 flex-1">
@@ -161,9 +151,9 @@ export function TeamView({
   const wide = !!split && !mobile;
   const composer =
     messageTargets(sessions).length === 0 ? (
-      <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} extra={mobile ? undefined : report} />
+      <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} extra={report} />
     ) : (
-      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} extra={mobile ? undefined : report} />
+      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} extra={report} />
     );
 
   const main = (
@@ -537,9 +527,9 @@ function Composer({
                   className="max-h-[40dvh] min-h-14 resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
                 />
                 <AttachList a={att} token={hq.token} />
-                <div className="flex items-center gap-2 px-2 pb-2">
+                <div className="flex items-center gap-2 px-2 pb-2 max-sm:flex-wrap">
                   <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
-                    <SelectTrigger size="sm" className="h-7 max-w-[55%] gap-1.5 border-0 bg-muted/60 font-mono text-xs" aria-label="Send to session">
+                    <SelectTrigger size="sm" className="h-7 min-w-0 gap-1.5 border-0 bg-muted/60 font-mono text-xs max-sm:basis-full sm:max-w-[55%]" aria-label="Send to session">
                       <SelectValue placeholder="Pick a session" />
                     </SelectTrigger>
                     <SelectContent>
