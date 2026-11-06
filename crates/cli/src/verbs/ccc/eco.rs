@@ -19,6 +19,10 @@
 //! Reported, never acted on alone: a Chromium / Electron renderer holding ≥ [`HEAVY_RENDERER_MB`]
 //! ([`heavy_renderers`]; `8sync ccc eco heavy`). `eco restart <rootPid>` (the owner's button in
 //! HQ) closes and reopens such an app, only one of [`RESTARTABLE`] and only processes of its exe.
+//! One exception, done by every pass: an agent-driven browser (launched with
+//! `--remote-debugging-port`) with a heavy renderer gets its New tab pages closed over CDP
+//! ([`close_new_tabs`]): Edge's MSN feed with background throttling off grew to 5.4 M DOM nodes,
+//! 3.9 GB, in a tab nobody used (2026-11-06). Pages with a real URL are never touched.
 //! `8sync ccc eco` alone prints what the machine uses now (RAM, CPU, GPU, watts, battery, what
 //! Claude Code / node hold); `run` loops every [`EVERY_S`]; `install` starts it at logon
 //! (Windows Scheduled Task, systemd --user, launchd). Settings: `~/.config/8sync/eco.json`.
@@ -265,6 +269,71 @@ pub(super) struct Heavy {
     pub image: String,
     pub mb: u64,
     pub restartable: bool,
+    /// CDP port of an agent-driven browser (`--remote-debugging-port`), whose New tabs eco closes.
+    pub cdp: Option<u16>,
+}
+
+/// Browsers whose renderer may carry `--remote-debugging-port` for an agent (never an Electron app).
+const CDP_BROWSERS: [&str; 5] = ["msedge", "chrome", "google chrome", "brave", "chromium"];
+
+/// `--remote-debugging-port=N` (N > 0) of a command line.
+fn cdp_port(cmd: &str) -> Option<u16> {
+    let v = cmd.split_whitespace().find_map(|w| w.trim_matches('"').strip_prefix("--remote-debugging-port="))?;
+    v.parse().ok().filter(|p| *p > 0)
+}
+
+/// A browser's own New tab page (no work of anyone's in it).
+fn is_new_tab(url: &str) -> bool {
+    ["edge://newtab", "chrome://newtab", "chrome://new-tab-page", "chrome-search://local-ntp", "https://ntp.msn.com/"].iter().any(|p| url.starts_with(p))
+}
+
+/// From CDP `/json/list`: the New tab pages to close, and whether a blank tab must open first
+/// because they are all the pages there are (closing the last one would close the browser).
+fn new_tab_plan(list: &Value) -> (Vec<String>, bool) {
+    let pages: Vec<&Value> = list.as_array().into_iter().flatten().filter(|t| t["type"] == "page").collect();
+    let close: Vec<String> = pages
+        .iter()
+        .filter(|t| is_new_tab(t["url"].as_str().unwrap_or("")))
+        .filter_map(|t| t["id"].as_str().filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).map(str::to_string))
+        .collect();
+    let blank_first = !close.is_empty() && close.len() == pages.len();
+    (close, blank_first)
+}
+
+/// One request to the DevTools HTTP endpoint on 127.0.0.1: the body of a 200, else None. The
+/// endpoint keeps the connection open whatever `Connection:` says, so the body ends at its
+/// `Content-Length`, not at EOF.
+fn cdp_http(port: u16, method: &str, path: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_secs(2)).ok()?;
+    s.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
+    write!(s, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").ok()?;
+    let (mut b, mut chunk) = (Vec::new(), [0u8; 16 * 1024]);
+    loop {
+        if let Some(end) = b.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = std::str::from_utf8(&b[..end]).ok()?;
+            let len: usize = head.lines().find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.trim().parse().ok()))?;
+            if b.len() >= end + 4 + len {
+                return head.starts_with("HTTP/1.1 200").then(|| String::from_utf8_lossy(&b[end + 4..end + 4 + len]).into_owned());
+            }
+        }
+        let n = s.read(&mut chunk).ok().filter(|n| *n > 0)?;
+        if b.len() + n > 4 * 1024 * 1024 {
+            return None;
+        }
+        b.extend_from_slice(&chunk[..n]);
+    }
+}
+
+/// Closes the New tab pages of the agent browser on `port` (a blank tab first when they are all
+/// it has); how many closed.
+fn close_new_tabs(port: u16) -> usize {
+    let Some(list) = cdp_http(port, "GET", "/json/list").and_then(|b| serde_json::from_str::<Value>(&b).ok()) else { return 0 };
+    let (close, blank_first) = new_tab_plan(&list);
+    if close.is_empty() || (blank_first && cdp_http(port, "PUT", "/json/new?about:blank").is_none()) {
+        return 0;
+    }
+    close.iter().filter(|id| cdp_http(port, "GET", &format!("/json/close/{id}")).is_some()).count()
 }
 
 fn app_name(image: &str) -> String {
@@ -335,7 +404,8 @@ pub(super) fn heavy_renderers(procs: &[Proc]) -> Vec<Heavy> {
         .map(|p| {
             let root = root_of(procs, p);
             let restartable = root.is_some_and(|r| RESTARTABLE.contains(&p.image.as_str()) && (p.image != "claude" || is_desktop_install(&r.cmd)) && !exe_of(&r.cmd).is_empty());
-            Heavy { pid: p.pid, root: root.map_or(p.pid, |r| r.pid), app: app_name(&p.image), image: p.image.clone(), mb: p.rss / MIB, restartable }
+            let cdp = if CDP_BROWSERS.contains(&p.image.as_str()) { cdp_port(&p.cmd) } else { None };
+            Heavy { pid: p.pid, root: root.map_or(p.pid, |r| r.pid), app: app_name(&p.image), image: p.image.clone(), mb: p.rss / MIB, restartable, cdp }
         })
         .collect();
     out.sort_by(|a, b| b.mb.cmp(&a.mb).then(a.pid.cmp(&b.pid)));
@@ -343,7 +413,7 @@ pub(super) fn heavy_renderers(procs: &[Proc]) -> Vec<Heavy> {
 }
 
 fn heavy_json(h: &[Heavy]) -> Value {
-    json!(h.iter().map(|h| json!({ "pid": h.pid, "rootPid": h.root, "app": h.app, "image": h.image, "mb": h.mb, "restartable": h.restartable })).collect::<Vec<_>>())
+    json!(h.iter().map(|h| json!({ "pid": h.pid, "rootPid": h.root, "app": h.app, "image": h.image, "mb": h.mb, "restartable": h.restartable, "cdp": h.cdp })).collect::<Vec<_>>())
 }
 
 /// What `eco heavy --json` prints (`{"heavy":[…]}`), read now; the HQ core serves the same.
@@ -716,6 +786,10 @@ pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     let m = mode(ram, s.cpu_pct, bat, c, st["last"]["mode"] == "hot");
     let procs = reap::list(now);
     let reaped = reap_orphan_helpers(home, &procs, now, false).iter().filter(|r| r["killed"] == true).count();
+    let mut ports: Vec<u16> = heavy_renderers(&procs).iter().filter_map(|h| h.cdp).collect();
+    ports.sort_unstable();
+    ports.dedup();
+    let tabs_closed: usize = ports.into_iter().map(close_new_tabs).sum();
     let t = targets(&procs, std::process::id());
     let ecoed = ecoed_of(&st);
     let p = plan(&t, m, ram, c, &ecoed, st["trimmedAt"].as_u64().unwrap_or(0), now);
@@ -738,7 +812,7 @@ pub(super) fn tick(home: &Path, sampler: Option<&Sampler>) -> Value {
     next.truncate(ECO_KEEP);
     let last = json!({
         "at": now, "mode": m.key(), "ram": ram, "cpu": s.cpu_pct, "targets": t.len(),
-        "lowered": lowered, "ecoOn": eco_on, "ecoOff": eco_off, "trimmed": trimmed, "trimmedMb": trimmed_bytes / MIB, "reaped": reaped,
+        "lowered": lowered, "ecoOn": eco_on, "ecoOff": eco_off, "trimmed": trimmed, "trimmedMb": trimmed_bytes / MIB, "reaped": reaped, "tabsClosed": tabs_closed,
     });
     let state = json!({
         "ecoed": next.iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(),
@@ -797,7 +871,13 @@ fn heavy_lines(heavy: &Value) -> Vec<String> {
         .into_iter()
         .flatten()
         .map(|h| {
-            let what = if h["restartable"] == true { format!("có thể khởi động lại (`8sync eco restart {}`)", h["rootPid"]) } else { "đóng bớt tab/cửa sổ".to_string() };
+            let what = if h["restartable"] == true {
+                format!("có thể khởi động lại (`8sync eco restart {}`)", h["rootPid"])
+            } else if let Some(port) = h["cdp"].as_u64() {
+                format!("trình duyệt agent (CDP :{port}): eco tự đóng tab New tab, còn nặng là trang agent đang dùng")
+            } else {
+                "đóng bớt tab/cửa sổ".to_string()
+            };
             format!("Renderer nặng: {} {} GB (pid {}) — {what}", h["app"].as_str().unwrap_or("?"), gb(h["mb"].as_u64().unwrap_or(0)), h["pid"])
         })
         .collect()
@@ -1303,12 +1383,49 @@ mod tests {
             vec![(46364, 46360, "Claude Desktop", 11_366, true), (601, 600, "Orca", 6_000, false), (501, 500, "Microsoft Edge", 5_000, false), (701, 701, "Claude Desktop", 4_096, false)]
         );
         let v = heavy_json(&heavy_renderers(&procs));
-        assert_eq!(v[0], json!({ "pid": 46364, "rootPid": 46360, "app": "Claude Desktop", "image": "claude", "mb": 11_366, "restartable": true }));
+        assert_eq!(v[0], json!({ "pid": 46364, "rootPid": 46360, "app": "Claude Desktop", "image": "claude", "mb": 11_366, "restartable": true, "cdp": null }));
         let t = snapshot_text(&json!({ "heavy": v }));
         assert!(t.contains("Renderer nặng: Claude Desktop 11.1 GB (pid 46364) — có thể khởi động lại (`8sync eco restart 46360`)"), "{t}");
         assert!(t.contains("Renderer nặng: Microsoft Edge 4.9 GB (pid 501) — đóng bớt tab/cửa sổ"), "{t}");
         // A renderer is never a session, and eco never targets Claude Desktop.
         assert!(targets(&procs, 0).is_empty());
+    }
+
+    /// An agent's Edge (`--remote-debugging-port`) is told apart from the owner's; an Electron app
+    /// with the same flag is not a browser eco may touch.
+    #[test]
+    fn heavy_agent_browser_carries_its_cdp_port() {
+        let edge = r#""C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe""#;
+        let mb = |q: Proc, mb: u64| Proc { rss: mb * MIB, ..q };
+        let procs = vec![
+            p(1, 0, "explorer", ""),
+            p(800, 1, "msedge", &format!("{edge} --user-data-dir=d --remote-debugging-port=9309")),
+            mb(p(801, 800, "msedge", &format!("{edge} --type=renderer --user-data-dir=\"d\" --remote-debugging-port=9309 --lang=en-US")), 4_200),
+            p(46360, 1, "claude", &format!("\"{STORE}\"")),
+            mb(p(46364, 46360, "claude", &format!("\"{STORE}\" --type=renderer --remote-debugging-port=9222")), 5_000),
+        ];
+        let h = heavy_renderers(&procs);
+        assert_eq!(h.iter().map(|h| (h.pid, h.cdp)).collect::<Vec<_>>(), vec![(46364, None), (801, Some(9309))]);
+        assert_eq!(cdp_port("x --remote-debugging-port=0"), None);
+        let t = snapshot_text(&json!({ "heavy": heavy_json(&h) }));
+        assert!(t.contains("Microsoft Edge 4.1 GB (pid 801) — trình duyệt agent (CDP :9309): eco tự đóng tab New tab"), "{t}");
+    }
+
+    /// Only New tab pages close; a real page stays; the last pages being New tabs opens a blank
+    /// one first; an id that is not a plain token is never put in a URL path.
+    #[test]
+    fn new_tab_plan_closes_only_new_tabs_and_keeps_a_window() {
+        let list = json!([
+            { "type": "page", "id": "A1", "url": "edge://newtab/" },
+            { "type": "page", "id": "B2", "url": "https://github.com/8-Sync-Dev" },
+            { "type": "other", "id": "C3", "url": "edge://newtab/" },
+            { "type": "service_worker", "id": "D4", "url": "https://ntp.msn.com/edge/ntp/service-worker.js" },
+            { "type": "page", "id": "../x", "url": "chrome://newtab/" },
+        ]);
+        assert_eq!(new_tab_plan(&list), (vec!["A1".to_string()], false));
+        let only = json!([{ "type": "page", "id": "A1", "url": "https://ntp.msn.com/edge/ntp?x=1" }, { "type": "page", "id": "E5", "url": "chrome://new-tab-page/" }]);
+        assert_eq!(new_tab_plan(&only), (vec!["A1".to_string(), "E5".to_string()], true));
+        assert_eq!(new_tab_plan(&json!([{ "type": "page", "id": "B2", "url": "about:blank" }])), (vec![], false));
     }
 
     #[test]

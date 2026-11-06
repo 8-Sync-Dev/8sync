@@ -692,7 +692,11 @@ function HeavyPanel({ heavy, api, onRestarted }: { heavy: Heavy[]; api: Hq["api"
                 <span className="text-xs text-muted-foreground tabular">pid {h.pid}</span>
               </p>
               <p className="text-xs leading-snug text-muted-foreground">
-                {h.restartable ? `Một renderer của ${h.app} đang giữ quá nhiều RAM; khởi động lại là trả hết.` : `Không tự khởi động lại ${h.app} vì có thể đang giữ việc của anh: đóng bớt tab/cửa sổ.`}
+                {h.restartable
+                  ? `Một renderer của ${h.app} đang giữ quá nhiều RAM; khởi động lại là trả hết.`
+                  : h.cdp
+                    ? `Trình duyệt agent (CDP :${h.cdp}): eco tự đóng tab New tab ngốn RAM mỗi 20 giây; còn nặng là trang agent đang dùng, đóng khi xong việc.`
+                    : `Không tự khởi động lại ${h.app} vì có thể đang giữ việc của anh: đóng bớt tab/cửa sổ.`}
               </p>
             </div>
             {h.restartable && (

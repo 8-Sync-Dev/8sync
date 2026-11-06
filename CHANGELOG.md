@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.129.1] — 2026-11-06
+
+### Fixed
+- `8sync eco` tự đóng tab New tab của trình duyệt agent (Edge/Chrome/Brave mở với `--remote-debugging-port`) khi renderer của nó ≥ 4 GB: mỗi lượt (20 giây) đọc `/json/list` qua CDP 127.0.0.1, đóng trang `edge://newtab` / `chrome://newtab` / `ntp.msn.com`, mở `about:blank` trước nếu chỉ còn New tab để trình duyệt không tắt; trang có URL thật không đụng. Gốc: tab New tab của profile `deploy-profile` (CDP :9309) chạy feed MSN khi tắt throttling nền, phình 5,4 triệu DOM node, 3,9 GB. HQ "Renderer nặng" ghi rõ đây là trình duyệt agent thay vì bảo chủ tự đóng tab.
+
 ## [0.129.0] — 2026-11-06
 
 ### Added

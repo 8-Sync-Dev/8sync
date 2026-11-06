@@ -161,8 +161,8 @@ export async function clean(dryRun: boolean, run: Exec = exec): Promise<string |
 
 let cleaning: Promise<string | null> | null = null;
 
-/** A renderer holding ≥ 4 GB; `rootPid` is its app's main process, `restartable` only for chat apps (never a browser, editor, Orca). */
-export type Heavy = { pid: number; rootPid: number; app: string; image: string; mb: number; restartable: boolean };
+/** A renderer holding ≥ 4 GB; `rootPid` is its app's main process, `restartable` only for chat apps (never a browser, editor, Orca); `cdp` the port of an agent-driven browser, whose New tabs eco closes each pass. */
+export type Heavy = { pid: number; rootPid: number; app: string; image: string; mb: number; restartable: boolean; cdp?: number | null };
 export type Restarted = { ok: true; app: string; freedMb: number; relaunched: boolean };
 /** `8sync` through the argv-only runner (the binary that started this HQ). */
 export type Run8 = (args: string[], timeoutMs: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
