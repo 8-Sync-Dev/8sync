@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Docs
+- CHANGELOG 0.128.0: sửa mô tả tự giao đăng tay. Dòng `scheduling` chỉ được giữ 15 phút: quá 15 phút (tính theo `updated_at`), `channels:tick` đánh dòng đó `failed`, và lúc đó owner lại bấm "Thử lại" được. Phòng đăng lâu hơn 15 phút vẫn có thể bị đăng trùng.
+
 ## [0.128.0] — 2026-11-06
 
 ### Removed

@@ -268,4 +268,14 @@ describe("auto-post fallback: the row claim in the book", () => {
     releaseRow(b, c, T + MIN);
     expect(row(b, 7)).toMatchObject({ state: "published" });
   });
+
+  it("the sheet keeps 'Đã giao phòng' on a claimed row, hides the room from a guest, and drops it once the item is unapproved", () => {
+    const claimed = item({ channel_posts: [post("threads", "scheduling")] });
+    const state = { dispatched: { [manualKey(7, "threads", T)]: { room: "cpa-live", at: T } }, noroom: {} };
+    expect(manualStatuses(claimed, state, cfg, T + MIN)).toEqual({ threads: { kind: "dispatched", room: "cpa-live", at: T } });
+    expect(manualStatuses(claimed, state, cfg, T + MIN, true)).toEqual({ threads: { kind: "dispatched", room: null, at: T } });
+    // A worker's own `scheduling` (no dispatch record) is not the room's.
+    expect(manualStatuses(claimed, { dispatched: {}, noroom: {} }, cfg, T + MIN)).toBeUndefined();
+    expect(manualStatuses({ ...claimed, status: "checked" }, state, cfg, T + MIN)).toBeUndefined();
+  });
 });
