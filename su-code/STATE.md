@@ -8,9 +8,10 @@ Owner 2026-11-06: HQ trên phone dùng được trọn: gợi ý `/` `@` không 
 - [x] v0.127.0: vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
 - [x] v0.127.0 đã release (PR #329)
 - [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
-- [ ] v0.127.4 (worktree `su-code-ps`, nhánh `feat/hq-phone-suggest`): gợi ý trong sheet phone, thanh Chat · Nhật ký, video demo 13 s, `hq.mjs` đọc tin đầy đủ; smoke dev :8791 ở 390 + 1440 xong, vitest 1012 pass
-- [x] Owner chốt: KHÔNG nhãn AI ở mọi nơi (voice/ảnh thật của owner + nhân viên) → đã giao content-post-agency (#6079): gỡ option/toggle, rule cứng + test, soát artifact đã có
-- [ ] Audit public/private repo 8-Sync-Dev/8sync (agent RepoVisibilityAudit) → báo owner
+- [x] v0.127.4 đã release (PR #338), `8sync up` + `8sync harness global` xong; :8740 trả UI 0.127.4 (gợi ý trong sheet phone, thanh Chat · Nhật ký, header tin `[owner → <phiên> · <thư mục>]`, video demo 13 s, `hq.mjs` msg/turns/--full)
+- [x] Owner chốt: KHÔNG nhãn AI ở mọi nơi → content-post-agency #130 merged (win-dev) + drivers trên `wip/content-channels-snapshot` 86febb84; khi merge nhánh đa kênh vào win-dev: file va #130 lấy bản win-dev, chạy `tests/policy/no-ai-label.test.ts`
+- [x] Audit public/private repo: khuyên GIỮ PUBLIC (private làm gãy install/`8sync up`/get.8syncdev.com, ~$380–560/tháng Actions) + dọn: nội dung CloudGo trong `assets/skills/{encore-eino-go,ai-microservice-design}`, `gateway-models.yml:12`, fixture tailnet thật, ghi chú nội bộ `su-code/`·`outputs/`·`plans/`·`research/`, `docs/hq-quota-keys.md`. Chờ owner chọn
+- [ ] Owner: email members để share máy desktop-hrgdu0t qua Tailscale (mặc định đề xuất: Share đúng 1 máy)
 - [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
 - [x] v0.127.3 đã release (PR #335), `8sync up` xong; :8740 trả UI 0.127.3 (nút Báo cáo trong hàng nút ô chat cả trên phone, hàng xuống 2 dòng < 640 px)
 - [x] Owner "auto fix với cách tốt nhất" → giao content-post-agency (#6049, #6059): phương án A + Highlight Cam. Gốc mất tiếng cảnh 2+: bump `@hyperframes` 0.7.26 → 0.8.221 (181e9c73) làm producer cộng giờ bắt đầu scene vào `data-start` của media lồng; sửa `data-hf-media-start-basis=global` — PR 8syncdev/content-post-agency#122 (→ `win-dev`), đo qua UI 5 cảnh: giọng lệch ≤ 0.04 s, -14.1 LUFS (master -14 của app, giữ)
@@ -32,7 +33,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-Đang ship v0.127.4 từ worktree `C:/Users/Projects/su-code-ps`. Chờ content-post-agency báo danh sách artifact đã gỡ nhãn AI.
+Không có worktree su-code nào đang làm dở. Chờ owner: chọn phương án dọn repo public, gửi email members Tailscale.
 
 ## Next
 - Đa kênh: đưa 0064 + 0065 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; thiết kế phân biệt "lịch tay chờ duyệt" với "bỏ duyệt" trong `channels:tick`.
