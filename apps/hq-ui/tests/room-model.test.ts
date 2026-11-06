@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { claudeCommands, effortsFor, findChoice, ompControl, type ModelChoice } from "@/lib/room-model";
@@ -28,11 +29,31 @@ beforeAll(() => {
 // ts-assets): load it at run time so `tsc` here never follows it. Same file the rooms run.
 const EXT: string = new URL("../../../assets/extensions/8sync-inbox.ts", import.meta.url).href;
 type Control = { model?: string; thinking?: string };
-const { modelStateJson, parseModelControl, splitControls } = (await import(EXT)) as {
+const { modelStateJson, parseModelControl, splitControls, roomIdFor } = (await import(EXT)) as {
   modelStateJson: (s: { model: string | null; thinking: string | null; error: string | null }, at: number) => string;
   parseModelControl: (text: string) => Control | null;
   splitControls: <T extends { text: string; messages: string[] }>(x: T) => { controls: Control[]; rest: T | { text: string; messages: string[] } | null };
+  roomIdFor: (lsJson: string | null, dir: string) => string | null;
 };
+
+describe("room id of a session 8sync did not launch (Orca's omp --resume)", () => {
+  const base = path.join(os.tmpdir(), "sessions", "proj");
+  const ls = JSON.stringify([
+    { name: "profile", inbox_id: "omp-1111111111111111", session_dir: path.join(base, "profile") },
+    { name: "core", inbox_id: "omp-058138a5c9bdb509", session_dir: path.join(base, "core") },
+    { name: "bad", inbox_id: "../../etc", session_dir: path.join(base, "bad") },
+  ]);
+  it("picks the row whose session dir holds the session, not the first row", () => {
+    expect(roomIdFor(ls, path.join(base, "core") + path.sep)).toBe("omp-058138a5c9bdb509");
+    if (process.platform === "win32") expect(roomIdFor(ls, path.join(base, "CORE"))).toBe("omp-058138a5c9bdb509");
+  });
+  it("no match, a non-room id, or output that is not the list → no id (the mod stays off)", () => {
+    expect(roomIdFor(ls, path.join(base, "other"))).toBeNull();
+    expect(roomIdFor(ls, path.join(base, "bad"))).toBeNull();
+    expect(roomIdFor("Error: not a repo", path.join(base, "core"))).toBeNull();
+    expect(roomIdFor(null, path.join(base, "core"))).toBeNull();
+  });
+});
 
 describe("HQ → extension control message", () => {
   it("what HQ queues is what the extension applies", () => {

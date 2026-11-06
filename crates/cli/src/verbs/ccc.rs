@@ -2814,7 +2814,8 @@ mod tests {
         for want in ["disable-model-invocation: true", "$ARGUMENTS", "8sync ccc loop done", "/ship-tick <slug>", "su-code/ship/ACTIVE"] {
             assert!(clear.contains(want), "eccx-clear lacks {want:?}");
         }
-        assert!(assets::read("eccx/eccx-clear.md").unwrap().contains("No cron on omp"), "omp eccx-clear must drop the cron step");
+        let omp_clear = assets::read("eccx/eccx-clear.md").unwrap();
+        assert!(omp_clear.contains("omp has no cron") && !omp_clear.contains("CronDelete"), "omp eccx-clear must drop the cron step");
         let tick = assets::read("claude/skills/ship-tick/SKILL.md").unwrap();
         assert!(tick.contains("Driver: /eccx-<cat>"), "ship-tick must follow an eccx loop's members");
     }
