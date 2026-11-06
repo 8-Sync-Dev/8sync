@@ -14,7 +14,7 @@ Owner 2026-11-06: HQ trên phone dùng được trọn: gợi ý `/` `@` không 
 - [ ] Tailscale: Quyền (Quin19FD) đã là Member nhưng chưa có máy online; chờ owner tạo link khách HQ (Chỉ xem / Sửa nội dung) và chọn siết ACL hay Share 1 máy
 - [x] v0.128.0 đã release (PR #341), `8sync up` + `harness global` xong; :8740 trả UI 0.128.0: HQ bỏ hẳn nhãn AI + test policy, sheet "Trạng thái đăng" 3 nhóm + trượt mượt, tự giao phòng đăng khi kênh không lên lịch được (`lib/server/content-manual.ts`, HQ giữ chỗ dòng `scheduling` trước khi giao), đường dẫn file trong tin phòng bấm mở được (PDF/Office/ảnh/md). Ảnh sheet live: `C:\Users\Admin\Pictures\hq-v0.128.0-sheet-{1440,390}.png`, đã gửi phòng cpa (#6096, #6097)
 - [x] v0.129.0 đã release (PR #343), `8sync up` + `harness global` xong; :8740 trả UI 0.129.0: khung chi tiết Nội dung kéo rộng (≥ 1280 px), Góp ý nháp gửi 1 lần, tự giao phòng đăng bù tới 72 h + kênh chưa có dòng (giữ chỗ `blocked` + "HQ giao …", bỏ qua bài có dấu hiệu đã đăng). cpa đã ghi facebook `published` cho #16/#38/#39/#76, `cancelled` cho linkedin #77/#79
-- [ ] v0.129.1 (PR #344): eco tự đóng tab New tab của trình duyệt agent (`--remote-debugging-port`) khi renderer ≥ 4 GB. Đã gỡ tay ngay: Edge deploy-profile CDP :9309, 4 GB → 303 MB
+- [x] v0.129.1 đã release (PR #344), `8sync up` + `harness global` xong; :8740 trả UI 0.129.1. eco tự đóng tab New tab của trình duyệt agent (`--remote-debugging-port`) khi renderer ≥ 4 GB; đã restart task `\8sync\eco` (bản ghi `last` có `tabsClosed`). Thử thật trên Edge :9309: đóng 2 New tab, giữ `about:blank`. Đã gỡ tay trước đó: Edge deploy-profile 4 GB → 303 MB
 - [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
 - [x] v0.127.3 đã release (PR #335), `8sync up` xong; :8740 trả UI 0.127.3 (nút Báo cáo trong hàng nút ô chat cả trên phone, hàng xuống 2 dòng < 640 px)
 - [x] Owner "auto fix với cách tốt nhất" → giao content-post-agency (#6049, #6059): phương án A + Highlight Cam. Gốc mất tiếng cảnh 2+: bump `@hyperframes` 0.7.26 → 0.8.221 (181e9c73) làm producer cộng giờ bắt đầu scene vào `data-start` của media lồng; sửa `data-hf-media-start-basis=global` — PR 8syncdev/content-post-agency#122 (→ `win-dev`), đo qua UI 5 cảnh: giọng lệch ≤ 0.04 s, -14.1 LUFS (master -14 của app, giữ)
@@ -36,7 +36,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.129.0 đang release. Chờ owner: dọn repo public (CloudGo…), Tailscale cho Quyền (máy chưa vào tailnet, cần link khách HQ), domain named tunnel.
+v0.129.1 đã lên. Chờ owner: dọn repo public (CloudGo…), Tailscale cho Quyền (máy chưa vào tailnet, cần link khách HQ), domain named tunnel.
 
 ## Next
 - Tự giao đăng tay: bài phòng đăng tay mà không ghi dòng kênh, không `published_at`, không `fb_post_url` chỉ còn bước kiểm trang thật của phòng chặn đăng lại; luật cho phòng: đăng tay là ghi dòng ngay. Gửi lỗi / không có phòng thì tick thử lại mỗi 60 s tới hết 72 h (không gửi trùng; thêm backoff nếu ồn). "Thử lại" trên dòng `failed` do phòng ghi vẫn mở, đúng ý đồ.
@@ -48,4 +48,6 @@ v0.129.0 đang release. Chờ owner: dọn repo public (CloudGo…), Tailscale c
 - Sửa gốc inbox phòng do Orca mở (KNOWLEDGE 2026-11-04).
 - `statusline::tests::chained_timeout_kills_group` flake Windows CI; đỏ lại thì `gh run rerun --failed`.
 - `8sync up` không deploy lại bundled skill vào `~/.omp/skills` (KNOWLEDGE 2026-11-06): cho selfup chạy bước refresh skill của `harness global` sau khi cài binary mới.
+- `8sync up` không restart vòng `eco run` (Scheduled Task `\8sync\eco` / systemd `--user`): máy khác giữ code eco cũ tới lần logon sau. Cho `up` restart task/unit khi đã cài, hoặc `eco run` thoát khi mtime exe đổi để scheduler chạy lại.
+- Gốc Edge New tab: launcher profile `deploy-profile` (tia-platform `scripts/profile-browser.ps1`, đang có thay đổi chưa commit của owner) nên mở `about:blank` + đặt trang tab mới trống; báo phòng tia, không sửa file đó.
 - Link không cần đăng nhập lại khi tunnel restart cần host cố định (Cloudflare named tunnel); quick tunnel đổi host. VPS cũ đã huỷ.
