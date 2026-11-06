@@ -18,6 +18,7 @@ import {
   dataLine,
   dayKey,
   fromLocalInput,
+  hqClaimNote,
   monthGrid,
   nextStatuses,
   NO_CHANNELS,
@@ -612,6 +613,24 @@ describe("/api/content channels (0064)", () => {
     ]);
     expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
     expect(posts(file)).toEqual([["threads", "blocked"]]);
+  });
+
+  it("Thử lại leaves a row HQ handed to a posting room alone (409), a plain blocked row still retries", async () => {
+    const file = makeDb("retry-claim.db", ALL);
+    configure(file);
+    const q = await readyToApprove({ format: "infographic", caption: V1, channels: ["facebook", "linkedin", "threads"] });
+    const id = Number(q.slice("?id=".length));
+    expect((await PATCH(call("PATCH", q, { status: "approved" }))).status).toBe(200);
+    const db = new DatabaseSync(file);
+    db.prepare("INSERT INTO content_channel_posts (item_id, channel, state, error) VALUES (?, 'linkedin', 'blocked', ?)").run(id, hqClaimNote("cpa-live", Date.now()));
+    db.close();
+    putPost(file, id, "threads", "blocked");
+
+    const res = await PATCH(call("PATCH", q, { retry_channel: "linkedin" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("Phòng đăng đang xử lý kênh này");
+    expect((await PATCH(call("PATCH", q, { retry_channel: "threads" }))).status).toBe(200);
+    expect(posts(file)).toEqual([["linkedin", "blocked"]]);
   });
 
   it("a DB before 0064 lists and approves as before and refuses the channel fields with the reason", async () => {

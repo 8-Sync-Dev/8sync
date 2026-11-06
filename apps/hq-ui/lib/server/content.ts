@@ -18,6 +18,7 @@ import {
   isChannel,
   isChannel0065,
   isFormat,
+  isHqClaim,
   isStatus,
   NO_CHANNELS,
   NO_CHANNELS_0065,
@@ -494,6 +495,10 @@ function applyUpdate(db: DatabaseSync, id: number, body: Record<string, unknown>
     write(() =>
       tx(db, () => {
         if (retry !== null) {
+          // A row HQ handed to a posting room is that room's work in hand: a retry would let the
+          // worker schedule it a second time.
+          const row = db.prepare("SELECT state, error FROM content_channel_posts WHERE item_id = ? AND channel = ?").get(id, retry) as Pick<ChannelPost, "state" | "error"> | undefined;
+          if (isHqClaim(row)) throw new ContentError("Phòng đăng đang xử lý kênh này", 409);
           const states = RETRYABLE_STATES.map(() => "?").join(", ");
           const gone = db.prepare(`DELETE FROM content_channel_posts WHERE item_id = ? AND channel = ? AND state IN (${states})`).run(id, retry, ...RETRYABLE_STATES).changes;
           if (gone === 0) throw new ContentError(`${CHANNEL_LABEL[retry]}: chỉ thử lại được khi kênh lỗi, bị chặn hoặc đã huỷ lịch.`, 409);

@@ -125,7 +125,8 @@ export function ItemResults({
     );
   }
   return (
-    <div className="space-y-2">
+    // Laid out by its own width (the day pane can be narrow): 2 thumbnails a row, 3 from 28rem, 4 from 42rem.
+    <div className="@container/results space-y-2">
       {links.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {links.map((a) => (
@@ -139,7 +140,7 @@ export function ItemResults({
         </div>
       )}
       {images.length > 0 && (
-        <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
+        <div className="grid grid-cols-2 gap-2 @md/results:grid-cols-3 @2xl/results:grid-cols-4">
           {images.map((a) => (
             <figure key={a.id} className="min-w-0 space-y-1">
               <UploadThumb token={token} file={{ id: a.id, name: a.title, url: artifactFileUrl(a.id) }} onOpen={setShown} className="aspect-[4/3] w-full" />
@@ -151,26 +152,29 @@ export function ItemResults({
         </div>
       )}
       {files.length > 0 && (
-        <ul className="space-y-0.5 text-xs text-muted-foreground">
+        <ul className="space-y-1 text-xs text-muted-foreground">
           {files.map((a) => (
-            <li key={a.id} className="flex min-w-0 items-center gap-1.5">
-              <FileIcon aria-hidden className="size-3 shrink-0" />
-              <span className="truncate text-foreground" title={a.path}>
+            <li key={a.id} className="flex min-w-0 items-start gap-1.5">
+              <FileIcon aria-hidden className="mt-0.5 size-3 shrink-0" />
+              {/* The name wraps to two lines before it truncates: a narrow pane keeps the actions on the row. */}
+              <span className="line-clamp-2 min-w-0 flex-1 pt-px wrap-anywhere text-foreground" title={a.path}>
                 {a.title}
               </span>
-              {a.missing ? (
-                <span className="shrink-0">file đã mất</span>
-              ) : (
-                <>
-                  <span className="shrink-0">{KIND_LABEL[a.kind]}</span>
-                  {onOpenFile && (
-                    <Button type="button" size="xs" variant="outline" className={cn("shrink-0", TOUCH)} onClick={() => onOpenFile(a.id)} title="Mở file ở tab Kết quả">
-                      <EyeIcon aria-hidden /> Xem
-                    </Button>
-                  )}
-                </>
-              )}
-              <FolderButton path={a.path} id={a.missing ? undefined : a.id} api={api} className="shrink-0" />
+              <span className="flex shrink-0 items-center gap-1.5">
+                {a.missing ? (
+                  <span>file đã mất</span>
+                ) : (
+                  <>
+                    <span className="@max-xs/results:sr-only">{KIND_LABEL[a.kind]}</span>
+                    {onOpenFile && (
+                      <Button type="button" size="xs" variant="outline" className={cn("shrink-0", TOUCH)} onClick={() => onOpenFile(a.id)} title="Mở file ở tab Kết quả">
+                        <EyeIcon aria-hidden /> Xem
+                      </Button>
+                    )}
+                  </>
+                )}
+                <FolderButton path={a.path} id={a.missing ? undefined : a.id} api={api} className="shrink-0" />
+              </span>
             </li>
           ))}
         </ul>
