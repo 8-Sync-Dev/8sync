@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.127.1] — 2026-11-06
+
+### Fixed
+- HQ sidebar: header branch thiếu ở các repo chỉ có phiên omp (vd `8sync-startup`, `tohe`, `zus`): `GET /api/projects/branches` giờ hỏi git cả thư mục của mọi phiên omp trong cây sidebar, không chỉ danh sách phiên của HQ (3 → 9 repo trên máy chủ).
+
 ## [0.127.0] — 2026-11-06
 
 ### Added

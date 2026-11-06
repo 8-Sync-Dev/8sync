@@ -6,7 +6,8 @@ Owner 2026-11-06: HQ v0.127.0 — phòng kiểu IDE ("Thư mục" là pane cạn
 ## Checklist
 - [x] v0.126.0 `--tailnet` + `--at-login` đã release (PR #328)
 - [x] v0.127.0 trong worktree `C:/Users/Projects/su-code-panes` (nhánh `feat/hq-room-panes`, đã cherry-pick `feat/hq-content-platforms`): vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
-- [ ] v0.127.0: cargo test → PR → CI → merge → tag → release.yml → `8sync up` → kiểm :8740
+- [x] v0.127.0 đã release (PR #329)
+- [ ] v0.127.1 (branch header cho repo chỉ có phiên omp, 3 → 9 repo): PR → CI → merge → tag → release.yml → `8sync up` → kiểm :8740
 - [ ] Nhắn phòng `omp-058138a5c9bdb509` (content-post-agency): DDL 0065 để họ áp vào repo/DB của họ, rồi backfill TikTok/X cho #77–80
 - [ ] Owner: #77–80 đã lên lịch trên nền tảng khi còn `checked`
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
