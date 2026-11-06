@@ -5,6 +5,21 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.128.0] — 2026-11-06
+
+### Removed
+- HQ Nội dung bỏ hẳn lựa chọn "nhãn AI" (lệnh owner 2026-11-06, chốt): nội dung dùng giọng clone, lip-sync, camera và ảnh thật của owner và nhân sự, mặc định dùng đầy đủ. HQ không còn hỏi, lưu, gửi hay nhắc tới nhãn AI: sheet bỏ khung chọn, việc giao phòng đăng bỏ dòng nhãn, tin tổng kết cuối ngày bỏ câu nhắc, API chỉ đọc các cột đã liệt kê (cột 0064 trong DB của content-post-agency để nguyên, HQ không đọc/ghi). PATCH `/api/content` mang trường lạ (kể cả trường cũ) trả 422 `<trường>: trường này không còn, HQ không nhận`. Test `tests/policy/no-ai-label.test.ts` quét `app/`, `components/`, `hooks/`, `lib/` và báo `file:dòng` nếu nhãn quay lại.
+
+### Changed
+- Sheet Nội dung trượt vào mượt hơn (240 ms, ease-out; đóng 150 ms); máy bật giảm chuyển động thì không trượt.
+- Sheet có khối "Trạng thái đăng" chia 3 nhóm theo từng kênh: Đã lên lịch (giờ + link "Mở bài"/"Mở lịch"), Không lên lịch được (lý do + trạng thái tự giao phòng), Chưa lên lịch. Nút "Thử lại" của owner dời lên khối này. Dùng được ở 390 px và 1440 px.
+
+### Added
+- HQ tự giao phòng đăng tay cho kênh không lên lịch được (`failed`/`blocked`) của bài đã duyệt: từ 2 phút trước giờ đăng tới 12 tiếng sau, mỗi kênh một lần cho mỗi giờ đăng, kiểm mỗi 60 giây. Phòng: phòng đăng của bài, nếu không có thì `manual.room` trong `content.json`, rồi phòng đầu của tổng kết cuối ngày; chỉ giao khi phòng đang sống trong repo nội dung. Việc gửi kèm caption (dạng dữ liệu), media, lý do lỗi, cách đăng bằng ego-browser và câu SQL ghi lại kết quả. Đã giao lưu ở `~/.local/state/8sync/hq/content-manual.json` (giữ 3 ngày). Tắt bằng `manual.off: true` hoặc `EIGHTSYNC_CONTENT_MANUAL=off`; `next dev` không chạy trừ khi `EIGHTSYNC_CONTENT_MANUAL=on`.
+- Tự giao không đăng trùng: trước khi gửi, HQ chuyển dòng kênh `failed`/`blocked` sang `scheduling` (chỉ khi bài còn "Đã duyệt"); không đổi được dòng nào (chủ vừa "Thử lại", worker vừa lên lịch, bài vừa bỏ duyệt) thì không gửi. Dòng `scheduling` không bấm "Thử lại" được và `channels:tick` không lên lịch lại, nên bài không ra hai lần trong lúc phòng đang đăng. Gửi lỗi thì trả dòng về trạng thái và lý do cũ. Phòng kiểm lại dòng còn `scheduling` trước khi đăng, rồi mới ghi kết quả. Sheet vẫn hiện "Đã giao phòng …" cho dòng đó.
+- HQ: đường dẫn file tuyệt đối trong câu trả lời của phòng (đặt trong `code`, ví dụ `C:\…\Task1.docx`, `/x/a.pdf`, `~/x/a.md`) giờ bấm được: mở sheet xem file ngay trong HQ (PDF, ảnh, markdown, code, Word/Excel/PowerPoint), áp cho khung chat, Nhật ký và Kết quả của phòng. File phải nằm trong dự án HQ biết; file bí mật, `.git` hay ngoài dự án thì sheet báo lý do, vẫn có nút "Chép đường dẫn". Chỉ chủ HQ thấy, khách không.
+- HQ "Thư mục" và sheet đường dẫn đọc được file Office (docx/xlsx/pptx/odt/ods/odp; doc/xls/ppt khi có LibreOffice) như tab Kết quả: máy chạy HQ có LibreOffice thì xem bản PDF đúng như file gốc, không có thì hiện bản xem nhanh chữ + bảng ngay trong trình duyệt; vẫn có nút Tải về. API mới `GET /api/files/pdf?root=&path=` (chỉ chủ, cùng luật file với `/api/files/raw`, CSP sandbox).
+
 ## [0.127.4] — 2026-11-06
 
 ### Fixed

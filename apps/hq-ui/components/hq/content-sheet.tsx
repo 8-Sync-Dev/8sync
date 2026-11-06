@@ -15,20 +15,25 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  AI_CHOICES,
   CAPTION_LIMIT,
   captionFor,
+  CHANNEL_GROUP_LABEL,
+  CHANNEL_GROUPS,
+  channelGroup,
   CHANNEL_LABEL,
   CHANNEL_SHORT,
   channelLine,
   CHANNELS,
+  channelsOf,
   charCount,
   contentWarning,
   FORMAT_LABEL,
   fromLocalInput,
   GUEST_DROPBACK_FIELDS,
   GUEST_DROPBACK_NOTE,
+  httpLink,
   isChannel0065,
+  manualLine,
   NO_CHANNELS_0065,
   NO_SCHEDULE,
   PLATFORM_DAILY_TARGET,
@@ -43,6 +48,7 @@ import {
   unapprovedLive,
   whenOf,
   type Channel,
+  type ChannelGroup,
   type ChannelLine,
   type ChannelPost,
   type ContentMedia,
@@ -126,7 +132,7 @@ export function ContentSheet({
   const shown = item ?? (items.length === 1 ? items[0].id : null);
   return (
     <Sheet open={day !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl motion-reduce:animate-none">
+      <SheetContent side="right" className="w-full gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-base">{day ? dayTitle(day) : ""}</SheetTitle>
           <SheetDescription className="text-xs">
@@ -301,8 +307,6 @@ function ItemDetail({
   const role = useAccess();
   const canEdit = atLeast(role, "editor");
   const warn = contentWarning(it);
-  // The owner's optional AI answer, sent as `ai_label` with "Duyệt" (no gate: owner 2026-11-05).
-  const [aiChoice, setAiChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   // A guest's edit of what an approved item posts sends it back to "checked" on the server; say so.
   const guestDropped = () => {
@@ -382,7 +386,6 @@ function ItemDetail({
    */
   async function approve() {
     const seen = it.updated_at;
-    const ai = aiChoice === null ? {} : { ai_label: aiChoice };
     const to = known(session) ? session : "";
     if (!to) {
       setNeed(true);
@@ -391,7 +394,7 @@ function ItemDetail({
     }
     setBusy(true);
     try {
-      const ok = await patch(it.id, { status: "approved", seen, send: { session: to, base: labelOf(to) }, ...ai });
+      const ok = await patch(it.id, { status: "approved", seen, send: { session: to, base: labelOf(to) } });
       if (ok) toast.success(`Đã duyệt #${it.id} và gửi việc đăng cho ${labelOf(to)}`);
     } finally {
       setBusy(false);
@@ -471,23 +474,6 @@ function ItemDetail({
           {owner && steps.includes("approved") && hints.length === 0 && (
             <span className="text-xs text-muted-foreground">Duyệt sẽ gửi việc đăng cho {known(session) ? labelOf(session) : "phiên chọn ở Giao việc"}.</span>
           )}
-          {owner && steps.includes("approved") && (
-            <fieldset className="w-full space-y-1 text-xs">
-              <legend className="text-muted-foreground">Nhãn AI khi đăng (không bắt buộc)</legend>
-              {AI_CHOICES.map((c) => (
-                <label key={String(c.value)} className="flex cursor-pointer items-start gap-2 max-sm:min-h-11">
-                  <input
-                    type="radio"
-                    name={`ai-${it.id}`}
-                    checked={aiChoice === c.value}
-                    onChange={() => setAiChoice(c.value)}
-                    className="mt-0.5 size-4 shrink-0 accent-primary max-sm:size-5"
-                  />
-                  <span>{c.label}</span>
-                </label>
-              ))}
-            </fieldset>
-          )}
           {stale && it.status === "approved" && (
             <span className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
               <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0 text-destructive" />
@@ -499,6 +485,8 @@ function ItemDetail({
           )}
         </div>
       )}
+
+      {it.channels !== undefined && <PostingStatus it={it} now={now} patch={patch} canRetry={owner} />}
 
       <dl className="space-y-3">
         <Field label="Giờ đăng">
@@ -517,7 +505,7 @@ function ItemDetail({
         )}
         {it.channels !== undefined && (
           <Field label="Kênh">
-            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} canRetry={owner} wide={channels0065} />
+            <ChannelsBox it={it} patch={patch} onEdit={channelEdited} canEdit={canEdit} wide={channels0065} />
           </Field>
         )}
         <Field label={it.channels !== undefined ? "Caption chung" : "Caption"}>
@@ -606,7 +594,7 @@ function ItemDetail({
  * "Kênh": which platforms get the item, each with its caption and how its post stands. Before
  * migration 0065 (`wide` false) TikTok / X / Instagram / Zalo cannot be added (one already on stays removable).
  */
-function ChannelsBox({ it, patch, onEdit, canEdit, canRetry, wide }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean; wide: boolean }) {
+function ChannelsBox({ it, patch, onEdit, canEdit, wide }: { it: ContentRow; patch: Patch; onEdit: () => void; canEdit: boolean; wide: boolean }) {
   const selected = it.channels ?? [];
   const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
   const [busy, setBusy] = useState(false);
@@ -648,7 +636,7 @@ function ChannelsBox({ it, patch, onEdit, canEdit, canRetry, wide }: { it: Conte
       </div>
       {!wide && canEdit && <p className="text-[11px] text-muted-foreground">{NO_CHANNELS_0065}.</p>}
       {selected.map((ch) => (
-        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} canRetry={canRetry} />
+        <ChannelCaption key={ch} it={it} ch={ch} post={posts.get(ch)} patch={patch} onEdit={onEdit} canEdit={canEdit} />
       ))}
     </div>
   );
@@ -777,17 +765,103 @@ const LINE_TONE: Record<ChannelLine["tone"], string> = {
   bad: "text-destructive",
 };
 
+const GROUP_TONE: Record<ChannelGroup, string> = { scheduled: "text-st-running", failed: "text-destructive", waiting: "text-muted-foreground" };
+const GROUP_ICON: Record<ChannelGroup, typeof CalendarCheckIcon> = { scheduled: CalendarCheckIcon, failed: AlertTriangleIcon, waiting: CalendarClockIcon };
+
+/**
+ * "Trạng thái đăng" (owner 2026-11-06): every channel of the item in its group (`channelGroup`),
+ * worded by `channelLine`. A channel that could not be scheduled also says how HQ hands it to a
+ * room that posts it by hand (`manualLine`, lib/server/content-manual.ts) and keeps "Thử lại" for the owner.
+ */
+function PostingStatus({ it, now, patch, canRetry }: { it: ContentRow; now: number; patch: Patch; canRetry: boolean }) {
+  const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
+  const rows = channelsOf(it).map((ch) => ({ ch, post: posts.get(ch), group: channelGroup(posts.get(ch)) }));
+  const hid = `ps-${it.id}`;
+  return (
+    <section aria-labelledby={hid} className="space-y-2.5 rounded-lg border p-3">
+      <h4 id={hid} className="text-xs font-semibold">
+        Trạng thái đăng
+      </h4>
+      {CHANNEL_GROUPS.map((g) => {
+        const of = rows.filter((r) => r.group === g);
+        if (of.length === 0) return null;
+        const Icon = GROUP_ICON[g];
+        return (
+          <div key={g} className="space-y-1">
+            <p className={cn("flex items-center gap-1 text-[11px] font-medium", GROUP_TONE[g])}>
+              <Icon aria-hidden className="size-3.5 shrink-0" />
+              {CHANNEL_GROUP_LABEL[g]} · {of.length}
+            </p>
+            <ul className="divide-y rounded-md border">
+              {of.map((r) => (
+                <PostingRow key={r.ch} it={it} ch={r.ch} post={r.post} now={now} patch={patch} canRetry={canRetry} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function PostingRow({ it, ch, post, now, patch, canRetry }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; now: number; patch: Patch; canRetry: boolean }) {
+  const [retrying, setRetrying] = useState(false);
+  const line = channelLine(it, post);
+  // A scheduled row's link is the platform's scheduled-post page; a posted one's is the post.
+  const link = line.link ?? httpLink(post?.permalink);
+  // Failed rows, and a row HQ claimed for a room posting it by hand (`scheduling` + "Đã giao phòng …").
+  const manual = channelGroup(post) === "failed" || post?.state === "scheduling" ? it.manual?.[ch] : undefined;
+  async function retry() {
+    setRetrying(true);
+    try {
+      await patch(it.id, { retry_channel: ch });
+    } finally {
+      setRetrying(false);
+    }
+  }
+  return (
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-1 px-2.5 py-2 text-xs">
+      <span className="w-20 shrink-0 font-medium">{CHANNEL_LABEL[ch]}</span>
+      <div className="min-w-0 flex-1 basis-48 space-y-0.5">
+        <p className={cn("flex min-w-0 items-center gap-1", LINE_TONE[line.tone])}>
+          {line.tone === "busy" && <Loader2Icon aria-hidden className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />}
+          <span className="min-w-0 break-words">{line.text}</span>
+        </p>
+        {manual && <p className={cn("break-words", manual.kind === "noroom" || manual.kind === "stale" ? "text-foreground" : "text-muted-foreground")}>{manualLine(manual, now)}</p>}
+      </div>
+      {(link || (line.retry && canRetry)) && (
+        <div className="flex shrink-0 items-center gap-2">
+          {link && (
+            <a
+              href={link}
+              target="_blank"
+              rel="noreferrer noopener"
+              className={cn("inline-flex items-center gap-0.5 rounded text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60", TOUCH)}
+            >
+              {post?.state === "published" ? "Mở bài" : "Mở lịch"} <ExternalLinkIcon aria-hidden className="size-3" />
+            </a>
+          )}
+          {line.retry && canRetry && (
+            <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px]", TOUCH)} disabled={retrying} onClick={() => void retry()}>
+              <RotateCcwIcon aria-hidden /> Thử lại
+            </Button>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
 /**
  * One channel's caption: its own text (`captions_json`) or, until edited, what `captionFor` reads from
  * the shared caption. Saving the shared text back keeps it shared; clearing an own caption returns to it.
  */
-function ChannelCaption({ it, ch, post, patch, onEdit, canEdit, canRetry }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void; canEdit: boolean; canRetry: boolean }) {
+function ChannelCaption({ it, ch, post, patch, onEdit, canEdit }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; patch: Patch; onEdit: () => void; canEdit: boolean }) {
   const own = it.captions_json?.[ch]?.trim() || null;
   const shared = captionFor({ caption: it.caption, captions_json: null }, ch);
   const value = own ?? shared ?? "";
   const [draft, setDraft] = useState<string | null>(null);
   const saving = useRef(false);
-  const [retrying, setRetrying] = useState(false);
   const text = draft ?? value;
   const count = charCount(text.trim());
   const limit = CAPTION_LIMIT[ch];
@@ -813,14 +887,6 @@ function ChannelCaption({ it, ch, post, patch, onEdit, canEdit, canRetry }: { it
     if (v === value || (body === "" && !own)) return setDraft(null);
     await save(body);
   }
-  async function retry() {
-    setRetrying(true);
-    try {
-      await patch(it.id, { retry_channel: ch });
-    } finally {
-      setRetrying(false);
-    }
-  }
 
   return (
     <section aria-labelledby={`${id}-h`} className="space-y-1.5 border-t pt-2.5">
@@ -836,11 +902,6 @@ function ChannelCaption({ it, ch, post, patch, onEdit, canEdit, canRetry }: { it
           <a href={line.link} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-0.5 text-xs text-primary underline-offset-2 hover:underline">
             Mở bài <ExternalLinkIcon aria-hidden className="size-3" />
           </a>
-        )}
-        {line.retry && canRetry && (
-          <Button type="button" size="sm" variant="outline" className={cn("h-6 px-2 text-[11px]", TOUCH)} disabled={retrying} onClick={() => void retry()}>
-            <RotateCcwIcon aria-hidden /> Thử lại
-          </Button>
         )}
       </div>
       <Textarea

@@ -9,6 +9,7 @@
 // ever created, deleted or renamed.
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { baseName, fileType, ARTIFACT_MEDIA_MAX_BYTES } from "../artifacts";
 import { FILES_CONFLICT, FILES_EDIT_MAX, FILES_HIDDEN, FILES_LIST_MAX, FILES_TEXT_MAX, sortEntries, type DirListing, type FileEntry, type FileKind, type FileSaved, type FileView } from "../files";
@@ -20,8 +21,12 @@ export type Fail = { status: number; error: string };
 const fail = (status: number, error: string): Fail => ({ status, error });
 export const isFail = (v: unknown): v is Fail => !!v && typeof v === "object" && "error" in v && "status" in v;
 
-/** The real folder of `given` when it is a known project root or a folder inside one (not under `.git`…). */
+/**
+ * The real folder of `given` when it is a known project root or a folder inside one (not under `.git`…).
+ * A leading `~/` is this machine's home folder: a room reply names files that way (lib/file-path.ts).
+ */
 export function filesRoot(given: string, known: string[]): string | Fail {
+  if (/^~(?:[\\/]|$)/.test(given)) given = path.join(os.homedir(), given.slice(1));
   if (!given || given.length > 4096 || given.includes("\0") || !path.isAbsolute(given)) return fail(422, "root: đường dẫn tuyệt đối tới thư mục dự án");
   const real = realOrNull(given);
   if (!real) return fail(404, "không thấy thư mục dự án");

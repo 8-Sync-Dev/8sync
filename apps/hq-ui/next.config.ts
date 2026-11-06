@@ -45,6 +45,7 @@ const nextConfig: NextConfig = {
       { source: "/api/artifacts/:id/file", headers: artifactFileHeaders },
       { source: "/api/artifacts/:id/pdf", headers: artifactFileHeaders },
       { source: "/api/files/raw", headers: artifactFileHeaders },
+      { source: "/api/files/pdf", headers: artifactFileHeaders },
     ];
   },
 };

@@ -105,7 +105,7 @@ export function digestText(d: Due, links: ReadonlyMap<number, string[]>, repo: s
     `1. Mở ego-browser profile "${EGO_PROFILE}". Facebook: Meta Business Suite › Nội dung › Đã đăng (latest/posts/published_posts) và Insights. Bài chưa lên thì ghi lại là chưa lên, không đoán số.`,
     `2. Mỗi bài, mỗi nền tảng: node ~/.omp/skills/hq-control/scripts/hq.mjs metrics add --content <id> --platform facebook --url <permalink> --at "<giờ đọc>" --reach N --reactions N --comments N --shares N --views N (số nào không thấy thì bỏ cờ đó; mỗi lần đọc là một dòng mới, không ghi đè).`,
     `3. Ảnh chụp số liệu / bài đã lên: hq.mjs artifact add <file> --content <id,...> --link <permalink> --for <thư mục dự án của trang> (link lên lịch cũ đổi thành permalink: chạy lại artifact add cùng file).`,
-    "Không sửa hàng content_items đã approved/published/rejected. Không ghi chữ về nhãn AI vào sheet. Xong thì báo một dòng tổng.",
+    "Không sửa hàng content_items đã approved/published/rejected. Xong thì báo một dòng tổng.",
     `(Sổ nội dung: ${repo})`,
   ].join("\n");
 }
@@ -115,6 +115,12 @@ type Result = { sent: string; session: string } | { skipped: string } | null;
 export type DigestDeps = { content: (now: number) => { items: Item[]; repo: string } | null; floor: () => Promise<FloorRow[]>; cfg: DigestConfig };
 
 const DAY_MS = 24 * 3600_000;
+
+/** The project folder of the content book (the DB's folder's project root), as the room tasks name it. */
+export function bookRepo(dbFile: string): string {
+  const dir = path.dirname(dbFile);
+  return projectOf(dir)?.root ?? dir;
+}
 
 /**
  * The posts scheduled around today (yesterday … tomorrow, so a day's later posts count) and the repo
@@ -129,8 +135,7 @@ function loadContent(now: number): { items: Item[]; repo: string } | null {
   const items = c.db
     .prepare("SELECT id, title, format, status, fb_page, fb_post_url, scheduled_at FROM content_items WHERE scheduled_at >= ? AND scheduled_at < ? ORDER BY scheduled_at")
     .all(now - 2 * DAY_MS, now + 2 * DAY_MS) as unknown as Item[];
-  const dir = path.dirname(dbPath.path);
-  return { items, repo: projectOf(dir)?.root ?? dir };
+  return { items, repo: bookRepo(dbPath.path) };
 }
 
 /** One tick. Exported for the test; the timer calls it every DIGEST_EVERY_MS. */

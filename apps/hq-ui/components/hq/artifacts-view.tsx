@@ -24,18 +24,17 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ARTIFACT_PARAM, KIND_LABEL, TEXT_INLINE_MAX, artifactFileUrl, baseName, extOf, groupArtifacts, officeFamily, officeReadable, safeImageSrc, type ArtifactKind, type ArtifactView } from "@/lib/artifacts";
+import { ARTIFACT_PARAM, KIND_LABEL, TEXT_INLINE_MAX, artifactFileUrl, baseName, extOf, groupArtifacts, officeFamily, safeImageSrc, type ArtifactKind, type ArtifactView } from "@/lib/artifacts";
 import { askRoomFor } from "@/lib/ask-quote";
 import { parseDelimited } from "@/lib/csv";
 import { bytes } from "@/lib/disk";
 import { useFollowRepo } from "@/lib/follow-repo";
 import { agoShort, agoVi } from "@/lib/now";
-import type { OfficeDoc } from "@/lib/office-preview";
 import { rootKey } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
-import { CopyButton } from "./copy-button";
 import { FolderButton } from "./folder-button";
+import { DataTable, FRAME, OfficePreview, TextFrame } from "./file-preview";
 import { SelectionAsk } from "./selection-ask";
 import type { Room } from "./use-office";
 import { makeApi, type Api } from "./use-hq";
@@ -361,8 +360,6 @@ function useArtifactFile(token: string, a: ArtifactView, skip: boolean): Loaded 
   return st && st.key === key ? st : null;
 }
 
-const FRAME = "h-[min(78dvh,60rem)] w-full rounded-lg border";
-
 /** Markdown `<img>`: only `data:` or HQ's own origin load (lib/artifacts.ts safeImageSrc); a remote one shows as a note. */
 function MarkdownImage({ src, alt }: ComponentProps<"img">) {
   const ok = safeImageSrc(src, window.location.origin);
@@ -407,7 +404,17 @@ function Body({ a, api, token }: { a: ArtifactView; api: Api; token: string }) {
         </figure>
       );
     case "office":
-      return <OfficeBody a={a} api={api} token={token} />;
+      return (
+        <OfficePreview
+          name={a.path}
+          title={a.title}
+          pdfUrl={`/api/artifacts/${a.id}/pdf`}
+          fileUrl={artifactFileUrl(a.id)}
+          token={token}
+          version={`${a.mtime ?? 0}:${a.updated_at}`}
+          fallback={(why) => <Unsupported a={a} api={api} title="Chưa xem trước được loại file này" why={why} />}
+        />
+      );
   }
   if (!f) return <Skeleton className="h-[min(70dvh,40rem)] w-full rounded-lg" />;
   if (f.failed) return <Note title="Không mở được file">HQ không đọc được nó lúc này (file đổi loại, quá cỡ hoặc ra ngoài dự án). Tải lại hoặc nhờ phòng đăng lại.</Note>;
@@ -439,157 +446,6 @@ function Body({ a, api, token }: { a: ArtifactView; api: Api; token: string }) {
   return (
     <TextFrame copy={f.text ?? ""}>
       <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">{f.text}</pre>
-    </TextFrame>
-  );
-}
-
-/** A text result with its "Chép" in the corner. */
-function TextFrame({ copy, children }: { copy: string; children: ReactNode }) {
-  return (
-    <div className="relative min-h-full rounded-lg border bg-muted/40 p-3 pt-9">
-      <div className="absolute top-1.5 right-1.5">
-        <CopyButton value={copy} label="Chép nội dung file" text />
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function DataTable({ rows, header = false, more = null }: { rows: string[][]; header?: boolean; more?: string | null }) {
-  if (!rows.length) return <p className="text-xs text-muted-foreground">Trống.</p>;
-  const [head, ...rest] = header ? rows : [null, ...rows];
-  return (
-    <div className="overflow-auto rounded-md border bg-background">
-      <table className="w-max min-w-full border-collapse text-xs tabular">
-        {head && (
-          <thead className="sticky top-0 bg-muted">
-            <tr>
-              {head.map((c, i) => (
-                <th key={i} scope="col" className="border-b px-2 py-1.5 text-left font-semibold whitespace-pre-wrap">
-                  {c}
-                </th>
-              ))}
-            </tr>
-          </thead>
-        )}
-        <tbody>
-          {rest.map((r, i) => (
-            <tr key={i} className="odd:bg-muted/30">
-              {(r ?? []).map((c, j) => (
-                <td key={j} className="max-w-96 border-b px-2 py-1 align-top whitespace-pre-wrap">
-                  {c}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {more && <p className="px-2 py-1.5 text-xs text-muted-foreground">{more}</p>}
-    </div>
-  );
-}
-
-type OfficeState = { key: string } & ({ mode: "pdf"; url: string } | { mode: "doc"; doc: OfficeDoc; text: string } | { mode: "none"; why: string });
-
-/**
- * An Office file: as PDF when LibreOffice is on HQ's machine (GET /api/artifacts/<id>/pdf), else read here
- * (docx/xlsx/pptx/odt/ods/odp, lib/office-preview.ts, loaded only now), else a card to download it.
- */
-function OfficeBody({ a, api, token }: { a: ArtifactView; api: Api; token: string }) {
-  const key = `${a.id}:${a.mtime ?? 0}:${a.updated_at}`;
-  const [st, setSt] = useState<OfficeState | null>(null);
-  useEffect(() => {
-    const ac = new AbortController();
-    let obj: string | null = null;
-    const headers = { "x-hq-token": token };
-    (async () => {
-      const r = await fetch(`/api/artifacts/${a.id}/pdf`, { headers, signal: ac.signal, cache: "no-store" });
-      if (r.ok) {
-        obj = URL.createObjectURL(await r.blob());
-        return setSt({ key, mode: "pdf", url: obj });
-      }
-      const noSoffice = r.status === 501;
-      if (!officeReadable(a.path)) {
-        return setSt({
-          key,
-          mode: "none",
-          why: noSoffice ? "File Office đời cũ (.doc/.xls/.ppt) cần LibreOffice trên máy chạy HQ để xem trước." : "LibreOffice không chuyển được file này.",
-        });
-      }
-      const [file, mod] = await Promise.all([fetch(artifactFileUrl(a.id), { headers, signal: ac.signal, cache: "no-store" }), import("@/lib/office-preview")]);
-      const doc = file.ok ? await mod.readOffice(a.path, await file.arrayBuffer()) : null;
-      setSt(doc ? { key, mode: "doc", doc, text: mod.officeText(doc) } : { key, mode: "none", why: "File hỏng hoặc định dạng này chưa đọc được." });
-    })().catch(() => {
-      if (!ac.signal.aborted) setSt({ key, mode: "none", why: "HQ không đọc được file lúc này." });
-    });
-    return () => {
-      ac.abort();
-      if (obj) URL.revokeObjectURL(obj);
-    };
-  }, [a.id, a.path, key, token]);
-  const cur = st && st.key === key ? st : null;
-  if (!cur) return <Skeleton className="h-[min(70dvh,40rem)] w-full rounded-lg" />;
-  if (cur.mode === "pdf") return <iframe src={cur.url} title={a.title} className={FRAME} />;
-  if (cur.mode === "none") return <Unsupported a={a} api={api} title="Chưa xem trước được loại file này" why={cur.why} />;
-  return <OfficeDocView doc={cur.doc} text={cur.text} />;
-}
-
-function OfficeDocView({ doc, text }: { doc: OfficeDoc; text: string }) {
-  return (
-    <TextFrame copy={text}>
-      <p className="mb-3 text-[11px] text-muted-foreground">Bản xem nhanh (chữ và bảng, chưa có định dạng). Cài LibreOffice trên máy chạy HQ để xem đúng như file gốc.</p>
-      {doc.kind === "doc" && (
-        <div className="max-w-3xl space-y-2 text-sm leading-relaxed">
-          {doc.blocks.map((b, i) =>
-            b.t === "h" ? (
-              <p key={i} role="heading" aria-level={Math.min(b.level + 3, 6)} className={cn("font-semibold text-pretty", b.level <= 1 ? "pt-2 text-lg" : b.level === 2 ? "pt-1.5 text-base" : "text-sm")}>
-                {b.text}
-              </p>
-            ) : b.t === "li" ? (
-              <p key={i} className="flex gap-2 whitespace-pre-wrap" style={{ paddingLeft: `${b.depth * 1.25}rem` }}>
-                <span aria-hidden className="text-muted-foreground">•</span>
-                <span>{b.text}</span>
-              </p>
-            ) : b.t === "table" ? (
-              <DataTable key={i} rows={b.rows} />
-            ) : (
-              <p key={i} className="whitespace-pre-wrap text-pretty">
-                {b.text}
-              </p>
-            ),
-          )}
-          {doc.more && <p className="text-xs text-muted-foreground">Còn nữa: tải về để đọc hết.</p>}
-        </div>
-      )}
-      {doc.kind === "sheet" && (
-        <div className="space-y-4">
-          {doc.sheets.map((s, i) => (
-            <section key={i} aria-label={s.name} className="space-y-1.5">
-              <h4 className="text-xs font-semibold">{s.name}</h4>
-              <DataTable rows={s.rows} more={s.more ? "Còn nữa: tải về để xem hết." : null} />
-            </section>
-          ))}
-          {doc.moreSheets > 0 && <p className="text-xs text-muted-foreground">Còn {doc.moreSheets} sheet nữa trong file.</p>}
-        </div>
-      )}
-      {doc.kind === "slides" && (
-        <ol className="grid gap-3 sm:grid-cols-2">
-          {doc.slides.map((s, i) => (
-            <li key={i} className="flex aspect-video min-w-0 flex-col gap-1.5 overflow-hidden rounded-md border bg-background p-3">
-              <span className="text-[11px] text-muted-foreground tabular">Slide {i + 1}</span>
-              {s.title && <p className="text-sm font-semibold text-pretty">{s.title}</p>}
-              <ul className="min-h-0 space-y-0.5 overflow-hidden text-xs text-foreground/80">
-                {s.lines.map((l, j) => (
-                  <li key={j} className="whitespace-pre-wrap">
-                    {l}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-          {doc.more && <li className="text-xs text-muted-foreground">Còn nữa: tải về để xem hết.</li>}
-        </ol>
-      )}
     </TextFrame>
   );
 }

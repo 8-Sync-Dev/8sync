@@ -25,6 +25,7 @@ import { RoomBar, RoomBrief } from "./room-brief";
 import { RoomLogProvider } from "./room-outputs";
 import { RoomReport } from "./room-report";
 import { FilesPane, filesRootOf } from "./files-sheet";
+import { PathOpenProvider } from "./path-open";
 import type { PreviewState } from "./preview-view";
 import { FloatShell } from "./float-shell";
 import { useEdgeFade } from "./scroll-strip";
@@ -538,6 +539,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 />
               ) : (
               <RoomLogProvider sessionId={room?.session_id ?? null} cwd={room?.cwd ?? null} token={token} working={roomState?.state === "working"}>
+              <PathOpenProvider token={token}>
                 <TeamView
                   hq={hq}
                   messages={view.messages}
@@ -555,6 +557,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                     ) : null
                   }
                 />
+              </PathOpenProvider>
               </RoomLogProvider>
               )}
             </TabsContent>

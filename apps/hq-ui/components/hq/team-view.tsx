@@ -28,6 +28,7 @@ import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
 import { FilesPaneCtx, useFilesPaneState } from "./files-sheet";
 import { TurnLink } from "./room-outputs";
+import { pathComponents } from "./path-open";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { withQuote } from "@/lib/ask-quote";
 import { onAsk, takeAsk } from "@/lib/ask-store";
@@ -345,8 +346,10 @@ function Row({ m, prev, who, token }: { m: Message; prev?: Message; who: Who; to
             <MessageText text={m.text} token={token} className="wrap-anywhere whitespace-pre-wrap" />
           ) : (
             <>
-              {/* wrap-anywhere: a long path or URL breaks inside the bubble instead of being clipped on a phone. */}
-              <MessageResponse className="wrap-anywhere">{m.text ?? ""}</MessageResponse>
+              {/* wrap-anywhere: a long path or URL breaks inside the bubble instead of being clipped on a phone. A file path in code opens in the viewer. */}
+              <MessageResponse className="wrap-anywhere" components={pathComponents}>
+                {m.text ?? ""}
+              </MessageResponse>
               <ReplyMedia text={m.text} token={token} />
             </>
           )}

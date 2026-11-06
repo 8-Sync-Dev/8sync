@@ -39,10 +39,10 @@ export const deniedText = (role: AccessRole) => `Quyền "${ACCESS_LABEL[role]}"
 
 /**
  * Content fields only the owner sets: a file path on the owner's machine, the agent who holds the
- * item, `send` (approve + hand the posting task to an agent session), the AI disclosure (`ai_label`)
- * and `retry_channel` (requeues a failed or blocked post).
+ * item, `send` (approve + hand the posting task to an agent session) and `retry_channel` (requeues
+ * a failed or blocked post).
  */
-export const OWNER_CONTENT_FIELDS = ["media_path", "assignee_session", "assignee_base", "send", "ai_label", "retry_channel"] as const;
+export const OWNER_CONTENT_FIELDS = ["media_path", "assignee_session", "assignee_base", "send", "retry_channel"] as const;
 
 /**
  * Statuses only the owner sets: approving (which schedules the channels and is what the worker
