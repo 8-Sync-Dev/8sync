@@ -1,12 +1,13 @@
 "use client";
 
-// The sheet a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
-// approve (the owner's also sends the posting task to the chosen session), inline caption / time
-// edits, the channels (0064) with a caption and a post status each, the optional AI-label answer and
+// The detail a calendar day (or chip) opens: that day's items in full, with the owner's one-tap
+// approve (the owner's also sends the posting task to the chosen session), the owner's "Góp ý"
+// drafts, inline caption / time edits, the channels (0064) with a caption and a post status each and
 // "Giao việc". Its header counts the day's posts per platform against the target and splits the
-// sheet by platform. Esc or a click outside closes it; the URL keeps `?day=YYYY-MM-DD&item=N` so the
+// detail by platform. On a wide screen it is a resizable pane beside the calendar (X or Esc closes
+// it); on a phone a sheet (Esc or a click outside). The URL keeps `?day=YYYY-MM-DD&item=N` so the
 // owner can share or come back.
-import { AlertTriangleIcon, CalendarCheckIcon, CalendarClockIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, Maximize2Icon, PlayIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, CalendarCheckIcon, CalendarClockIcon, CheckIcon, ChevronDownIcon, DownloadIcon, ExternalLinkIcon, Loader2Icon, Maximize2Icon, MessageSquareTextIcon, PlayIcon, RotateCcwIcon, SendIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import {
   CAPTION_LIMIT,
   captionFor,
   CHANNEL_GROUP_LABEL,
-  CHANNEL_GROUPS,
+  isHqClaim,
   channelGroup,
   CHANNEL_LABEL,
   CHANNEL_SHORT,
@@ -64,6 +65,7 @@ import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { useAccess } from "./access";
 import { AssignBox, Editable, FORMAT_TONE, sessionLabel, STATUS_EDGE, STATUS_TONE, StatusIcon, useAssignSessions, type Patch } from "./content-bits";
+import { CommentsBox, useComments } from "./content-comments";
 import { CopyButton } from "./copy-button";
 import { DAY_NAMES } from "./content-calendar";
 import { ItemResults, NO_RESULTS, ResultMark, ResultStrip, type ResultIndex } from "./content-results";
@@ -83,6 +85,7 @@ export function ContentSheet({
   day,
   item,
   items,
+  pane = false,
   platform,
   onPlatform,
   counts,
@@ -105,6 +108,11 @@ export function ContentSheet({
   item: number | null;
   /** That day's items, in time order (only those going out on `platform` when one is picked). */
   items: ContentRow[];
+  /**
+   * A wide screen: the detail as a pane beside the calendar (ContentView's resizable panel), no
+   * overlay, so the calendar stays usable; else (phone) the sheet.
+   */
+  pane?: boolean;
   /** The platform the sheet is split by; null = all. */
   platform: Channel | null;
   onPlatform: (c: Channel | null) => void;
@@ -130,59 +138,92 @@ export function ContentSheet({
 }) {
   // One item open at a time: the one in the URL, else the only one.
   const shown = item ?? (items.length === 1 ? items[0].id : null);
+  const title = day ? dayTitle(day) : "";
+  const summary = (
+    <>
+      {daySummary(items)}
+      {platform && ` trên ${CHANNEL_LABEL[platform]}`}
+      {!schedule && ` · ${NO_SCHEDULE}`}
+    </>
+  );
+  // The body lays out by its own width (container queries), the same in a 28% pane and a phone sheet.
+  const body = (
+    <div className="@container/detail min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {items.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground">Ngày này chưa có bài. Phiên lên lịch đặt `scheduled_at` là bài hiện ở đây.</p>
+      ) : (
+        <ul className="divide-y">
+          {items.map((it) => (
+            <li key={it.id}>
+              {shown === it.id ? (
+                <ItemDetail
+                  it={it}
+                  api={api}
+                  token={token}
+                  results={results}
+                  now={now}
+                  patch={patch}
+                  error={errors[it.id]}
+                  schedule={schedule}
+                  channels0065={channels0065}
+                  assign={assign}
+                  onCollapse={items.length > 1 ? () => onItem(null) : undefined}
+                  reload={reload}
+                  onOpenFile={onOpenFile}
+                />
+              ) : (
+                <>
+                  <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-start gap-2 px-4 py-3 text-left outline-none transition-colors duration-150 hover:bg-accent/50 focus-visible:bg-accent/50 motion-reduce:transition-none">
+                    <ItemLine it={it} results={results} />
+                    <ChevronDownIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                  {results.arts.has(it.id) && (
+                    <div className="-mt-1 pr-4 pb-3 pl-18">
+                      <ResultStrip token={token} arts={results.arts.get(it.id)} />
+                    </div>
+                  )}
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+  const bar = <PlatformBar counts={counts} platform={platform} onPlatform={onPlatform} />;
+
+  if (pane) {
+    if (day === null) return null;
+    return (
+      // No slide: the pane takes its place beside the calendar; the content fades in (none with reduced motion).
+      <aside aria-labelledby="content-pane-h" className="flex h-full min-h-0 flex-col bg-background duration-150 animate-in fade-in-0 motion-reduce:animate-none">
+        <header className="@container/detail border-b px-4 py-3">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <h2 id="content-pane-h" className="text-base font-semibold text-balance">
+                {title}
+              </h2>
+              <p className="text-xs text-muted-foreground">{summary}</p>
+            </div>
+            <Button type="button" size="icon-sm" variant="ghost" className="-mt-0.5 -mr-1.5 shrink-0" aria-label="Đóng chi tiết (Esc)" title="Đóng (Esc)" onClick={onClose}>
+              <XIcon aria-hidden />
+            </Button>
+          </div>
+          {bar}
+        </header>
+        {body}
+      </aside>
+    );
+  }
   return (
     <Sheet open={day !== null} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
-        <SheetHeader className="border-b px-4 py-3">
-          <SheetTitle className="text-base">{day ? dayTitle(day) : ""}</SheetTitle>
-          <SheetDescription className="text-xs">
-            {daySummary(items)}
-            {platform && ` trên ${CHANNEL_LABEL[platform]}`}
-            {!schedule && ` · ${NO_SCHEDULE}`}
-          </SheetDescription>
-          <PlatformBar counts={counts} platform={platform} onPlatform={onPlatform} />
+        <SheetHeader className="@container/detail border-b px-4 py-3">
+          <SheetTitle className="text-base">{title}</SheetTitle>
+          <SheetDescription className="text-xs">{summary}</SheetDescription>
+          {bar}
         </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {items.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-muted-foreground">Ngày này chưa có bài. Phiên lên lịch đặt `scheduled_at` là bài hiện ở đây.</p>
-          ) : (
-            <ul className="divide-y">
-              {items.map((it) => (
-                <li key={it.id}>
-                  {shown === it.id ? (
-                    <ItemDetail
-                      it={it}
-                      api={api}
-                      token={token}
-                      results={results}
-                      now={now}
-                      patch={patch}
-                      error={errors[it.id]}
-                      schedule={schedule}
-                      channels0065={channels0065}
-                      assign={assign}
-                      onCollapse={items.length > 1 ? () => onItem(null) : undefined}
-                      reload={reload}
-                      onOpenFile={onOpenFile}
-                    />
-                  ) : (
-                    <>
-                      <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-start gap-2 px-4 py-3 text-left outline-none transition-colors duration-150 hover:bg-accent/50 focus-visible:bg-accent/50 motion-reduce:transition-none">
-                        <ItemLine it={it} results={results} />
-                        <ChevronDownIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                      </button>
-                      {results.arts.has(it.id) && (
-                        <div className="-mt-1 pr-4 pb-3 pl-18">
-                          <ResultStrip token={token} arts={results.arts.get(it.id)} />
-                        </div>
-                      )}
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        {body}
       </SheetContent>
     </Sheet>
   );
@@ -243,7 +284,7 @@ function ChannelTags({ it }: { it: ContentRow }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1" aria-label={`Đã lên lịch ${s.done}/${s.total} kênh`}>
       {(it.channels ?? []).map((c) => {
-        const line = channelLine(it, posts.get(c));
+        const line = lineOf(it, posts.get(c));
         return (
           <span
             key={c}
@@ -268,7 +309,7 @@ function ChannelTags({ it }: { it: ContentRow }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid gap-1 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-3">
+    <div className="grid gap-1 @md/detail:grid-cols-[6.5rem_minmax(0,1fr)] @md/detail:gap-3">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="min-w-0 text-sm">{children}</dd>
     </div>
@@ -347,6 +388,10 @@ function ItemDetail({
     if (id === assign?.session && assign.base) return assign.base;
     return id;
   };
+  // "Góp ý" go to the room posting the item, else to the one picked in "Giao việc".
+  const comments = useComments(api, it.id, owner);
+  const drafts = comments.list.drafts.length;
+  const commentTo = known(it.assignee_session) ? it.assignee_session : known(session) ? session : null;
   const [need, setNeed] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const forgotten = useRef<string | null>(null);
@@ -483,8 +528,17 @@ function ItemDetail({
               </Button>
             </span>
           )}
+          {/* "Bỏ" / "Bỏ duyệt" sends nothing: the drafts wait for "Gửi" in Góp ý right below. */}
+          {owner && drafts > 0 && (
+            <span className="flex items-center gap-1 text-xs font-medium text-foreground">
+              <MessageSquareTextIcon aria-hidden className="size-3.5 shrink-0 text-st-needs" />
+              {drafts} góp ý chưa gửi
+            </span>
+          )}
         </div>
       )}
+
+      {owner && <CommentsBox id={it.id} c={comments} room={commentTo ? { session: commentTo, label: labelOf(commentTo) } : null} now={now} />}
 
       {it.channels !== undefined && <PostingStatus it={it} now={now} patch={patch} canRetry={owner} />}
 
@@ -662,7 +716,7 @@ function PlatformBar({ counts, platform, onPlatform }: { counts: PlatformCounts 
           </button>
         )}
       </div>
-      <div role="group" aria-label="Xem theo nền tảng" className="grid grid-cols-4 gap-1.5 sm:grid-cols-8">
+      <div role="group" aria-label="Xem theo nền tảng" className="grid grid-cols-4 gap-1.5 @lg/detail:grid-cols-8">
         {CHANNELS.map((ch) => {
           const c = counts?.[ch];
           const t = c ? targetState(c.planned) : null;
@@ -745,7 +799,7 @@ export function ChannelStates({ it }: { it: ContentRow }) {
   return (
     <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] whitespace-nowrap">
       {(it.channels ?? []).map((c) => {
-        const line = channelLine(it, posts.get(c));
+        const line = lineOf(it, posts.get(c));
         return (
           <span key={c} className={cn("font-medium", LINE_TONE[line.tone])} title={`${CHANNEL_LABEL[c]}: ${line.text}`}>
             {CHANNEL_SHORT[c]}
@@ -765,24 +819,43 @@ const LINE_TONE: Record<ChannelLine["tone"], string> = {
   bad: "text-destructive",
 };
 
-const GROUP_TONE: Record<ChannelGroup, string> = { scheduled: "text-st-running", failed: "text-destructive", waiting: "text-muted-foreground" };
-const GROUP_ICON: Record<ChannelGroup, typeof CalendarCheckIcon> = { scheduled: CalendarCheckIcon, failed: AlertTriangleIcon, waiting: CalendarClockIcon };
+/**
+ * `channelLine`, except a row HQ has handed to a posting room (`isHqClaim`): work in hand, not a
+ * failure, so no "Không lên lịch được" reason and no "Thử lại" (the server refuses it too). Its text
+ * is the manual status when the item carries one.
+ */
+function lineOf(it: ContentRow, post: ChannelPost | undefined, now?: number): ChannelLine {
+  if (!isHqClaim(post)) return channelLine(it, post);
+  const m = post && it.manual?.[post.channel];
+  return { text: m ? manualLine(m, now) : "Đã giao phòng đăng", tone: "busy", link: null, retry: false };
+}
+
+/** The groups of "Trạng thái đăng": `channelGroup`'s, with HQ's hand-overs apart from the failures. */
+type PostingGroup = ChannelGroup | "claimed";
+const POSTING_GROUPS: readonly PostingGroup[] = ["scheduled", "claimed", "failed", "waiting"];
+const GROUP_LABEL: Record<PostingGroup, string> = { ...CHANNEL_GROUP_LABEL, claimed: "Đang giao phòng đăng" };
+const GROUP_TONE: Record<PostingGroup, string> = { scheduled: "text-st-running", claimed: "text-foreground", failed: "text-destructive", waiting: "text-muted-foreground" };
+const GROUP_ICON: Record<PostingGroup, typeof CalendarCheckIcon> = { scheduled: CalendarCheckIcon, claimed: SendIcon, failed: AlertTriangleIcon, waiting: CalendarClockIcon };
 
 /**
- * "Trạng thái đăng" (owner 2026-11-06): every channel of the item in its group (`channelGroup`),
- * worded by `channelLine`. A channel that could not be scheduled also says how HQ hands it to a
- * room that posts it by hand (`manualLine`, lib/server/content-manual.ts) and keeps "Thử lại" for the owner.
+ * "Trạng thái đăng" (owner 2026-11-06): every channel of the item in its group (`channelGroup`, plus
+ * "Đang giao phòng đăng" for a row HQ handed to a room), worded by `channelLine`. A channel with a
+ * manual status (`it.manual`, lib/server/content-manual.ts) also says how HQ hands it to a room that
+ * posts it by hand, row or not; a failure keeps "Thử lại" for the owner.
  */
 function PostingStatus({ it, now, patch, canRetry }: { it: ContentRow; now: number; patch: Patch; canRetry: boolean }) {
   const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
-  const rows = channelsOf(it).map((ch) => ({ ch, post: posts.get(ch), group: channelGroup(posts.get(ch)) }));
+  const rows = channelsOf(it).map((ch) => {
+    const post = posts.get(ch);
+    return { ch, post, group: isHqClaim(post) ? ("claimed" as const) : channelGroup(post) };
+  });
   const hid = `ps-${it.id}`;
   return (
     <section aria-labelledby={hid} className="space-y-2.5 rounded-lg border p-3">
       <h4 id={hid} className="text-xs font-semibold">
         Trạng thái đăng
       </h4>
-      {CHANNEL_GROUPS.map((g) => {
+      {POSTING_GROUPS.map((g) => {
         const of = rows.filter((r) => r.group === g);
         if (of.length === 0) return null;
         const Icon = GROUP_ICON[g];
@@ -790,7 +863,7 @@ function PostingStatus({ it, now, patch, canRetry }: { it: ContentRow; now: numb
           <div key={g} className="space-y-1">
             <p className={cn("flex items-center gap-1 text-[11px] font-medium", GROUP_TONE[g])}>
               <Icon aria-hidden className="size-3.5 shrink-0" />
-              {CHANNEL_GROUP_LABEL[g]} · {of.length}
+              {GROUP_LABEL[g]} · {of.length}
             </p>
             <ul className="divide-y rounded-md border">
               {of.map((r) => (
@@ -806,11 +879,12 @@ function PostingStatus({ it, now, patch, canRetry }: { it: ContentRow; now: numb
 
 function PostingRow({ it, ch, post, now, patch, canRetry }: { it: ContentRow; ch: Channel; post: ChannelPost | undefined; now: number; patch: Patch; canRetry: boolean }) {
   const [retrying, setRetrying] = useState(false);
-  const line = channelLine(it, post);
+  const claimed = isHqClaim(post);
+  const line = lineOf(it, post, now);
   // A scheduled row's link is the platform's scheduled-post page; a posted one's is the post.
   const link = line.link ?? httpLink(post?.permalink);
-  // Failed rows, and a row HQ claimed for a room posting it by hand (`scheduling` + "Đã giao phòng …").
-  const manual = channelGroup(post) === "failed" || post?.state === "scheduling" ? it.manual?.[ch] : undefined;
+  // How HQ hands the channel to a room posting by hand, row or not (a claimed row's line says it already).
+  const manual = claimed ? undefined : it.manual?.[ch];
   async function retry() {
     setRetrying(true);
     try {
@@ -824,7 +898,7 @@ function PostingRow({ it, ch, post, now, patch, canRetry }: { it: ContentRow; ch
       <span className="w-20 shrink-0 font-medium">{CHANNEL_LABEL[ch]}</span>
       <div className="min-w-0 flex-1 basis-48 space-y-0.5">
         <p className={cn("flex min-w-0 items-center gap-1", LINE_TONE[line.tone])}>
-          {line.tone === "busy" && <Loader2Icon aria-hidden className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />}
+          {line.tone === "busy" && !claimed && <Loader2Icon aria-hidden className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />}
           <span className="min-w-0 break-words">{line.text}</span>
         </p>
         {manual && <p className={cn("break-words", manual.kind === "noroom" || manual.kind === "stale" ? "text-foreground" : "text-muted-foreground")}>{manualLine(manual, now)}</p>}
@@ -865,7 +939,7 @@ function ChannelCaption({ it, ch, post, patch, onEdit, canEdit }: { it: ContentR
   const text = draft ?? value;
   const count = charCount(text.trim());
   const limit = CAPTION_LIMIT[ch];
-  const line = channelLine(it, post);
+  const line = lineOf(it, post);
   const id = `cap-${it.id}-${ch}`;
 
   async function save(body: string) {

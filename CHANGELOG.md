@@ -5,6 +5,21 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.129.0] — 2026-11-06
+
+### Added
+- Tab Nội dung: trên màn hình rộng (từ 1280 px), chi tiết ngày và bài mở thành khung bên phải cạnh lịch thay vì sheet che lịch. Kéo để đổi chiều rộng (28–65%), trình duyệt nhớ độ rộng, X hoặc Esc để đóng. Điện thoại và màn hẹp vẫn dùng sheet như cũ.
+- "Góp ý" cho chủ trong chi tiết bài: gõ góp ý rồi lưu nháp (Ctrl+Enter), sửa hoặc xoá từng nháp, rồi "Gửi N góp ý" một lần trong một tin cho phòng đăng của bài. Nháp lưu trong sqlite của HQ (bảng `content_comments`), gửi lỗi thì nháp vẫn còn. Có lịch sử "Đã gửi" và nhắc "N góp ý chưa gửi" cạnh nút Bỏ; Bỏ không tự gửi. Khách không thấy, không gọi được (403).
+- HQ giao bài đã duyệt cho phòng đăng trễ tới 72 giờ sau giờ đăng (máy tắt lúc tới giờ vẫn giao khi HQ chạy lại); trễ hơn 72 giờ thì không tự giao, sheet báo đã quá hạn đăng bù để đăng tay hoặc dời giờ. HQ chạy lượt kiểm đầu tiên ngay khi khởi động.
+- Kênh của bài đã duyệt chưa có dòng `content_channel_posts` lúc tới giờ đăng cũng được giao phòng; HQ tạo dòng giữ chỗ trước khi giao. Không giao khi bài đã có dấu hiệu đã đăng (trạng thái `published`, có `published_at`, hoặc kênh Facebook có `fb_post_url`).
+- Mọi việc giao phòng có bước kiểm trên trang/kênh thật (tab Đã đăng / Đã lên lịch) trước khi đăng; bài đã lên thì ghi `published`/`scheduled` thay vì đăng lại. Bài trễ: dòng đầu ghi "ĐĂNG TRỄ …" cho phòng, caption chỉ sửa chữ chỉ thời gian, không thêm ghi chú trễ; trễ hơn 24 giờ phải kiểm chủ đề còn đúng trước khi đăng.
+
+### Changed
+- HQ giữ chỗ bằng state `blocked` với lỗi bắt đầu bằng "HQ giao …" thay cho `scheduling`, để `channels:tick` của content-ai không đánh `failed` sau 15 phút (đóng khe đăng trùng ghi ở 0.128.0). Gửi lỗi thì trả dòng về như cũ hoặc xoá dòng HQ vừa tạo.
+- Trạng thái đăng: kênh đã giao phòng nằm ở nhóm "Đang giao phòng đăng", không báo lỗi, không có "Thử lại"; server từ chối Thử lại kênh đó (409 "Phòng đăng đang xử lý kênh này"). Trạng thái giao hiện cho cả kênh chưa có dòng lịch.
+- Khung chi tiết tự xếp theo độ rộng của nó (container queries): ô thông tin, thanh nền tảng, ảnh Kết quả 2–4 cột, tên file xuống dòng thay vì đẩy nút Xem ra ngoài.
+- Bản ghi đã giao giữ 72 giờ cộng 2 ngày, không bị xoá khi bài còn trong hạn đăng bù.
+
 ### Docs
 - CHANGELOG 0.128.0: sửa mô tả tự giao đăng tay. Dòng `scheduling` chỉ được giữ 15 phút: quá 15 phút (tính theo `updated_at`), `channels:tick` đánh dòng đó `failed`, và lúc đó owner lại bấm "Thử lại" được. Phòng đăng lâu hơn 15 phút vẫn có thể bị đăng trùng.
 

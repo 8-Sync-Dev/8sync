@@ -140,6 +140,18 @@ CREATE TABLE IF NOT EXISTS content_digest (
   status TEXT NOT NULL,
   at INTEGER NOT NULL
 );
+-- "Góp ý" on a content item (lib/server/content-comments.ts): the owner's comments, kept as drafts
+-- (sent_at NULL) until one send hands them all to the item's posting room; then when and where.
+CREATE TABLE IF NOT EXISTS content_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  sent_at INTEGER,
+  sent_to TEXT,
+  sent_label TEXT
+);
+CREATE INDEX IF NOT EXISTS content_comments_item ON content_comments(item_id, sent_at);
 `;
 
 const g = globalThis as unknown as { __hqDb?: { file: string; db: DatabaseSync; schema: string } };

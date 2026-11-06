@@ -1,12 +1,14 @@
 "use client";
 
 import { AlertTriangleIcon, BarChart3Icon, CalendarCheckIcon, CalendarClockIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, FileTextIcon, ListIcon, PlusIcon, SendIcon, SquareTerminalIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useDefaultLayout } from "react-resizable-panels";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   byDay,
@@ -117,7 +119,7 @@ const stored = <T extends string>(key: string, ok: readonly T[], dflt: T): T => 
   return ok.includes(v as T) ? (v as T) : dflt;
 };
 
-/** `?day=YYYY-MM-DD|none&item=N`: the open sheet, shareable and restored on load. */
+/** `?day=YYYY-MM-DD|none&item=N`: the open detail, shareable and restored on load. */
 function readSel(): Sel {
   if (typeof window === "undefined") return { day: null, item: null };
   const q = new URLSearchParams(window.location.search);
@@ -125,6 +127,22 @@ function readSel(): Sel {
   const item = Number(q.get("item"));
   return { day: day === NO_DAY || parseDay(day) ? day : null, item: Number.isSafeInteger(item) && item > 0 ? item : null };
 }
+
+/**
+ * Wide enough for the detail as a pane beside the calendar (owner 2026-11-06): from 1280 px the
+ * calendar keeps ≥ 35% and the pane's 28% floor stays readable next to the sidebar; below, the sheet.
+ */
+const PANE_QUERY = "(min-width: 1280px)";
+const onPaneQuery = (cb: () => void) => {
+  const m = window.matchMedia(PANE_QUERY);
+  m.addEventListener("change", cb);
+  return () => m.removeEventListener("change", cb);
+};
+const paneFits = () => window.matchMedia(PANE_QUERY).matches;
+
+/** Esc closes the pane unless it belongs to a field, a dialog or a list being used. */
+const ESC_OWNED = "input, textarea, select, [contenteditable='true'], [role='dialog'], [role='listbox'], [role='menu']";
+
 function writeSel({ day, item }: Sel) {
   const u = new URL(window.location.href);
   if (day) u.searchParams.set("day", day);
@@ -201,7 +219,49 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
     onPlatform !== null && sheetDay ? platformItems(items, onPlatform, sheetDay === NO_DAY ? null : sheetDay) : sheetDay === NO_DAY ? unscheduled : sheetDay ? (days.get(sheetDay) ?? []) : [];
   const today = dayKey(list.at || 0);
 
-  return (
+  const closeSel = useCallback(() => setSel({ day: null, item: null }), []);
+  const wide = useSyncExternalStore(onPaneQuery, paneFits, () => false);
+  const pane = wide && ready != null && sheetDay !== null;
+  const layout = useDefaultLayout({ id: "hq-content-pane", panelIds: pane ? ["content", "detail"] : ["content"] });
+  // Esc closes the pane (the sheet has its own); a field, an open dialog or list keeps its Esc.
+  useEffect(() => {
+    if (!pane || !active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      if (e.target instanceof Element && e.target.closest(ESC_OWNED)) return;
+      if (document.querySelector("[role='dialog'][data-state='open'], [role='alertdialog'], [role='menu'], [role='listbox']")) return;
+      closeSel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pane, active, closeSel]);
+
+  const sheet = ready && (
+    <ContentSheet
+      day={sheetDay}
+      item={sel.item}
+      items={sheetItems}
+      pane={pane}
+      platform={onPlatform}
+      onPlatform={(c) => setPlatform(c ?? ALL)}
+      counts={sheetDay && sheetDay !== NO_DAY ? (counts.get(sheetDay) ?? emptyPlatforms()) : null}
+      channels0065={ready.channels0065}
+      schedule={ready.schedule}
+      assign={ready.assign}
+      api={api}
+      token={token}
+      results={results}
+      now={list.at}
+      patch={patch}
+      errors={errors}
+      onClose={closeSel}
+      onItem={(item) => setSel({ day: sheetDay, item })}
+      reload={list.reload}
+      onOpenFile={onOpenFile}
+    />
+  );
+
+  const board = (
     <div className="h-full overflow-y-auto">
       <section aria-labelledby="content-h" className="space-y-3 px-4 py-4 sm:px-6">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -318,31 +378,28 @@ export function ContentView({ token, active, onOpenFile }: { token: string; acti
             ) : (
               <Items items={items} api={api} now={list.at} patch={patch} errors={errors} onOpen={openItem} reload={list.reload} />
             )}
-            <ContentSheet
-              day={sheetDay}
-              item={sel.item}
-              items={sheetItems}
-              platform={onPlatform}
-              onPlatform={(c) => setPlatform(c ?? ALL)}
-              counts={sheetDay && sheetDay !== NO_DAY ? (counts.get(sheetDay) ?? emptyPlatforms()) : null}
-              channels0065={data.channels0065}
-              schedule={data.schedule}
-              assign={data.assign}
-              api={api}
-              token={token}
-              results={results}
-              now={list.at}
-              patch={patch}
-              errors={errors}
-              onClose={() => setSel({ day: null, item: null })}
-              onItem={(item) => setSel({ day: sheetDay, item })}
-              reload={list.reload}
-              onOpenFile={onOpenFile}
-            />
+            {!pane && sheet}
           </>
         )}
       </section>
     </div>
+  );
+  // The same group always wraps the view (like the room's "Thư mục" pane), so opening the detail adds
+  // a panel and never remounts the calendar; the split is remembered per browser.
+  return (
+    <ResizablePanelGroup orientation="horizontal" className="h-full min-h-0" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+      <ResizablePanel id="content" minSize="35" className="min-h-0">
+        {board}
+      </ResizablePanel>
+      {pane && (
+        <>
+          <ResizableHandle withHandle aria-label="Kéo để đổi chiều rộng chi tiết nội dung" />
+          <ResizablePanel id="detail" defaultSize="42" minSize="28" maxSize="65" className="min-h-0">
+            {sheet}
+          </ResizablePanel>
+        </>
+      )}
+    </ResizablePanelGroup>
   );
 }
 
