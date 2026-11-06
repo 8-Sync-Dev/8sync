@@ -126,11 +126,11 @@ export function ContentSheet({
   const shown = item ?? (items.length === 1 ? items[0].id : null);
   return (
     <Sheet open={day !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 p-0 data-[side=right]:sm:max-w-xl motion-reduce:animate-none">
+      <SheetContent side="right" className="w-full gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl motion-reduce:animate-none">
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-base">{day ? dayTitle(day) : ""}</SheetTitle>
           <SheetDescription className="text-xs">
-            {items.length ? `${items.length} bài` : "Không có bài nào"}
+            {daySummary(items)}
             {platform && ` trên ${CHANNEL_LABEL[platform]}`}
             {!schedule && ` · ${NO_SCHEDULE}`}
           </SheetDescription>
@@ -161,12 +161,12 @@ export function ContentSheet({
                     />
                   ) : (
                     <>
-                      <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50">
+                      <button type="button" onClick={() => onItem(it.id)} className="flex w-full items-start gap-2 px-4 py-3 text-left outline-none transition-colors duration-150 hover:bg-accent/50 focus-visible:bg-accent/50 motion-reduce:transition-none">
                         <ItemLine it={it} results={results} />
-                        <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                        <ChevronDownIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                       </button>
                       {results.arts.has(it.id) && (
-                        <div className="-mt-1 pr-4 pb-2.5 pl-17">
+                        <div className="-mt-1 pr-4 pb-3 pl-18">
                           <ResultStrip token={token} arts={results.arts.get(it.id)} />
                         </div>
                       )}
@@ -182,27 +182,80 @@ export function ContentSheet({
   );
 }
 
-/** Time, format, title, status: the collapsed row and the open item's heading. */
-function ItemLine({ it, results = NO_RESULTS }: { it: ContentRow; results?: ResultIndex }) {
+/** "6 bài · 3 đủ lịch · 2 chờ duyệt": what the day needs at a glance. */
+function daySummary(items: ContentRow[]): string {
+  if (items.length === 0) return "Không có bài nào";
+  const full = items.filter((it) => {
+    const s = scheduledOf(it);
+    return s != null && s.total > 0 && s.done === s.total;
+  }).length;
+  const waiting = items.filter((it) => it.status === "checked").length;
+  return [`${items.length} bài`, full > 0 && `${full} đủ lịch`, waiting > 0 && `${waiting} chờ duyệt`].filter(Boolean).join(" · ");
+}
+
+/**
+ * The collapsed row (time, title on up to two lines, then format, channels, files, reports) and, with
+ * `open`, the open item's heading (no title: its editable title follows).
+ */
+function ItemLine({ it, results = NO_RESULTS, open = false }: { it: ContentRow; results?: ResultIndex; open?: boolean }) {
   const at = whenOf(it);
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="w-11 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{at != null ? timeOf(at) : "--:--"}</span>
-      <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium", FORMAT_TONE[it.format], STATUS_EDGE[it.status])}>
-        <StatusIcon status={it.status} />
-        {FORMAT_LABEL[it.format]}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{it.title}</span>
-      {/* Which items already have a file to watch or download, without opening each one. */}
-      {it.media.length > 0 && (
-        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground" title={`${it.media.length} file ảnh/video`}>
-          <DownloadIcon className="size-3" aria-hidden />
-          {it.media.length}
+    <span className="flex min-w-0 flex-1 items-start gap-3">
+      <span className="w-11 shrink-0 pt-0.5 font-mono text-xs text-muted-foreground tabular-nums">{at != null ? timeOf(at) : "--:--"}</span>
+      <span className="min-w-0 flex-1 space-y-1.5">
+        {!open && <span className="line-clamp-2 block text-sm leading-snug font-medium">{it.title}</span>}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium", FORMAT_TONE[it.format], STATUS_EDGE[it.status])}>
+            <StatusIcon status={it.status} />
+            {FORMAT_LABEL[it.format]}
+          </span>
+          <ChannelTags it={it} />
+          {/* Which items already have a file to watch or download, without opening each one. */}
+          {it.media.length > 0 && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground" title={`${it.media.length} file ảnh/video`}>
+              <DownloadIcon className="size-3" aria-hidden />
+              {it.media.length}
+            </span>
+          )}
+          <ResultMark arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} />
         </span>
-      )}
-      <ResultMark arts={results.arts.get(it.id)} metrics={results.metrics.get(it.id)} />
-      <ScheduledChip it={it} compact />
-      <span className={cn("shrink-0 text-xs", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</span>
+      </span>
+      <span className={cn("shrink-0 pt-0.5 text-xs", STATUS_TONE[it.status])}>{STATUS_LABEL[it.status]}</span>
+    </span>
+  );
+}
+
+/**
+ * The item's channels as small tags, each coloured by its post state (✓ scheduled or out, ! failed),
+ * the state as the tooltip; "x/y" counts the scheduled ones. Nothing before 0064.
+ */
+function ChannelTags({ it }: { it: ContentRow }) {
+  const s = scheduledOf(it);
+  if (!s || s.total === 0) return null;
+  const posts = new Map((it.channel_posts ?? []).map((p) => [p.channel, p]));
+  const full = s.done === s.total;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1" aria-label={`Đã lên lịch ${s.done}/${s.total} kênh`}>
+      {(it.channels ?? []).map((c) => {
+        const line = channelLine(it, posts.get(c));
+        return (
+          <span
+            key={c}
+            title={`${CHANNEL_LABEL[c]}: ${line.text}`}
+            className={cn(
+              "inline-flex items-center gap-0.5 rounded border px-1 py-px text-[10px] leading-4 font-medium",
+              line.tone === "ok" ? "border-st-running/40 text-st-running" : line.tone === "bad" ? "border-destructive/40 text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {CHANNEL_SHORT[c]}
+            {line.tone === "ok" && <CheckIcon aria-hidden className="size-2.5" />}
+            {line.tone === "bad" && <AlertTriangleIcon aria-hidden className="size-2.5" />}
+          </span>
+        );
+      })}
+      <span className={cn("text-[11px] tabular-nums", full ? "text-st-running" : "text-muted-foreground")} aria-hidden>
+        {s.done}/{s.total}
+      </span>
     </span>
   );
 }
@@ -351,10 +404,10 @@ function ItemDetail({
         <div className="flex items-center gap-2">
           {onCollapse ? (
             <button type="button" onClick={onCollapse} className="flex min-w-0 flex-1 items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`Thu gọn #${it.id}`}>
-              <ItemLine it={it} results={results} />
+              <ItemLine it={it} results={results} open />
             </button>
           ) : (
-            <ItemLine it={it} results={results} />
+            <ItemLine it={it} results={results} open />
           )}
         </div>
         <h3 id={`ci-${it.id}`} className="text-base font-semibold text-balance">
@@ -602,47 +655,62 @@ function ChannelsBox({ it, patch, onEdit, canEdit, canRetry, wide }: { it: Conte
 }
 
 /**
- * The day's posts per platform against `PLATFORM_DAILY_TARGET` ("Đủ" / "Thiếu n", with an icon), each
- * a toggle that splits the sheet by that platform. `counts` null (items with no time): toggles only.
+ * The day against `PLATFORM_DAILY_TARGET` per platform: one cell each with "n/10" and a bar (light =
+ * planned, solid = scheduled or out); a cell toggles splitting the sheet by that platform. `counts`
+ * null (items with no time): the toggles only.
  */
 function PlatformBar({ counts, platform, onPlatform }: { counts: PlatformCounts | null; platform: Channel | null; onPlatform: (c: Channel | null) => void }) {
-  const pill =
-    "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] whitespace-nowrap tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none";
-  const tone = (on: boolean) => (on ? "border-primary bg-primary/10 text-foreground" : "border-border hover:bg-accent/50");
+  const met = counts ? CHANNELS.filter((ch) => targetState(counts[ch].planned).met).length : 0;
+  const pct = (n: number) => `${Math.min(100, (n / PLATFORM_DAILY_TARGET) * 100)}%`;
   return (
-    <div role="group" aria-label="Xem theo nền tảng" className="mt-2 flex flex-wrap gap-1.5">
-      <button type="button" aria-pressed={platform === null} onClick={() => onPlatform(null)} className={cn(pill, TOUCH, tone(platform === null))}>
-        Tất cả
-      </button>
-      {CHANNELS.map((ch) => {
-        const c = counts?.[ch];
-        const t = c ? targetState(c.planned) : null;
-        const on = platform === ch;
-        return (
-          <button
-            key={ch}
-            type="button"
-            aria-pressed={on}
-            aria-label={c && t ? `${CHANNEL_LABEL[ch]}: ${c.planned}/${PLATFORM_DAILY_TARGET} bài, ${t.text}, ${c.scheduled} đã lên lịch` : CHANNEL_LABEL[ch]}
-            title={c ? `${CHANNEL_LABEL[ch]}: ${c.planned}/${PLATFORM_DAILY_TARGET} bài trong ngày, ${c.scheduled} đã lên lịch hoặc đã đăng` : CHANNEL_LABEL[ch]}
-            onClick={() => onPlatform(on ? null : ch)}
-            className={cn(pill, TOUCH, tone(on))}
-          >
-            <span className="font-medium">{CHANNEL_SHORT[ch]}</span>
-            {c && t && (
-              <>
-                <span>
-                  {c.planned}/{PLATFORM_DAILY_TARGET}
-                </span>
-                <span className={cn("inline-flex items-center gap-0.5", t.met ? "text-st-running" : "text-st-needs")}>
-                  {t.met ? <CheckIcon aria-hidden className="size-3" /> : <AlertTriangleIcon aria-hidden className="size-3" />}
-                  {t.text}
-                </span>
-              </>
-            )}
+    <div className="mt-3 space-y-2">
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {counts ? `Mục tiêu ${PLATFORM_DAILY_TARGET} bài mỗi nền tảng · ${met}/${CHANNELS.length} đủ · vạch đậm: đã lên lịch` : "Lọc theo nền tảng"}
+        </p>
+        {platform && (
+          <button type="button" onClick={() => onPlatform(null)} className={cn("shrink-0 rounded px-1.5 text-xs font-medium text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60", TOUCH)}>
+            Xem tất cả
           </button>
-        );
-      })}
+        )}
+      </div>
+      <div role="group" aria-label="Xem theo nền tảng" className="grid grid-cols-4 gap-1.5 sm:grid-cols-8">
+        {CHANNELS.map((ch) => {
+          const c = counts?.[ch];
+          const t = c ? targetState(c.planned) : null;
+          const on = platform === ch;
+          return (
+            <button
+              key={ch}
+              type="button"
+              aria-pressed={on}
+              aria-label={c && t ? `${CHANNEL_LABEL[ch]}: ${c.planned}/${PLATFORM_DAILY_TARGET} bài, ${t.text}, ${c.scheduled} đã lên lịch` : CHANNEL_LABEL[ch]}
+              title={c && t ? `${CHANNEL_LABEL[ch]}: ${c.planned}/${PLATFORM_DAILY_TARGET} bài trong ngày (${t.text}), ${c.scheduled} đã lên lịch hoặc đã đăng` : CHANNEL_LABEL[ch]}
+              onClick={() => onPlatform(on ? null : ch)}
+              className={cn(
+                "flex flex-col justify-center gap-1 rounded-md border px-2 py-1.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
+                TOUCH,
+                on ? "border-primary bg-primary/10" : "border-border hover:bg-accent/50",
+              )}
+            >
+              <span className="flex items-baseline justify-between gap-1 text-[11px] tabular-nums">
+                <span className="font-medium">{CHANNEL_SHORT[ch]}</span>
+                {c && t && (
+                  <span className={t.met ? "text-st-running" : "text-muted-foreground"}>
+                    {c.planned}/{PLATFORM_DAILY_TARGET}
+                  </span>
+                )}
+              </span>
+              {c && t && (
+                <span aria-hidden className="relative block h-1 overflow-hidden rounded-full bg-muted">
+                  <span className={cn("absolute inset-y-0 left-0 rounded-full", t.met ? "bg-st-running/35" : "bg-st-needs/35")} style={{ width: pct(c.planned) }} />
+                  <span className={cn("absolute inset-y-0 left-0 rounded-full", t.met ? "bg-st-running" : "bg-st-needs")} style={{ width: pct(c.scheduled) }} />
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
