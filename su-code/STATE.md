@@ -5,10 +5,10 @@ Owner 2026-11-06: HQ v0.127.0 — phòng kiểu IDE ("Thư mục" là pane cạn
 
 ## Checklist
 - [x] v0.126.0 `--tailnet` + `--at-login` đã release (PR #328)
-- [x] v0.127.0 trong worktree `C:/Users/Projects/su-code-panes` (nhánh `feat/hq-room-panes`, đã cherry-pick `feat/hq-content-platforms`): vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
+- [x] v0.127.0: vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
 - [x] v0.127.0 đã release (PR #329)
-- [ ] v0.127.1 (branch header cho repo chỉ có phiên omp, 3 → 9 repo): PR → CI → merge → tag → release.yml → `8sync up` → kiểm :8740
-- [ ] Nhắn phòng `omp-058138a5c9bdb509` (content-post-agency): DDL 0065 để họ áp vào repo/DB của họ, rồi backfill TikTok/X cho #77–80
+- [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
+- [x] Đã nhắn phòng `omp-058138a5c9bdb509` DDL 0065 (tin #6033); chờ họ áp migration + backfill TikTok/X cho #77–80 (HQ hiện `channels0065: false`)
 - [ ] Owner: #77–80 đã lên lịch trên nền tảng khi còn `checked`
 - [ ] Owner: mua domain Cloudflare → `8sync hq ui --tunnel-setup hq.<domain>` → restart `--public`
 
@@ -22,7 +22,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-v0.127.0 trong `C:/Users/Projects/su-code-panes`; sau khi merge xoá worktree `su-code-panes` + `su-code-content` và nhánh của chúng.
+Không có worktree nào đang làm dở (đã xoá `su-code-panes`, `su-code-content` và các nhánh). Việc kế: kiểm lại tab Nội dung khi phòng content-post-agency báo đã áp 0065.
 
 ## Next
 - Đa kênh: đưa 0064 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; tới lúc đó HQ chạy như DB chưa có kênh.
