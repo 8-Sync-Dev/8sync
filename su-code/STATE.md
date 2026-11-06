@@ -12,7 +12,7 @@ Owner 2026-11-06: HQ trên phone dùng được trọn: gợi ý `/` `@` không 
 - [x] Owner chốt: KHÔNG nhãn AI ở mọi nơi → content-post-agency #130 merged (win-dev) + drivers trên `wip/content-channels-snapshot` 86febb84; khi merge nhánh đa kênh vào win-dev: file va #130 lấy bản win-dev, chạy `tests/policy/no-ai-label.test.ts`
 - [x] Audit public/private repo: khuyên GIỮ PUBLIC (private làm gãy install/`8sync up`/get.8syncdev.com, ~$380–560/tháng Actions) + dọn: nội dung CloudGo trong `assets/skills/{encore-eino-go,ai-microservice-design}`, `gateway-models.yml:12`, fixture tailnet thật, ghi chú nội bộ `su-code/`·`outputs/`·`plans/`·`research/`, `docs/hq-quota-keys.md`. Chờ owner chọn
 - [ ] Tailscale: Quyền (Quin19FD) đã là Member nhưng chưa có máy online; chờ owner tạo link khách HQ (Chỉ xem / Sửa nội dung) và chọn siết ACL hay Share 1 máy
-- [ ] v0.128.0 (worktree `su-code-nal`, nhánh `feat/hq-no-ai-label`): HQ bỏ hẳn nhãn AI + test policy, sheet "Trạng thái đăng" 3 nhóm + trượt mượt, tự giao phòng đăng khi kênh không lên lịch được (`lib/server/content-manual.ts`), đường dẫn file trong tin phòng bấm mở được (PDF/Office/ảnh/md)
+- [x] v0.128.0 đã release (PR #341), `8sync up` + `harness global` xong; :8740 trả UI 0.128.0: HQ bỏ hẳn nhãn AI + test policy, sheet "Trạng thái đăng" 3 nhóm + trượt mượt, tự giao phòng đăng khi kênh không lên lịch được (`lib/server/content-manual.ts`, HQ giữ chỗ dòng `scheduling` trước khi giao), đường dẫn file trong tin phòng bấm mở được (PDF/Office/ảnh/md). Ảnh sheet live: `C:\Users\Admin\Pictures\hq-v0.128.0-sheet-{1440,390}.png`, đã gửi phòng cpa (#6096, #6097)
 - [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
 - [x] v0.127.3 đã release (PR #335), `8sync up` xong; :8740 trả UI 0.127.3 (nút Báo cáo trong hàng nút ô chat cả trên phone, hàng xuống 2 dòng < 640 px)
 - [x] Owner "auto fix với cách tốt nhất" → giao content-post-agency (#6049, #6059): phương án A + Highlight Cam. Gốc mất tiếng cảnh 2+: bump `@hyperframes` 0.7.26 → 0.8.221 (181e9c73) làm producer cộng giờ bắt đầu scene vào `data-start` của media lồng; sửa `data-hf-media-start-basis=global` — PR 8syncdev/content-post-agency#122 (→ `win-dev`), đo qua UI 5 cảnh: giọng lệch ≤ 0.04 s, -14.1 LUFS (master -14 của app, giữ)
@@ -34,9 +34,10 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-Đang ship v0.128.0 từ worktree `C:/Users/Projects/su-code-nal`; xong gửi PR + ảnh sheet cho phòng cpa (`omp-058138a5c9bdb509`). Chờ owner: dọn repo public, Tailscale cho Quyền.
+v0.128.0 đã ship. Chờ owner: dọn repo public (CloudGo…), Tailscale cho Quyền (máy chưa vào tailnet, cần link khách HQ), repost LinkedIn #77/#79, domain named tunnel.
 
 ## Next
+- Tự giao đăng tay: phòng đăng quá 15 phút thì `channels:tick` (cpa, sweep theo `updated_at`) đánh dòng `scheduling` thành `failed`; owner bấm "Thử lại" trước khi phòng ghi `published` vẫn có thể đăng trùng. Cách vá: phòng gia hạn `updated_at` trong lúc đăng, hoặc sweep bỏ qua dòng HQ đã giao (cần cột/marker phía cpa).
 - Đa kênh: đưa 0064 + 0065 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; thiết kế phân biệt "lịch tay chờ duyệt" với "bỏ duyệt" trong `channels:tick`.
 - content-post-agency: `course_chat_messages` rowid 1, 2 mồ côi (thiếu `course_chat_sessions`), có từ trước 0065, chưa xử lý.
 - Đa kênh: tự động hoá trình duyệt trên LinkedIn/Threads trái điều khoản nền tảng (có thể bị hạn chế tài khoản), báo owner.
