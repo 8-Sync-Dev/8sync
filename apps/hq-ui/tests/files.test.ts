@@ -10,6 +10,13 @@ vi.mock("@/lib/server/floor", async (orig) => ({
   ...(await orig<typeof import("@/lib/server/floor")>()),
   loadFloor: async () => [],
 }));
+/** LibreOffice as the Office → PDF route sees it: `bin` null = not installed; `pdf` = the converted file. */
+const lo = vi.hoisted(() => ({ bin: null as string | null, pdf: null as string | null, calls: [] as string[] }));
+vi.mock("@/lib/server/office-pdf", async (orig) => ({
+  ...(await orig<typeof import("@/lib/server/office-pdf")>()),
+  findSoffice: () => lo.bin,
+  officePdf: async (file: string) => (lo.calls.push(file), lo.pdf),
+}));
 
 import fs from "node:fs";
 import os from "node:os";
@@ -17,10 +24,11 @@ import path from "node:path";
 import { GET as list } from "@/app/api/files/route";
 import { GET as read, PUT as save } from "@/app/api/files/file/route";
 import { GET as raw } from "@/app/api/files/raw/route";
+import { GET as pdf } from "@/app/api/files/pdf/route";
 import nextConfig from "@/next.config";
 import { ARTIFACT_CSP } from "@/lib/artifact-headers";
 import { deniedText } from "@/lib/access";
-import { FILES_CONFLICT, FILES_EDIT_MAX, FILES_TEXT_MAX, filesFileUrl, filesListUrl, filesRawUrl, relLink, splitLinks, type DirListing, type FileView } from "@/lib/files";
+import { FILES_CONFLICT, FILES_EDIT_MAX, FILES_TEXT_MAX, filesFileUrl, filesListUrl, filesPdfUrl, filesRawUrl, relLink, splitLinks, type DirListing, type FileView } from "@/lib/files";
 import { getToken, sessionSecret } from "@/lib/server/auth";
 import { filesSrc, sha256 } from "@/lib/server/files";
 import { createInvite, GUEST_COOKIE, guestCookie } from "@/lib/server/invites";
@@ -94,6 +102,13 @@ describe("files: listing", () => {
     expect((await getList("", path.join(repo, ".git"))).status).toBe(403);
     // A folder inside a known project is a root too (a room whose cwd is a sub-folder).
     expect((await getList("", path.join(repo, "src"))).status).toBe(200);
+  });
+
+  it("reads a leading ~/ as the home folder (a room reply names files that way)", async () => {
+    expect((await getList("", "~/hq-files-no-such-folder")).status).toBe(404);
+    const rel = path.relative(os.homedir(), repo);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return;
+    expect((await getList("", `~/${rel.split(path.sep).join("/")}`)).status).toBe(200);
   });
 
   it("drops a link that leaves the root and refuses to go through it", async () => {
@@ -243,6 +258,7 @@ describe("files: saving", () => {
       await read(guest(filesFileUrl(repo, "README.md"))),
       await save(guest("/api/files/file", "PUT", { root: repo, path: "README.md", text: "x", hash: "0".repeat(64) })),
       await raw(guest(filesRawUrl(repo, "logo.png"))),
+      await pdf(guest(filesPdfUrl(repo, "README.md"))),
     ]) {
       expect(res.status).toBe(403);
       expect(await err(res)).toBe(deniedText("editor"));
@@ -282,6 +298,51 @@ describe("files: raw bytes", () => {
     const at = (src: string) => rules.findIndex((r) => r.source === src);
     expect(at("/api/files/raw")).toBeGreaterThan(at("/:path*"));
     expect(rules[at("/api/files/raw")].headers.find((h) => h.key.toLowerCase() === "content-security-policy")?.value).toBe(ARTIFACT_CSP);
+  });
+});
+
+describe("files: Office as PDF", () => {
+  const getPdf = (rel: string, root = repo) => pdf(req(filesPdfUrl(root, rel), { token: getToken() }));
+
+  it("resolves the file exactly like the raw route: no secrets, nothing outside the root or a known project", async () => {
+    put(outside, "stolen.docx", "PK-docx");
+    expect((await getPdf(".env")).status).toBe(403);
+    expect((await getPdf("secrets.json")).status).toBe(403);
+    expect((await getPdf("../" + path.basename(outside) + "/stolen.docx")).status).toBe(403);
+    expect((await getPdf("stolen.docx", outside)).status).toBe(403);
+    expect((await getPdf("README.md")).status).toBe(422);
+    expect(lo.calls).toEqual([]);
+  });
+
+  it("answers 501 without LibreOffice (the viewer then reads the bytes from raw), else the converted PDF inline", async () => {
+    const docx = put(repo, "office/Báo cáo.docx", "PK-docx");
+    lo.bin = null;
+    const none = await getPdf("office/Báo cáo.docx");
+    expect(none.status).toBe(501);
+    expect(await err(none)).toBe("máy này chưa cài LibreOffice");
+    const bytes = await raw(req(filesRawUrl(repo, "office/Báo cáo.docx"), { token: getToken() }));
+    expect(bytes.status).toBe(200);
+    expect(Buffer.from(await bytes.arrayBuffer()).toString()).toBe("PK-docx");
+
+    lo.bin = "soffice";
+    lo.pdf = null;
+    expect((await getPdf("office/Báo cáo.docx")).status).toBe(502);
+    lo.pdf = put(outside, "cache/out.pdf", "%PDF-1.7");
+    const ok = await getPdf("office/Báo cáo.docx");
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("application/pdf");
+    expect(ok.headers.get("content-security-policy")).toBe(ARTIFACT_CSP);
+    expect(ok.headers.get("content-disposition") ?? "").not.toMatch(/^attachment/);
+    expect(await ok.text()).toBe("%PDF-1.7");
+    expect(lo.calls).toEqual([docx, docx]);
+    lo.bin = lo.pdf = null;
+  });
+
+  it("next.config puts the sandbox CSP on the PDF route after the global rule", async () => {
+    const rules = await nextConfig.headers!();
+    const at = (src: string) => rules.findIndex((r) => r.source === src);
+    expect(at("/api/files/pdf")).toBeGreaterThan(at("/:path*"));
+    expect(rules[at("/api/files/pdf")].headers.find((h) => h.key.toLowerCase() === "content-security-policy")?.value).toBe(ARTIFACT_CSP);
   });
 });
 

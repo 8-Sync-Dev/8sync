@@ -32,14 +32,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { baseName, safeImageSrc } from "@/lib/artifacts";
 import { bytes } from "@/lib/disk";
-import { FILES_CONFLICT, filesFileUrl, filesListUrl, filesRawUrl, relJoin, relLink, splitLinks, type DirListing, type FileEntry, type FileSaved, type FileView } from "@/lib/files";
+import { FILES_CONFLICT, filesFileUrl, filesListUrl, filesPdfUrl, filesRawUrl, relJoin, relLink, splitLinks, type DirListing, type FileEntry, type FileSaved, type FileView } from "@/lib/files";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
+import { OfficePreview } from "./file-preview";
 import { FolderButton, joinPath } from "./folder-button";
 import type { Room } from "./use-office";
 import { ApiError, makeApi, type Api } from "./use-hq";
 
-const DISCARD = "Bỏ phần sửa chưa lưu?";
+export const DISCARD = "Bỏ phần sửa chưa lưu?";
 
 /** The wide room view's "Thư mục" pane (TeamView provides it): open or not, kept per browser. */
 export type FilesPaneState = { open: boolean; setOpen: (o: boolean) => void; dirtyRef: RefObject<boolean> };
@@ -361,7 +362,8 @@ function EntryButton({ e, depth, label, current, open, onClick }: { e: FileEntry
 
 type Loaded = { key: string; view?: FileView; error?: string };
 
-function FileViewer({
+/** One file of `root`: header (path, copy, folder, download) and its view. Also the room chat's path viewer (path-open.tsx). */
+export function FileViewer({
   root,
   rel,
   api,
@@ -378,7 +380,8 @@ function FileViewer({
   nonce: number;
   dirtyRef: RefObject<boolean>;
   onOpen: (rel: string) => void;
-  onBack: () => void;
+  /** Back to the tree (the "Thư mục" panel on a narrow screen); no button when absent. */
+  onBack?: () => void;
 }) {
   const [reload, setReload] = useState(0);
   const key = `${rel}:${nonce}:${reload}`;
@@ -399,9 +402,11 @@ function FileViewer({
   return (
     <article aria-label={baseName(rel)} className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b px-3 py-2">
-        <Button type="button" variant="ghost" size="icon-sm" className="-ml-1 shrink-0 @xl/files:hidden max-sm:size-10" onClick={onBack} aria-label="Về cây thư mục">
-          <ArrowLeftIcon />
-        </Button>
+        {onBack && (
+          <Button type="button" variant="ghost" size="icon-sm" className="-ml-1 shrink-0 @xl/files:hidden max-sm:size-10" onClick={onBack} aria-label="Về cây thư mục">
+            <ArrowLeftIcon />
+          </Button>
+        )}
         <nav aria-label="Đường dẫn file" className="min-w-0 flex-1">
           <ol className="flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-[11px] text-muted-foreground">
             <li className="truncate">{baseName(root)}</li>
@@ -533,6 +538,18 @@ function FileBody({
     case "pdf":
       return <PdfFrame root={root} view={view} token={token} />;
     case "office":
+      // The artifact viewer's Office view: PDF through LibreOffice, else read here (docx/xlsx/pptx/OpenDocument).
+      return (
+        <OfficePreview
+          name={view.name}
+          title={view.name}
+          pdfUrl={filesPdfUrl(root, view.path)}
+          fileUrl={filesRawUrl(root, view.path)}
+          token={token}
+          version={`${view.size}:${view.mtime}`}
+          fallback={(why) => <Note title="Chưa xem trước được file này">{`${why} Bấm “Tải về” để mở bằng ứng dụng trên máy.`}</Note>}
+        />
+      );
     case "binary":
       return <Note title="Không xem trước được loại file này">Bấm “Tải về” để mở bằng ứng dụng trên máy.</Note>;
   }

@@ -11,6 +11,7 @@ import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
 import { FolderButton } from "./folder-button";
+import { pathComponents } from "./path-open";
 import { SelectionAsk } from "./selection-ask";
 import { makeApi, type Api } from "./use-hq";
 
@@ -295,7 +296,7 @@ const TurnSection = memo(function TurnSection({ t, busy, n, now, flash, api, cwd
               Đang làm: dưới đây là câu trả lời mới nhất, chưa phải kết quả cuối.
             </p>
           )}
-          <MessageResponse>{t.output}</MessageResponse>
+          <MessageResponse components={pathComponents}>{t.output}</MessageResponse>
           {t.output.length >= 7999 && t.output.endsWith("…") && <p className="mt-1 text-xs text-muted-foreground">Kết quả dài hơn phần HQ giữ (8 000 ký tự). Đọc trọn trong terminal của phòng.</p>}
           {api && files.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">

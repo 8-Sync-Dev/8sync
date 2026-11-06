@@ -45,6 +45,7 @@ const q = (root: string, rel: string) => `root=${encodeURIComponent(root)}&path=
 export const filesListUrl = (root: string, rel: string) => `/api/files?${q(root, rel)}`;
 export const filesFileUrl = (root: string, rel: string) => `/api/files/file?${q(root, rel)}`;
 export const filesRawUrl = (root: string, rel: string) => `/api/files/raw?${q(root, rel)}`;
+export const filesPdfUrl = (root: string, rel: string) => `/api/files/pdf?${q(root, rel)}`;
 
 /** "docs/a.md" from "docs" + "a.md"; the name alone at the root. */
 export const relJoin = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
