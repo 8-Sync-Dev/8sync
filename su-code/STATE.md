@@ -1,16 +1,17 @@
 # STATE — su-code
 
 ## Goal
-Owner 2026-11-06: HQ v0.127.2 — ô chat giữ trọn chiều ngang dưới phòng (như v0.126.0), Báo cáo là nút nhỏ cạnh Send mở hộp thoại lớn (không còn pane dưới). Trước đó v0.127.0: pane Thư mục, sidebar branch, "Thư mục mới…", tab Nội dung theo nền tảng.
+Owner 2026-11-06: HQ ô chat giữ trọn chiều ngang dưới phòng, Báo cáo là nút nhỏ cạnh Send mở hộp thoại lớn, cả phone (v0.127.2 + v0.127.3); sheet ngày của tab Nội dung dễ đọc hơn (v0.127.2). Luật bố cục ghi ở `su-code/PREFERENCES.md`.
 
 ## Checklist
 - [x] v0.126.0 `--tailnet` + `--at-login` đã release (PR #328)
 - [x] v0.127.0: vitest + eslint + tsc + smoke trình duyệt trên dev :8791 (pane Thư mục, Mở lớn, branch sidebar, tạo thư mục 409/201)
 - [x] v0.127.0 đã release (PR #329)
 - [x] v0.127.1 đã release (PR #330), `8sync up` xong; :8740 trả UI 0.127.1, `/api/projects/branches` 9 repo (có 8sync-startup)
-- [x] v0.127.2: vitest 1012 pass, eslint, tsc, smoke dev :8791 (1440 / 1024 / 390: ô chat full ngang, nút Báo cáo cạnh Send, hộp thoại + Cả dự án 29 báo cáo; phone nút dưới tóm tắt phòng, Send vừa hàng)
-- [ ] v0.127.2 release + `8sync up`
-- [ ] Chờ phòng content-post-agency trả lời (tin #6041, #6043): kiểu video screen + webcam + chương + phụ đề có sẵn trên app chưa; tiếng `hq-demo.mp4` mất do file (giọng chỉ ở 0–6 s, 13–16 s, 31.5–32.5 s); option mới cho short highlight, không sửa recordly; 100% output tạo + UAT trên app
+- [x] v0.127.2 đã release (PR #334), `8sync up` xong; :8740 trả UI 0.127.2 (ô chat full ngang + nút Báo cáo; sheet ngày: lưới mục tiêu 8 ô, hàng 2 dòng, tag kênh)
+- [ ] v0.127.3: nút Báo cáo trong hàng nút ô chat cả trên phone (hàng xuống 2 dòng < 640 px) — release + `8sync up`
+- [ ] Owner chọn A (dựng lại lỗi 2 cảnh qua UI rồi sửa + test, ~20′) hay B (render lại qua UI, ~10′) cho lỗi mất tiếng `hq-demo.mp4`: content-post-agency đo file gốc 1080p, chỉ cảnh deck-0 còn lời + sfx, deck-1…6 mất mọi `<audio>` riêng; gốc chưa xác nhận (asset tiếng các cảnh sau không chép/nạp lúc render?). Kiểu dựng có sẵn trên app: Course Studio → "Demo sản phẩm"
+- [ ] Owner duyệt preset "Highlight Cam" (content-post-agency đề xuất: file mới `scenes/course/highlight-cam.ts`, bản 9:16, gắn /ad-frames + tab trend; không sửa recordly). Luật: 100% output tạo + UAT trên app, không script tay
 - [x] 0065 đã áp vào `daily-dev.db` (content-post-agency, nhánh `wip/content-channels-snapshot` 2f3dc342, backup `daily-dev.db.bak-pre0065-1793925502904`); HQ :8740 kiểm: `channels0065: true`, 52 dòng kênh đều `scheduled`, #77–80 đủ 6 kênh (thêm TikTok/X)
 - [ ] Owner: #77–80 đã lên lịch trên 6 nền tảng khi còn `checked` → Duyệt, hoặc huỷ lịch trên từng nền tảng
 - [ ] Owner: ĐỪNG chạy `pnpm channels:tick` trên `daily-dev.db`: tick coi món không approved là "bỏ duyệt" → huỷ lịch thật. Vá 04239d99 chỉ bỏ qua kênh KHÔNG có driver (tiktok/x); FB/LinkedIn/Threads/YouTube có driver nên vẫn bị huỷ: tới 44 dòng (32 + 4 + 4 + 4) khi các món còn `checked`
@@ -27,7 +28,7 @@ Owner 2026-11-04: một bài lên lịch NATIVE ra FB Page + LinkedIn (profile T
 - [ ] UAT: bài test lên lịch FB/LinkedIn/Threads qua HQ → kiểm trên nền tảng → bỏ duyệt → lịch bị huỷ → xoá item test
 
 ## Current
-Worktree `C:/Users/Projects/su-code-report` (nhánh `feat/hq-report-button`) đang release v0.127.2.
+Worktree `C:/Users/Projects/su-code-rp` (nhánh `feat/hq-report-phone`) đang release v0.127.3.
 
 ## Next
 - Đa kênh: đưa 0064 + 0065 của content-post-agency (`wip/content-channels-snapshot`) thành PR vào `win-dev`; thiết kế phân biệt "lịch tay chờ duyệt" với "bỏ duyệt" trong `channels:tick`.
