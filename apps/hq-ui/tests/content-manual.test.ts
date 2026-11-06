@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 import { channelGroup, manualLine, type ChannelPost, type ChannelState } from "@/lib/content";
 import type { FloorRow } from "@/lib/floor";
 import { getDb } from "@/lib/server/db";
 import {
+  claimRow,
   dueManual,
   MANUAL_KEEP_MS,
   MANUAL_LEAD_MS,
@@ -17,6 +19,7 @@ import {
   manualText,
   manualTick,
   pruneManualState,
+  releaseRow,
   readManualState,
   writeManualState,
   type ManualConfig,
@@ -173,19 +176,22 @@ describe("auto-post fallback: the tick", () => {
   });
 
   const stateFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "hq-manual-tick-")), "content-manual.json");
+  // The book's row claim, faked: the tick tests never touch a content DB.
+  const released: string[] = [];
+  const book = { claim: () => true, release: (c: { key: string }) => void released.push(c.key) };
 
   it("hands a due channel once to the named live room of the content repo, as HQ's own message", async () => {
     const db = getDb();
     const file = stateFile();
     const content = () => ({ items: [item()], repo, dbFile: path.join(repo, "daily-dev.db") });
     // No live room by that name: nothing sent, the sheet says no room, the next tick tries again.
-    expect(await manualTick(db, T, { content, cfg, stateFile: file, floor: floor([{ name: "cpa-live", inbox_id: ROOM, repo, live: false }]) })).toEqual({ sent: [], noroom: [manualKey(7, "threads", T)] });
+    expect(await manualTick(db, T, { ...book, content, cfg, stateFile: file, floor: floor([{ name: "cpa-live", inbox_id: ROOM, repo, live: false }]) })).toEqual({ sent: [], noroom: [manualKey(7, "threads", T)] });
     expect(fs.existsSync(inboxFile(ROOM))).toBe(false);
     expect(manualStatuses(item(), readManualState(file), cfg, T)).toEqual({ threads: { kind: "noroom" } });
 
     const live = floor([{ name: "cpa-live", inbox_id: ROOM, repo }]);
-    expect(await manualTick(db, T, { content, cfg, stateFile: file, floor: live })).toEqual({ sent: [{ key: manualKey(7, "threads", T), room: "cpa-live" }], noroom: [] });
-    expect(await manualTick(db, T + MIN, { content, cfg, stateFile: file, floor: live })).toBeNull();
+    expect(await manualTick(db, T, { ...book, content, cfg, stateFile: file, floor: live })).toEqual({ sent: [{ key: manualKey(7, "threads", T), room: "cpa-live" }], noroom: [] });
+    expect(await manualTick(db, T + MIN, { ...book, content, cfg, stateFile: file, floor: live })).toBeNull();
     const lines = fs.readFileSync(inboxFile(ROOM), "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
     const { text, by } = JSON.parse(lines[0]) as { text: string; by: unknown };
@@ -205,15 +211,61 @@ describe("auto-post fallback: the tick", () => {
       calls.push(session);
       return { delivery: "inbox", error: null };
     };
-    expect(await manualTick(db, T, { content, cfg: { off: true, room: "core" }, stateFile: file, deliver: ok })).toBeNull();
+    expect(await manualTick(db, T, { ...book, content, cfg: { off: true, room: "core" }, stateFile: file, deliver: ok })).toBeNull();
     const fail = async () => ({ delivery: "failed", error: "x" });
-    expect(await manualTick(db, T, { content, cfg, stateFile: file, deliver: fail })).toEqual({ sent: [], noroom: [manualKey(7, "threads", T)] });
+    expect(await manualTick(db, T, { ...book, content, cfg, stateFile: file, deliver: fail })).toEqual({ sent: [], noroom: [manualKey(7, "threads", T)] });
     expect(readManualState(file).dispatched).toEqual({});
-    expect(await manualTick(db, T, { content, cfg, stateFile: file, deliver: ok })).toMatchObject({ sent: [{ room: "mkt · cpa" }] });
+    expect(released).toContain(manualKey(7, "threads", T));
+    expect(await manualTick(db, T, { ...book, content, cfg, stateFile: file, deliver: ok })).toMatchObject({ sent: [{ room: "mkt · cpa" }] });
     expect(calls).toEqual(["omp-fedcba9876543210"]);
     // Stale: 12 h late is not posted any more.
     const late = stateFile();
-    expect(await manualTick(db, T + MANUAL_STALE_MS + 1, { content, cfg, stateFile: late, deliver: ok })).toBeNull();
+    expect(await manualTick(db, T + MANUAL_STALE_MS + 1, { ...book, content, cfg, stateFile: late, deliver: ok })).toBeNull();
     expect(calls).toHaveLength(1);
+  });
+
+  it("sends nothing when the row was taken first (Thử lại, the worker, Bỏ duyệt)", async () => {
+    const db = getDb();
+    const file = stateFile();
+    const content = () => ({ items: [item({ assignee_session: "omp-fedcba9876543210" })], repo, dbFile: path.join(repo, "daily-dev.db") });
+    const calls: string[] = [];
+    const ok = async (session: string) => (calls.push(session), { delivery: "inbox", error: null });
+    expect(await manualTick(db, T, { ...book, claim: () => false, content, cfg, stateFile: file, deliver: ok })).toEqual({ sent: [], noroom: [] });
+    expect(calls).toEqual([]);
+    expect(readManualState(file).dispatched).toEqual({});
+  });
+});
+
+describe("auto-post fallback: the row claim in the book", () => {
+  const book = () => {
+    const b = new DatabaseSync(":memory:");
+    b.exec(`CREATE TABLE content_items (id INTEGER PRIMARY KEY, status TEXT NOT NULL);
+      CREATE TABLE content_channel_posts (item_id INTEGER, channel TEXT, state TEXT, error TEXT, updated_at INTEGER, PRIMARY KEY (item_id, channel));
+      INSERT INTO content_items VALUES (7, 'approved'), (8, 'draft');
+      INSERT INTO content_channel_posts VALUES (7, 'threads', 'failed', 'chưa đăng nhập', 1), (8, 'threads', 'blocked', 'x', 1);`);
+    return b;
+  };
+  const row = (b: DatabaseSync, id: number) => b.prepare("SELECT state, error FROM content_channel_posts WHERE item_id = ?").get(id);
+  const cand = (id: number, state: ChannelState, error: string) => ({ item: item({ id }), channel: "threads" as const, post: post("threads", state, { item_id: id, error }), at: T, key: manualKey(id, "threads", T) });
+
+  it("takes a failed row of an approved item once, never an unapproved one, and gives it back unchanged", () => {
+    const b = book();
+    const c = cand(7, "failed", "chưa đăng nhập");
+    expect(claimRow(b, c, T)).toBe(true);
+    expect(row(b, 7)).toMatchObject({ state: "scheduling" });
+    expect(claimRow(b, c, T)).toBe(false);
+    releaseRow(b, c, T + MIN);
+    expect(row(b, 7)).toMatchObject({ state: "failed", error: "chưa đăng nhập" });
+    expect(claimRow(b, cand(8, "blocked", "x"), T)).toBe(false);
+    expect(row(b, 8)).toMatchObject({ state: "blocked" });
+  });
+
+  it("does not give back a row someone moved on after the claim", () => {
+    const b = book();
+    const c = cand(7, "failed", "chưa đăng nhập");
+    claimRow(b, c, T);
+    b.exec("UPDATE content_channel_posts SET state = 'published' WHERE item_id = 7");
+    releaseRow(b, c, T + MIN);
+    expect(row(b, 7)).toMatchObject({ state: "published" });
   });
 });

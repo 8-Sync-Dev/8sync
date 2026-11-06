@@ -809,7 +809,8 @@ function PostingRow({ it, ch, post, now, patch, canRetry }: { it: ContentRow; ch
   const line = channelLine(it, post);
   // A scheduled row's link is the platform's scheduled-post page; a posted one's is the post.
   const link = line.link ?? httpLink(post?.permalink);
-  const manual = channelGroup(post) === "failed" ? it.manual?.[ch] : undefined;
+  // Failed rows, and a row HQ claimed for a room posting it by hand (`scheduling` + "Đã giao phòng …").
+  const manual = channelGroup(post) === "failed" || post?.state === "scheduling" ? it.manual?.[ch] : undefined;
   async function retry() {
     setRetrying(true);
     try {
