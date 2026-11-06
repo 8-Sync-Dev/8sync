@@ -276,9 +276,10 @@ export function channelGroup(post: Pick<ChannelPost, "state"> | undefined): Chan
 }
 
 /**
- * What HQ does with a channel that could not be scheduled (lib/server/content-manual.ts): hands the
- * post to a room that posts it by hand at its time. `room` is null for a guest (Chia sẻ). `at`:
- * planned = the post time, dispatched = when it was handed over, stale = the post time it missed.
+ * What HQ does with an approved item's channel that is not on the platform's scheduler
+ * (lib/server/content-manual.ts): a failed / blocked row, or no row at all once its time has come, is
+ * handed to a room that posts it by hand. `room` is null for a guest (Chia sẻ). `at`: planned = the
+ * post time, dispatched = when it was handed over, stale = the post time it missed.
  */
 export type ManualStatus =
   | { kind: "planned"; room: string | null; at: number }
@@ -287,6 +288,32 @@ export type ManualStatus =
   | { kind: "noroom" }
   | { kind: "notime" };
 export type ManualByChannel = Partial<Record<Channel, ManualStatus>>;
+
+/** How late a post time may be and still be handed to a room ("đăng trễ vẫn hơn sót"); older = stale. */
+export const MANUAL_CATCHUP_MS = 72 * 3600_000;
+
+/**
+ * HQ's claim on a channel row while a room posts it by hand: state `blocked` with an error that starts
+ * with this prefix ("HQ giao <phòng> lúc HH:mm dd/MM"). Not `scheduling`: content-ai's channels:tick
+ * fails every `scheduling` row older than 15 min. Such a row is neither planned by the worker (it has a
+ * row) nor handed again by HQ, and "Thử lại" must leave it alone.
+ */
+export const HQ_CLAIM_PREFIX = "HQ giao ";
+
+/** The claim's error text for a room (its label) and the time it was handed over. */
+export const hqClaimNote = (room: string, at: number) => `${HQ_CLAIM_PREFIX}${room} lúc ${stampOf(at)}`;
+
+/** A row HQ has handed to a room (blocked, error with HQ_CLAIM_PREFIX). */
+export const isHqClaim = (p: Pick<ChannelPost, "state" | "error"> | undefined): boolean => p?.state === "blocked" && (p.error ?? "").startsWith(HQ_CLAIM_PREFIX);
+
+/** The room label in a claim's error ("HQ giao cpa-live lúc 18:00 06/11" → "cpa-live"); null when it has none. */
+export function hqClaimRoom(error: string | null): string | null {
+  if (!error?.startsWith(HQ_CLAIM_PREFIX)) return null;
+  const rest = error.slice(HQ_CLAIM_PREFIX.length);
+  const i = rest.lastIndexOf(" lúc ");
+  const room = (i >= 0 ? rest.slice(0, i) : rest).trim();
+  return room || null;
+}
 
 /** A manual status in words; times as "HH:mm" today, else "HH:mm dd/MM". */
 export function manualLine(m: ManualStatus, now = Date.now()): string {
@@ -298,7 +325,7 @@ export function manualLine(m: ManualStatus, now = Date.now()): string {
     case "dispatched":
       return `Đã giao ${room(m.room)} lúc ${at(m.at)}`;
     case "stale":
-      return `Quá giờ đăng ${at(m.at)} hơn 12 tiếng: không tự giao nữa`;
+      return `Quá giờ đăng ${at(m.at)} hơn ${MANUAL_CATCHUP_MS / 3600_000} tiếng, ngoài hạn HQ tự đăng bù: đăng tay hoặc dời giờ đăng`;
     case "noroom":
       return "Chưa có phòng — chọn phòng giao việc";
     case "notime":
