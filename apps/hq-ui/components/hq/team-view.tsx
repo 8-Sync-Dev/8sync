@@ -25,7 +25,6 @@ import { ComposerDock, openDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
 import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
-import { ReportSplit } from "./room-report";
 import { FilesPaneCtx, useFilesPaneState } from "./files-sheet";
 import { TurnLink } from "./room-outputs";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
@@ -66,8 +65,9 @@ export function TeamView({
   /** Pinned above the scrolling log and chat, outside the scroller (Chat phòng: the room's title row and terminal button). */
   bar?: ReactNode;
   /**
-   * Chat phòng's "Báo cáo" (room-report RoomReport): on a wide screen a pane under everything else, its
-   * height dragged or folded; on a phone a section under the room's brief in the scroll.
+   * Chat phòng's "Báo cáo" button (room-report RoomReport, opens its dialog): on a wide screen in the
+   * message box's bottom row, right before Send (owner 2026-11-06: the message box keeps its full-width
+   * space under the room, Báo cáo is a compact button in it); on a phone under the room's brief.
    */
   report?: ReactNode;
   /** Opens the start-session form (hq-app: focusStartSession). Without it the CTA is text only. */
@@ -105,16 +105,18 @@ export function TeamView({
   const filesPane = useFilesPaneState();
   const sidePane = !!files && !mobile && filesPane.open;
   const filesLayout = useDefaultLayout({ id: "hq-room-files", panelIds: sidePane ? ["room", "files"] : ["room"] });
-  // Phone: the brief (or header), then Báo cáo, scroll with the chat.
+  // Phone: the brief (or header) scrolls with the chat, Báo cáo under it (the phone's message box row
+  // has no room for one more button: it is a sheet behind the send button).
   const head = mobile ? (split ?? header) : header;
-  const top = mobile && report ? (
-    <>
-      {head}
-      {report}
-    </>
-  ) : (
-    head
-  );
+  const top =
+    mobile && report ? (
+      <>
+        {head}
+        <div className="mt-3 flex justify-end">{report}</div>
+      </>
+    ) : (
+      head
+    );
 
   const chat = (
     <Conversation className="min-h-0 flex-1">
@@ -154,34 +156,34 @@ export function TeamView({
     </Conversation>
   );
 
-  // The message box sits under the chat column only, centred at the chat's width (owner 2026-11-06:
-  // "width ô chat bị hơi dài"); Nhật ký runs the full height beside it.
+  // The message box runs the full width under the chat and Nhật ký (owner 2026-11-06: "input chat vẫn
+  // để full space riêng ở dưới như cũ").
   const wide = !!split && !mobile;
   const composer =
     messageTargets(sessions).length === 0 ? (
-      <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} />
+      <StartCta onStartSession={onStartSession} unreachable={sessions.some((s) => s.status !== "ended")} extra={mobile ? undefined : report} />
     ) : (
-      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} />
+      <Composer hq={hq} sessions={sessions} target={target} onTarget={onTarget} wide={wide} extra={mobile ? undefined : report} />
     );
 
-  const body = wide ? (
-    <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
-      <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
-        {chat}
-        {composer}
-      </ResizablePanel>
-      <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
-      <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
-        <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  ) : (
+  const main = (
     <>
-      {chat}
+      {wide ? (
+        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
+          <ResizablePanel id="chat" minSize="28" className="flex min-h-0 flex-col">
+            {chat}
+          </ResizablePanel>
+          <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa chat và Nhật ký" />
+          <ResizablePanel id="brief" defaultSize="50" minSize="25" className="min-h-0">
+            <div className="flex h-full w-full flex-col overflow-y-auto px-4 pt-4 pb-3 sm:px-5">{split}</div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        chat
+      )}
       {composer}
     </>
   );
-  const main = report && !mobile ? <ReportSplit pane={report}>{body}</ReportSplit> : body;
 
   return (
     <FilesPaneCtx.Provider value={files && !mobile ? filesPane : null}>
@@ -258,27 +260,28 @@ function SessionStrip({ sessions }: { sessions: Session[] }) {
   );
 }
 
-function StartCta({ onStartSession, unreachable }: { onStartSession?: () => void; unreachable?: boolean }) {
+function StartCta({ onStartSession, unreachable, extra }: { onStartSession?: () => void; unreachable?: boolean; extra?: ReactNode }) {
   // A live session HQ cannot reach (no tmux pane, no Claude session id yet) is not "no session".
-  if (unreachable)
-    return (
-      <div className="shrink-0 border-t bg-background">
-        <p className="mx-auto w-full max-w-3xl px-4 py-3 text-sm text-muted-foreground sm:px-6">
-          Session này đang chạy nhưng HQ chưa biết session id của nó, nên chưa nhắn được. Id có sau lượt đầu tiên của session.
-        </p>
-      </div>
-    );
   return (
     <div className="shrink-0 border-t bg-background">
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
-        <p className="min-w-0 flex-1 text-sm text-muted-foreground">No session is running, so there is nobody to message.</p>
-        {onStartSession ? (
-          <Button size="sm" onClick={onStartSession}>
-            <PlayIcon /> Start a session
-          </Button>
+        {unreachable ? (
+          <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+            Session này đang chạy nhưng HQ chưa biết session id của nó, nên chưa nhắn được. Id có sau lượt đầu tiên của session.
+          </p>
         ) : (
-          <span className="text-sm font-medium">Start one in the Sessions tab.</span>
+          <>
+            <p className="min-w-0 flex-1 text-sm text-muted-foreground">No session is running, so there is nobody to message.</p>
+            {onStartSession ? (
+              <Button size="sm" onClick={onStartSession}>
+                <PlayIcon /> Start a session
+              </Button>
+            ) : (
+              <span className="text-sm font-medium">Start one in the Sessions tab.</span>
+            )}
+          </>
         )}
+        {extra}
       </div>
     </div>
   );
@@ -386,11 +389,17 @@ function Composer({
   sessions,
   target,
   onTarget,
+  wide = false,
+  extra,
 }: {
   hq: Hq;
   sessions: Session[];
   target: string | null;
   onTarget: (s: string) => void;
+  /** Under the chat and Nhật ký together: the box takes the full width. */
+  wide?: boolean;
+  /** Right before Send in the box's bottom row (Chat phòng: the Báo cáo button). */
+  extra?: ReactNode;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -491,7 +500,7 @@ function Composer({
         return (
           <div className="shrink-0 border-t bg-background">
             <form
-              className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6"
+              className={cn("mx-auto w-full px-4 py-3 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();
@@ -545,10 +554,13 @@ function Composer({
                   {current && <ModelPicker api={hq.api} session={addressOf(current)} engine={current.engine === "omp" ? "omp" : "claude"} model={current.model} className={TOUCH} />}
                   <AttachButton a={att} disabled={disabled || !current} />
                   <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
-                  <Button type="submit" size="sm" className="ml-auto" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {extra}
+                    <Button type="submit" size="sm" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
                     title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
                     <SendHorizontalIcon /> Send
-                  </Button>
+                    </Button>
+                  </div>
                 </div>
               </div>
             </form>

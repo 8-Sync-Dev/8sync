@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.127.2] — 2026-11-06
+
+### Changed
+- HQ Chat phòng: ô chat lại chiếm trọn chiều ngang dưới phòng (dưới cả chat và Nhật ký) như trước v0.127.0. Báo cáo không còn là pane dưới: thành nút nhỏ "Báo cáo N" cạnh Send, bấm mở hộp thoại Báo cáo lớn (Phòng này / Cả dự án); `/api/content` chỉ poll khi hộp thoại mở. Điện thoại: nút nằm dưới phần tóm tắt phòng (hàng nút của ô chat không còn chỗ).
+
 ## [0.127.1] — 2026-11-06
 
 ### Fixed
