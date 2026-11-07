@@ -5,15 +5,19 @@
 // suspect first (duplicate, spam-opened, orphan, hog), and `8sync ccc eco kill <pid:start>` refuses
 // sessions, Claude, HQ, 8sync, the OS and recycled pids. A routine pass with nothing new and no
 // spike sends nothing, so the room's context does not fill with "máy ổn".
+// "Quan sát phòng" (`observe`, off by default) rides the same tick: lib/server/observer.ts reads every
+// live room and nudges a stuck / looping one, or pages the Canh máy room; it never kills either.
 import fs from "node:fs";
 import path from "node:path";
 import type { FloorRow } from "../floor";
 import { AUTO, withSenderHeader } from "../sender";
+import { SessionWaiting } from "./channel";
 import { getDb } from "./db";
 import { loadFloor, targetOf } from "./floor";
 import { inboxLive, isInboxId, queueInbox } from "./inbox";
 import { machine, run8, type Machine, type Run8 } from "./machine";
 import { configDir } from "./paths";
+import { nudgeText, OBSERVE_DEFAULT, observeStep, observeZero, pageText, type ObserveAction, type ObserveState } from "./observer";
 import { ownerMessage } from "./queries";
 
 export const WATCH_TICK_MS = 60_000;
@@ -28,8 +32,12 @@ const MAX_SUSPECTS = 12;
 const MAX_ROWS = 4;
 
 export type Metric = "cpu" | "ram" | "gpu";
-export type WatchConfig = { on: boolean; room: string | null; everyMin: number; cpu: number; ram: number; gpu: number };
-export const WATCH_DEFAULT: WatchConfig = { on: false, room: null, everyMin: 30, cpu: 85, ram: 90, gpu: 95 };
+/** `observe`: "Quan sát phòng" (lib/server/observer.ts) on the same tick; `observeSkip`: rooms it never looks at. */
+export type WatchConfig = { on: boolean; room: string | null; everyMin: number; cpu: number; ram: number; gpu: number; observe: boolean; observeSkip: string[] };
+export const WATCH_DEFAULT: WatchConfig = { on: false, room: null, everyMin: 30, cpu: 85, ram: 90, gpu: 95, observe: false, observeSkip: [] };
+export const OBSERVE_SKIP_MAX = 50;
+/** Observer actions the Máy tab lists. */
+const OBSERVED_MAX = 20;
 
 export type ScanRow = { id: string; pid: number; image: string; mb: number; cpu: number; procs: number; ageMin: number; cmd: string };
 export type Suspect = { kind: "duplicate" | "spam" | "orphan" | "hog"; image: string; reason: string; keep?: string; kill: string[]; canKill: boolean; procs: ScanRow[] };
@@ -59,6 +67,8 @@ export function normWatch(v: unknown, base: WatchConfig = WATCH_DEFAULT): WatchC
     cpu: pct(r.cpu, base.cpu),
     ram: pct(r.ram, base.ram),
     gpu: pct(r.gpu, base.gpu),
+    observe: typeof r.observe === "boolean" ? r.observe : base.observe,
+    observeSkip: Array.isArray(r.observeSkip) ? [...new Set(r.observeSkip.filter(isInboxId))].slice(0, OBSERVE_SKIP_MAX) : base.observeSkip,
   };
 }
 
@@ -181,10 +191,19 @@ type State = {
   note: string | null;
   scan: { at: number; v: Scan } | null;
   scanning: Promise<Scan | null> | null;
+  observe: ObserveState;
+  observed: Observed[];
+  observeNote: string | null;
 };
+/** An observer action as the Máy tab lists it; `outcome`: why a nudge / page did not go out (null: sent or a note). */
+export type Observed = ObserveAction & { outcome: string | null };
 /** On `globalThis`: instrumentation.ts and the route handlers are separate bundles. */
 const g = globalThis as unknown as { __hqWatch?: State };
-const S = (g.__hqWatch ??= { timer: null, busy: false, spike: spikeZero(), lastCheck: 0, lastSent: null, lastKey: null, note: null, scan: null, scanning: null });
+const S = (g.__hqWatch ??= { timer: null, busy: false, spike: spikeZero(), lastCheck: 0, lastSent: null, lastKey: null, note: null, scan: null, scanning: null, observe: observeZero(), observed: [], observeNote: null });
+// A state made by an older build of this module (dev reload) has no observer fields yet.
+S.observe ??= observeZero();
+S.observed ??= [];
+S.observeNote ??= null;
 
 /** `8sync ccc eco scan --json`, one at a time; a scan younger than `fresh` ms is reused. */
 export function scanNow(fresh = 0, r: Run8 = run8): Promise<Scan | null> {
@@ -262,13 +281,46 @@ export function sendUrgent(now = Date.now(), cfg = readWatch(), deps: Partial<Wa
   return send({ ...liveDeps(), ...deps }, cfg, "owner", null, now, null);
 }
 
+/**
+ * "Quan sát phòng" on this tick: the observer's rules over the rooms HQ can reach, then each nudge
+ * into its room and each page into the Canh máy room through `deliver`. Nothing is retried: a failed
+ * delivery (a dialog open, a write error) is listed with its reason and the ladder still moves on.
+ */
+export async function observeTick(d: WatchDeps, cfg: WatchConfig, now: number): Promise<Observed[]> {
+  const rows = watchRooms(await d.floor(), d.live);
+  const { actions, next } = observeStep(S.observe, rows, now, OBSERVE_DEFAULT, { skip: cfg.observeSkip, watchRoom: cfg.room });
+  S.observe = next;
+  const watch = cfg.room ? rows.find((r) => r.inbox_id === cfg.room) : undefined;
+  const out = actions.map((a): Observed => {
+    if (a.level === "note") return { ...a, outcome: null };
+    const to = a.level === "nudge" ? rows.find((r) => r.inbox_id === a.room) : watch;
+    if (!to?.inbox_id) return { ...a, outcome: "Chưa có phòng canh máy đang mở để báo" };
+    try {
+      d.deliver(to, to.inbox_id, a.level === "nudge" ? nudgeText(a) : pageText(a), now);
+      return { ...a, outcome: null };
+    } catch (e) {
+      return { ...a, outcome: e instanceof SessionWaiting ? `Phòng đang mở hộp thoại (${e.dialog}): không gửi` : `Gửi lỗi: ${(e as Error).message}` };
+    }
+  });
+  S.observed = [...out.reverse(), ...S.observed].slice(0, OBSERVED_MAX);
+  return out;
+}
+
 /** One tick (the timer calls it every WATCH_TICK_MS). */
 export async function watchTick(now = Date.now(), cfg = readWatch(), deps: Partial<WatchDeps> = {}): Promise<Sent | null> {
+  const d = { ...liveDeps(), ...deps };
+  if (cfg.observe) {
+    try {
+      await observeTick(d, cfg, now);
+      S.observeNote = cfg.room ? null : "Chưa chọn phòng Canh máy để báo anh: quan sát chỉ ghi chú và nhắc phòng, không báo lên";
+    } catch (e) {
+      S.observeNote = `Quan sát phòng lỗi: ${(e as Error).message}`;
+    }
+  } else S.observe = observeZero();
   if (!cfg.on || !cfg.room) {
     S.spike = spikeZero();
     return null;
   }
-  const d = { ...liveDeps(), ...deps };
   const l = await d.levels();
   const { fire, next } = spikeStep(S.spike, l, cfg, now);
   S.spike = next;
@@ -302,6 +354,8 @@ export function watchStatus(cfg: WatchConfig) {
     lastSent: S.lastSent,
     note: S.note,
     over: S.spike.over,
+    observed: S.observed,
+    observeNote: cfg.observe ? S.observeNote : null,
   };
 }
 

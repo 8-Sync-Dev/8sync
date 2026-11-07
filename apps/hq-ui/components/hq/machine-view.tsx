@@ -16,7 +16,7 @@ import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
 import type { Heavy, Restarted, Spec } from "@/lib/server/machine";
 import type { UpdateConfig, UpdateStatus } from "@/lib/server/auto-update";
-import type { KillRow, Scan, Suspect, WatchConfig } from "@/lib/server/machine-watch";
+import type { KillRow, Observed, Scan, Suspect, WatchConfig } from "@/lib/server/machine-watch";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { ChiefPanel } from "./chief-panel";
@@ -727,7 +727,14 @@ function HeavyPanel({ heavy, api, onRestarted }: { heavy: Heavy[]; api: Hq["api"
 
 type WatchView = {
   cfg: WatchConfig;
-  status: { lastCheck: number | null; nextCheck: number | null; lastSent: { at: number; kind: "routine" | "spike" | "owner"; room: string; why: string | null } | null; note: string | null };
+  status: {
+    lastCheck: number | null;
+    nextCheck: number | null;
+    lastSent: { at: number; kind: "routine" | "spike" | "owner"; room: string; why: string | null } | null;
+    note: string | null;
+    observed: Observed[];
+    observeNote: string | null;
+  };
   rooms: { id: string; name: string; title: string; repo: string | null; engine: string | null }[];
 };
 const WATCH_POLL_MS = 30_000;
@@ -742,6 +749,84 @@ const KIND: Record<Suspect["kind"], { label: string; hint: string }> = {
   hog: { label: "Ngốn", hint: "CPU hoặc RAM cao" },
 };
 const roomLabel = (r: WatchView["rooms"][number]) => `${r.title || r.name}${r.repo ? ` · ${r.repo.split(/[\\/]/).filter(Boolean).pop()}` : ""}`;
+const SIGNAL: Record<Observed["signal"], string> = { stalled: "Đứng", looping: "Lặp", waiting: "Chờ anh", error: "Lỗi API" };
+const LEVEL: Record<Observed["level"], string> = { note: "ghi chú", nudge: "đã nhắc phòng", page: "đã báo phòng canh" };
+
+/**
+ * "Quan sát phòng": the switch, the rooms the owner leaves out, and what the observer did lately
+ * (note → nudge the room → page the Canh máy room; never kills).
+ */
+function ObservePart({ v, saving, save }: { v: WatchView; saving: boolean; save: (patch: Partial<WatchConfig>) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const { cfg, rooms, status } = v;
+  const skip = new Set(cfg.observeSkip);
+  const gone = cfg.observeSkip.filter((id) => !rooms.some((r) => r.id === id)).length;
+  const toggle = (id: string, on: boolean) => void save({ observeSkip: on ? cfg.observeSkip.filter((x) => x !== id) : [...cfg.observeSkip, id] });
+  return (
+    <div className="space-y-2 border-t pt-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <h3 className="text-xs font-semibold">Quan sát phòng</h3>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{cfg.observe ? "Đang quan sát" : "Đang tắt"}</span>
+          <Switch on={cfg.observe} busy={saving} label="Bật quan sát phòng" onChange={(observe) => void save({ observe })} />
+        </div>
+      </div>
+      <p className="text-xs leading-snug text-muted-foreground text-pretty">
+        Mỗi phút xem các phòng đang mở theo luật cứng, không gọi model, không kill: đứng 20 phút, lặp cùng một bước 20 phút, chờ anh 15 phút, dừng vì lỗi API. Lần đầu chỉ ghi chú; còn kéo dài thì 30 phút sau nhắc phòng đó một câu, rồi báo phòng canh máy. Phòng chờ anh hoặc dính lỗi không bị nhắc. Chạy cả khi canh máy đang tắt.
+      </p>
+      <button type="button" className="inline-flex min-h-11 items-center gap-1 text-xs text-muted-foreground hover:text-foreground sm:min-h-6" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <ChevronDownIcon className={cn("size-3.5 transition-transform motion-reduce:transition-none", open && "rotate-180")} />
+        Bỏ qua {cfg.observeSkip.length} phòng
+      </button>
+      {open && (
+        <div className="space-y-1">
+          {rooms.length === 0 && <p className="text-xs text-muted-foreground">Chưa có phòng nào đang mở.</p>}
+          <ul className="grid gap-x-3 sm:grid-cols-2">
+            {rooms.map((r) => (
+              <li key={r.id} className="min-w-0">
+                <label className="flex min-h-11 items-center gap-2 text-xs sm:min-h-8">
+                  <input type="checkbox" className="size-4 shrink-0 accent-primary" checked={!skip.has(r.id)} disabled={saving} onChange={(e) => toggle(r.id, e.target.checked)} />
+                  <span className="truncate" title={roomLabel(r)}>
+                    {roomLabel(r)}
+                  </span>
+                  {r.id === cfg.room && <span className="shrink-0 rounded bg-muted px-1 text-[11px]">phòng canh: chỉ ghi chú</span>}
+                </label>
+              </li>
+            ))}
+          </ul>
+          {gone > 0 && <p className="text-xs text-muted-foreground">{gone} phòng đã đóng vẫn nằm trong danh sách bỏ qua.</p>}
+        </div>
+      )}
+      {status.observeNote && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {status.observeNote}
+        </p>
+      )}
+      {status.observed.length > 0 ? (
+        <ul className="divide-y text-xs">
+          {status.observed.map((a) => (
+            <li key={`${a.room}|${a.signal}|${a.at}`} className="min-w-0 py-1.5">
+              <p className="flex flex-wrap items-baseline gap-x-1.5">
+                <span className="tabular text-muted-foreground">{hhmm(a.at)}</span>
+                <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", a.level === "note" ? "bg-muted text-foreground" : "bg-st-needs/15 " + NEEDS_INK)}>{SIGNAL[a.signal]}</span>
+                <span className="min-w-0 truncate font-medium" title={a.room}>
+                  {a.title}
+                </span>
+                <span className="text-muted-foreground">· {LEVEL[a.level]}</span>
+              </p>
+              <p className="break-words text-muted-foreground">
+                {a.why}
+                {a.outcome ? ` · ${a.outcome}` : ""}
+              </p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        cfg.observe && <p className="text-xs text-muted-foreground">Chưa thấy phòng nào đứng, lặp hay chờ lâu.</p>
+      )}
+    </div>
+  );
+}
 
 function KillDialog({ s, api, onDone, onCancel }: { s: Suspect; api: Hq["api"]; onDone: () => void; onCancel: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -1020,6 +1105,7 @@ function WatchPanel({ api, active }: { api: Hq["api"]; active: boolean }) {
           </p>
         </div>
       )}
+      {v && <ObservePart v={v} saving={saving} save={save} />}
       <div className="border-t pt-2.5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <h3 className="text-xs font-semibold">Nghi vấn</h3>
