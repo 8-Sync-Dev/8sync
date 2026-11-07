@@ -16,7 +16,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - HQ › mẫu bot có sẵn chỉ còn mẫu chung (Trống, Dev fullstack, Reviewer, Tester, Nghiên cứu, Lập kế hoạch), không còn mẫu gắn thương hiệu hay dự án riêng. 6 mẫu cũ (cpa-full, research-mkt, course-writer, news-curator, zus-release, tia-release) được xuất thành JSON ở `~/.cache/8sync/uat/newbot/owner-templates/`, chép vào `~/.config/8sync/hq/templates/` nếu cần dùng lại.
 
 ### Fixed
-- HQ › ô chat trên điện thoại: nút "Đính kèm" (trước 36×28 px) và nút + của ô soạn workspace có vùng bấm ≥44 px ở màn ≤768 px; máy tính giữ nguyên.
+- HQ › ô chat trên điện thoại: nút "Đính kèm" (trước 36×28 px) và nút + của ô soạn workspace và nút X đóng "Bot mới" (trước 28 px) có vùng bấm ≥44 px ở màn ≤768 px; máy tính giữ nguyên.
 
 ## [0.139.0] — 2026-11-07
 ### Added

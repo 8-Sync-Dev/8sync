@@ -59,9 +59,9 @@ export function NewBotSheet({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        className="flex h-[min(46rem,92dvh)] flex-col gap-0 p-0 sm:max-w-2xl max-sm:inset-0 max-sm:h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:ring-0"
+        className="flex h-[min(46rem,92dvh)] flex-col gap-0 p-0 sm:max-w-2xl max-md:[&>[data-slot=dialog-close]]:size-11 max-sm:inset-0 max-sm:h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:ring-0"
       >
-        {/* Mounted only while open: every opening starts fresh. */}
+        {/* Mounted only while open: every opening starts fresh. The X is 44 px to tap at ≤768 px (header leaves room). */}
         {open && <NewBotForm hq={hq} initialTemplate={initialTemplate ?? null} onDone={(key) => {
           onOpenChange(false);
           onCreated(key);
@@ -224,7 +224,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
   return (
     <>
     <form onSubmit={(e) => create(true, e)} className="flex min-h-0 flex-1 flex-col" aria-busy={busy != null}>
-      <DialogHeader className="shrink-0 border-b px-5 pt-5 pb-4 max-sm:px-4 max-sm:pt-[max(1rem,env(safe-area-inset-top))]">
+      <DialogHeader className="shrink-0 border-b px-5 pt-5 pb-4 max-md:pr-14 max-sm:px-4 max-sm:pr-14 max-sm:pt-[max(1rem,env(safe-area-inset-top))]">
         <DialogTitle className="text-base">Bot mới</DialogTitle>
         <DialogDescription className="text-pretty">Mỗi bot là một phiên làm việc trong một thư mục. Chọn mẫu, chọn thư mục, rồi giao việc đầu tiên.</DialogDescription>
       </DialogHeader>
