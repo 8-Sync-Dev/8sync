@@ -74,6 +74,8 @@ export function locateFile(given: string, bases: readonly string[], known: strin
   if (!p || p.length > FILES_REF_MAX || p.includes("\0")) return no(422, "đường dẫn không dùng được");
   if (/^~(?:[\\/]|$)/.test(p)) p = path.join(os.homedir(), p.slice(1));
   if (/^[a-z]:(?![\\/])/i.test(p)) return no(422, "đường dẫn không dùng được");
+  // `\\host\x` or `//host/x` is a network share on Windows and a relative oddity on POSIX: never a file here.
+  if (/^[\\/]{2}/.test(p)) return no(422, "không mở file trên ổ mạng (\\\\máy\\thư mục)");
   const cands = path.isAbsolute(p) ? [p] : bases.filter((b) => path.isAbsolute(b)).map((b) => path.resolve(b, p));
   if (!cands.length) return no(422, "đường dẫn tương đối mà không biết thư mục của phòng");
   let best: FileSpot | null = null;
