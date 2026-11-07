@@ -1,0 +1,12 @@
+{
+  "name": "hq-android",
+  "version": "0.1.0",
+  "private": true,
+  "description": "8 Sync HQ Android app (Tauri 2). Built by .github/workflows/hq-android.yml.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

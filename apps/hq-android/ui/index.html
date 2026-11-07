@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>8 Sync HQ</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <img src="logo.png" alt="" width="48" height="60">
+      <div>
+        <h1>8 Sync HQ</h1>
+        <p>HQ trên PC của bạn, mở ngay trên điện thoại.</p>
+      </div>
+    </header>
+
+    <form id="connect" class="card" novalidate>
+      <label for="address">Địa chỉ HQ</label>
+      <input id="address" name="address" type="url" inputmode="url" autocomplete="url"
+             autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"
+             placeholder="https://pc.tail1234.ts.net" aria-describedby="error">
+      <p id="error" class="error" role="alert" hidden></p>
+      <button id="open" type="submit">Mở HQ</button>
+    </form>
+
+    <section id="recent-wrap" class="card" hidden>
+      <h2>Gần đây</h2>
+      <ul id="recent" class="recent"></ul>
+    </section>
+
+    <section class="help">
+      <h2>Lấy địa chỉ ở đâu?</h2>
+      <dl>
+        <dt>Tailscale (khuyên dùng)</dt>
+        <dd>Trên PC chạy <code>8sync hq ui --tailnet</code>, dán link đăng nhập nó in ra (<code>https://…ts.net/api/login?k=…</code>). Điện thoại cần bật app Tailscale cùng tài khoản. Đăng nhập giữ 30 ngày.</dd>
+        <dt>Link public</dt>
+        <dd><code>8sync hq ui --public</code> in link đăng nhập (dùng trong 10 phút, đăng nhập giữ 12 giờ).</dd>
+      </dl>
+      <p class="hint">Lần sau chỉ cần bấm địa chỉ trong “Gần đây”: app nhớ tên miền, không lưu mã <code>?k=</code>. Ở trang đầu của HQ, bấm Back để quay lại màn hình này.</p>
+    </section>
+  </main>
+</body>
+</html>

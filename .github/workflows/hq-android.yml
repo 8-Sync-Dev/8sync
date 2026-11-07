@@ -1,0 +1,223 @@
+# 8 Sync HQ for Android (apps/hq-android, Tauri 2): build a signed universal APK,
+# prove it on an emulator, and on a v* tag attach it to that tag's release as
+# `8sync-hq.apk`, so this link always serves the newest build:
+#   https://github.com/8-Sync-Dev/8sync/releases/latest/download/8sync-hq.apk
+# Separate from release.yml on purpose: an Android failure never blocks the CLI
+# release, and this workflow never creates a release of its own (installers and
+# `8sync up` read releases/latest; they match their assets by exact name, so the
+# extra `.apk` cannot be picked up by them).
+name: hq-android
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hq-android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The address validation is the app's only logic (and its security boundary:
+  # HTTPS only, the `?k=` token never stored) — test it on the host.
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/hq-android
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/hq-android/src-tauri -> target
+          key: host
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Icons (tauri-build needs icons/icon.png)
+        run: |
+          npm install --no-audit --no-fund
+          npm run tauri -- icon src-tauri/app-icon.png > /dev/null
+      - name: cargo test
+        working-directory: apps/hq-android/src-tauri
+        run: cargo test --lib --locked
+
+  build:
+    name: build + sign APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/hq-android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # arm64 phones, older 32-bit phones, x86_64 emulators/Chromebooks.
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/hq-android/src-tauri -> target
+          key: android
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # The APK's versionName/versionCode follow the 8sync release: the tag on a
+      # tag push, the workspace version on a manual run.
+      - name: Version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME#v}"; else
+            v=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -1); fi
+          echo "{\"version\":\"$v\"}" > "$RUNNER_TEMP/version.json"
+          echo "APK version $v"
+
+      - name: Install @tauri-apps/cli + icons
+        run: |
+          npm install --no-audit --no-fund
+          npm run tauri -- icon src-tauri/app-icon.png > /dev/null
+
+      - name: tauri android build
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          npm run tauri -- android build --ci --apk \
+            --target aarch64 --target armv7 --target x86_64 \
+            --config "$RUNNER_TEMP/version.json"
+
+      # Keystore and passwords only ever live in $RUNNER_TEMP and env; the
+      # keystore file is removed even when signing fails.
+      - name: Align + sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          unsigned=$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk | head -1)
+          echo "unsigned: $unsigned ($(stat -c %s "$unsigned") B)"
+          bt="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          ks="$RUNNER_TEMP/hq.p12"
+          trap 'rm -f "$ks"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$ks"
+          # -P 16: keep uncompressed .so files 16 KB page-aligned (Android 15+ devices).
+          "$bt/zipalign" -P 16 -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          "$bt/apksigner" sign --ks "$ks" --ks-type PKCS12 --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS \
+            --out "$GITHUB_WORKSPACE/8sync-hq.apk" "$RUNNER_TEMP/aligned.apk"
+          "$bt/apksigner" verify --verbose --print-certs "$GITHUB_WORKSPACE/8sync-hq.apk" | tee "$RUNNER_TEMP/verify.txt"
+          grep -q "CN=8 Sync HQ" "$RUNNER_TEMP/verify.txt" || { echo "::error::APK not signed by the 8 Sync HQ key"; exit 1; }
+          "$bt/zipalign" -c -P 16 4 "$GITHUB_WORKSPACE/8sync-hq.apk"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum 8sync-hq.apk > 8sync-hq.apk.sha256
+          echo "### 8sync-hq.apk: $(stat -c %s 8sync-hq.apk) B" >> "$GITHUB_STEP_SUMMARY"
+          cat 8sync-hq.apk.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 8sync-hq-apk
+          path: |
+            8sync-hq.apk
+            8sync-hq.apk.sha256
+          if-no-files-found: error
+
+  # Non-blocking: emulator flakiness (see uat.sh) must never hold back the APK
+  # on a release. Screenshots are still uploaded for review.
+  uat:
+    name: emulator UAT
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apps/hq-android/uat.sh
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: 8sync-hq-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install, open HQ stand-in, Back, dark mode
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          # swangle: SwiftShader behind ANGLE. With swiftshader_indirect the
+          # emulator 37.2.13 process died silently right after the first input
+          # event into the WebView (runs 42323862831, 42326286568).
+          emulator-options: -no-window -gpu swangle_indirect -noaudio -no-boot-anim -camera-back none -no-metrics -no-snapshot
+          script: bash apps/hq-android/uat.sh 8sync-hq.apk uat get.8syncdev.com
+
+      - name: Host diagnostics (emulator died?)
+        if: failure()
+        run: |
+          free -m
+          sudo dmesg | tail -40
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hq-android-uat
+          path: uat/
+          if-no-files-found: warn
+
+  # Attach to the release that release.yml publishes for this tag. Never create
+  # one here: a release made by this job could become "latest" without binaries.
+  publish:
+    name: attach to release
+    if: ${{ github.ref_type == 'tag' && !cancelled() && needs.test.result == 'success' && needs.build.result == 'success' }}
+    needs: [test, build, uat]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: 8sync-hq-apk
+      - name: Wait for the release, then upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              gh release upload "$TAG" 8sync-hq.apk 8sync-hq.apk.sha256 --clobber -R "$GITHUB_REPOSITORY"
+              echo "attached to $TAG: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/8sync-hq.apk"
+              exit 0
+            fi
+            echo "release $TAG not published yet ($i/60); waiting 30 s"
+            sleep 30
+          done
+          echo "::error::release $TAG did not appear within 30 min"
+          exit 1

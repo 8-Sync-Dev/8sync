@@ -1,0 +1,7 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. Window background = HQ background, so the
+         system-bar padding and the first frame match HQ in light and dark. -->
+    <style name="Theme.hq_android" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/hq_background</item>
+    </style>
+</resources>
