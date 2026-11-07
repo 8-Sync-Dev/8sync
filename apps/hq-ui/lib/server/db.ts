@@ -257,3 +257,20 @@ export function projectIdFor(db: DatabaseSync, cwd: string | null | undefined): 
   }
   return best?.id ?? null;
 }
+
+/**
+ * Register a validated project folder (validate.ts validateProjectPath) unless it is already: the
+ * row, and whether it existed. Sessions seen before the folder was registered now belong to it.
+ * Used by POST /api/projects and the code map's "Tạo bản đồ code" (POST /api/codemap/enable).
+ */
+export function addProject(db: DatabaseSync, dir: string, name?: unknown): { project: ProjectRow; existed: boolean } {
+  const existing = db.prepare("SELECT * FROM projects WHERE path = ?").get(dir) as ProjectRow | undefined;
+  if (existing) return { project: existing, existed: true };
+  const label = typeof name === "string" && name.trim() ? name.trim().slice(0, 80) : path.basename(dir) || dir;
+  db.prepare("INSERT INTO projects(path, name, added_at) VALUES (?, ?, ?)").run(dir, label, Date.now());
+  const project = db.prepare("SELECT * FROM projects WHERE path = ?").get(dir) as ProjectRow;
+  const orphans = db.prepare("SELECT name, cwd FROM sessions WHERE project_id IS NULL AND cwd IS NOT NULL").all() as { name: string; cwd: string }[];
+  const set = db.prepare("UPDATE sessions SET project_id = ? WHERE name = ?");
+  for (const s of orphans) if (projectIdFor(db, s.cwd) === project.id) set.run(project.id, s.name);
+  return { project, existed: false };
+}

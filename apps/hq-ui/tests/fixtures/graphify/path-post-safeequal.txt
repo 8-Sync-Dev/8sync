@@ -1,0 +1,3 @@
+Shortest path (3 hops):
+  POST() --calls [EXTRACTED]--> open() --calls [EXTRACTED]--> checkAuth() --calls [EXTRACTED]--> safeEqual()
+Path confidence: EXTRACTED (weakest hop 1: calls) (weakest of 2 equal-length routes)

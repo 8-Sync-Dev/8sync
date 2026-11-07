@@ -1,7 +1,9 @@
 import { deniedText } from "@/lib/access";
-import { checkRoot, checkSymbol, explainArgs, graphifyAsk, graphifyCommand, pathArgs, startUpdate, updateState } from "@/lib/server/graphify";
+import { parseGraphify } from "@/lib/graphify-answer";
+import { checkRoot, checkSymbol, explainArgs, graphifyAsk, graphifyCommand, hasGraph, NO_GRAPH_TEXT, pathArgs, startUpdate, updateState } from "@/lib/server/graphify";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { knownRoots } from "@/lib/server/in-view";
+import { senderOf } from "@/lib/server/sender";
 import { projectFor } from "@/lib/server/trail";
 
 export const runtime = "nodejs";
@@ -12,13 +14,15 @@ export async function GET(req: Request) {
   if ("res" in o) return o.res;
   const p = projectFor(o.db, new URL(req.url).searchParams.get("project"));
   if (!p.ok) return bad(p.error, p.status);
-  return json({ installed: graphifyCommand() != null, update: updateState(p.project.root) });
+  return json({ installed: graphifyCommand() != null, graph: hasGraph(p.project.root), update: updateState(p.project.root) });
 }
 
 /**
- * `{ project, action: "update" }` starts `graphify update . --no-cluster` (202, progress on GET);
- * `{ project, action: "explain", symbol }` / `{ project, action: "path", a, b }` answer with its text.
- * Owner only; `open` checks token and origin; the root is the project's own, and must be one HQ knows.
+ * `{ project, action: "update" }` starts `graphify update . --no-cluster` (202, progress on GET): the
+ * owner's page only (senderOf), a room gets 403. `{ project, action: "explain", symbol }` /
+ * `{ project, action: "path", a, b }` answer with graphify's text and `answer`, that text read into a
+ * card (lib/graphify-answer.ts); a repeat within a minute comes from memory (`cached`).
+ * `open` checks token and origin; the root is the project's own, and must be one HQ knows.
  */
 export async function POST(req: Request) {
   const o = open(req);
@@ -31,6 +35,7 @@ export async function POST(req: Request) {
   const no = checkRoot(p.project.root, await knownRoots(o.db));
   if (no) return bad(no.error, no.status);
   if (body.action === "update") {
+    if (senderOf(req, o.access).by !== "owner") return bad("Chỉ chủ HQ cập nhật graph, từ trang HQ", 403);
     const u = startUpdate(p.project);
     return "status" in u ? bad(u.error, u.status) : json({ update: u }, 202);
   }
@@ -46,6 +51,7 @@ export async function POST(req: Request) {
     if (!b.ok) return bad(b.error, 422);
     args = pathArgs(a.value, b.value);
   } else return bad("action: update | explain | path", 422);
+  if (!hasGraph(p.project.root)) return bad(NO_GRAPH_TEXT, 409);
   const r = await graphifyAsk(p.project.root, args);
-  return r.ok ? json({ text: r.text }) : bad(r.error, r.status);
+  return r.ok ? json({ text: r.text, cached: r.cached, answer: parseGraphify(body.action === "path" ? "path" : "explain", r.text) }) : bad(r.error, r.status);
 }

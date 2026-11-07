@@ -6,6 +6,8 @@ import { GET, POST } from "@/app/api/codemap/graphify/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import {
+  ASK_CACHE_MAX,
+  ASK_CACHE_MS,
   ASK_TIMEOUT_MS,
   checkRoot,
   checkSymbol,
@@ -13,6 +15,7 @@ import {
   graphifyAsk,
   graphifyCommand,
   MISSING_TEXT,
+  NO_GRAPH_TEXT,
   pathArgs,
   resetGraphify,
   startUpdate,
@@ -21,7 +24,7 @@ import {
   updateArgs,
   updateState,
 } from "@/lib/server/graphify";
-import type { runTrail, TrailOut } from "@/lib/server/trail";
+import { OUTPUT_CAP, type runTrail, type TrailOut } from "@/lib/server/trail";
 import { ORIGIN, req, tempHome } from "./helpers";
 
 const ok = (stdout = ""): TrailOut => ({ ok: true, code: 0, stdout, stderr: "", timedOut: false, capped: false, missing: false });
@@ -104,14 +107,63 @@ describe("runs", () => {
     expect(await graphifyAsk(project.root, explainArgs("x"), { run, command: CMD })).toMatchObject({ ok: false, status: 503 });
   });
 
-  it("explain: 30 s, the printed text", async () => {
-    let seen: Parameters<typeof runTrail>[1] | null = null;
-    const run = (async (_a, o) => {
-      seen = o;
+  it("explain: argv as one array (no shell), 30 s, OUTPUT_CAP, the printed text", async () => {
+    let seen: Parameters<typeof runTrail> | null = null;
+    const run = (async (a, o) => {
+      seen = [a, o];
       return ok("\u001b[1mNode\u001b[0m startBuild\r\n");
     }) as typeof runTrail;
-    expect(await graphifyAsk(project.root, explainArgs("startBuild"), { run, command: CMD })).toEqual({ ok: true, text: "Node startBuild" });
-    expect(seen).toMatchObject({ timeoutMs: ASK_TIMEOUT_MS });
+    expect(await graphifyAsk(project.root, explainArgs("startBuild; rm -rf /"), { run, command: CMD })).toEqual({ ok: true, text: "Node startBuild", cached: false });
+    expect(seen![0]).toEqual(["explain", "startBuild; rm -rf /"]);
+    expect(seen![1]).toMatchObject({ cwd: project.root, timeoutMs: ASK_TIMEOUT_MS, cap: OUTPUT_CAP, command: CMD });
+    expect(ASK_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
+  });
+
+  it("timeout and output cap: refused with a reason, never cached", async () => {
+    let calls = 0;
+    const slow = (async () => (calls++, { ...ok("partial"), ok: false, timedOut: true })) as typeof runTrail;
+    expect(await graphifyAsk(project.root, explainArgs("x"), { run: slow, command: CMD })).toMatchObject({ ok: false, status: 504 });
+    expect(await graphifyAsk(project.root, explainArgs("x"), { run: slow, command: CMD })).toMatchObject({ ok: false, status: 504 });
+    expect(calls).toBe(2);
+    const big = (async () => ({ ...ok("x".repeat(10)), ok: false, capped: true })) as typeof runTrail;
+    expect(await graphifyAsk(project.root, explainArgs("y"), { run: big, command: CMD })).toMatchObject({ ok: false, status: 413 });
+    const broken = (async () => ({ ...ok(), ok: false, code: 1, stderr: "error: graph file not found" })) as typeof runTrail;
+    expect(await graphifyAsk(project.root, explainArgs("z"), { run: broken, command: CMD })).toMatchObject({ ok: false, status: 502 });
+  });
+
+  it("exit 3 (ambiguous, on stderr) and 4 (no such node) are answers", async () => {
+    const amb = (async () => ({ ...ok(), ok: false, code: 3, stderr: "Ambiguous: 'open()' matches 2 nodes in different files.\n" })) as typeof runTrail;
+    expect(await graphifyAsk(project.root, explainArgs("open()"), { run: amb, command: CMD })).toMatchObject({ ok: true, text: "Ambiguous: 'open()' matches 2 nodes in different files." });
+    const none = (async () => ({ ...ok("No node matching 'q' found.\n"), ok: false, code: 4 })) as typeof runTrail;
+    expect(await graphifyAsk(project.root, explainArgs("q"), { run: none, command: CMD })).toMatchObject({ ok: true, text: "No node matching 'q' found." });
+  });
+
+  it("cache: same root + argv within a minute answers from memory; another root, argv or an update runs again", async () => {
+    let t = 1_000;
+    let calls = 0;
+    const run = (async () => (calls++, ok(`answer ${calls}`))) as typeof runTrail;
+    const ask = (args: string[], root = project.root) => graphifyAsk(root, args, { run, command: CMD, now: () => t });
+    expect(await ask(explainArgs("a"))).toEqual({ ok: true, text: "answer 1", cached: false });
+    t += ASK_CACHE_MS - 1;
+    expect(await ask(explainArgs("a"))).toEqual({ ok: true, text: "answer 1", cached: true });
+    expect(calls).toBe(1);
+    expect(await ask(pathArgs("a", "b"))).toMatchObject({ cached: false });
+    expect(await ask(explainArgs("a"), path.join(project.root, "other-root"))).toMatchObject({ cached: false });
+    t += 1;
+    expect(await ask(explainArgs("a"))).toEqual({ ok: true, text: "answer 4", cached: false });
+    // A graph rebuild forgets the root's answers.
+    const pending = Promise.withResolvers<TrailOut>();
+    startUpdate(project, { run: () => pending.promise, command: CMD });
+    expect(await ask(explainArgs("a"))).toMatchObject({ cached: false });
+    expect(calls).toBe(5);
+    pending.resolve(ok());
+  });
+
+  it("cache holds at most ASK_CACHE_MAX answers, oldest out first", async () => {
+    const run = (async (a) => ok(a.join(" "))) as typeof runTrail;
+    for (let i = 0; i <= ASK_CACHE_MAX; i++) await graphifyAsk(project.root, explainArgs(`s${i}`), { run, command: CMD });
+    expect(await graphifyAsk(project.root, explainArgs(`s${ASK_CACHE_MAX}`), { run, command: CMD })).toMatchObject({ cached: true });
+    expect(await graphifyAsk(project.root, explainArgs("s0"), { run, command: CMD })).toMatchObject({ cached: false });
   });
 });
 
@@ -138,5 +190,18 @@ describe("route", () => {
     expect((await post({ project: id, action: "explain", symbol: "-x" })).status).toBe(422);
     expect((await post({ project: id, action: "explain", symbol: "a".repeat(SYMBOL_MAX + 1) })).status).toBe(422);
     expect((await post({ project: id, action: "path", a: "A", b: "x\ny" })).status).toBe(422);
+  });
+
+  it("update: the owner's page only, a room (hq.mjs: token, no page marker) gets 403", async () => {
+    const r = await post({ project: id, action: "update" });
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({ error: expect.stringMatching(/Chỉ chủ HQ/) });
+  });
+
+  it("explain/path on a repo with no graph: 409 with what to do, graphify never runs", async () => {
+    const r = await post({ project: id, action: "explain", symbol: "x" });
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual({ error: NO_GRAPH_TEXT });
+    expect((await post({ project: id, action: "path", a: "A", b: "B" })).status).toBe(409);
   });
 });

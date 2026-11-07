@@ -1,0 +1,16 @@
+Node: safeEqual()
+  ID:        apps_hq_ui_lib_server_auth_safeequal
+  Source:    apps/hq-ui/lib/server/auth.ts L28
+  Type:      code
+  Community: 
+  Degree:    8
+
+Connections (8):
+  <-- play.ts [imports] [EXTRACTED] apps/hq-ui/lib/server/play.ts:L15
+  <-- auth.ts [contains] [EXTRACTED] apps/hq-ui/lib/server/auth.ts:L28
+  <-- readPublic() [calls] [EXTRACTED] apps/hq-ui/lib/server/auth.ts:L107
+  <-- login/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/login/route.ts:L1
+  <-- checkAuth() [calls] [EXTRACTED] apps/hq-ui/lib/server/auth.ts:L172
+  <-- playSigValid() [calls] [EXTRACTED] apps/hq-ui/lib/server/play.ts:L286
+  <-- sessionValid() [calls] [EXTRACTED] apps/hq-ui/lib/server/auth.ts:L122
+  <-- GET() [calls] [EXTRACTED] apps/hq-ui/app/api/login/route.ts:L16
