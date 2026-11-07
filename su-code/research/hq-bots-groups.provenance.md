@@ -1,0 +1,16 @@
+# Provenance: hq-bots-groups (2026-11-07)
+- Status: PASS WITH NOTES. 39 numbered sources (38 primary: official docs, help centres and specs; 1 third-party, Grok).
+- Rounds: 1 gather, run directly by the lead (web_search plus reading pages). No fan-out. Then the lead drafted the report.
+- Verification: the lead cited the claims and reviewed the draft. There was no separate verifier or reviewer agent, because the caller scoped the task to one doc with a local commit. Every (D) claim cites at least 2 sources.
+- Read in full or in relevant sections: Claude Code cross-session-messaging [29] (delivery, trust, limitations: rate limit per sender, drop of identical repeats, queue of at most 50) and agent-teams [27] (mailbox, context, inter-agent trust); Telegram bot-to-bot [30] (loop prevention).
+- Claims taken from search excerpts without a full-page read: [1]–[11], [13]–[26], [28], [31]–[39].
+- HQ code read directly in worktree 9784df0: `app/api/messages/route.ts`, `app/api/sessions/route.ts`, `lib/room-context.ts`, `lib/server/chief.ts`, `lib/server/paths.ts`, `lib/roles.ts`, `components/hq/hq-app.tsx`, `assets/skills/hq-control/SKILL.md`. A grep for hop, rate and dedup in `lib/server/deliver.ts` and the messages route found no loop guard.
+- cpa = content-post-agency: read from its README.md, AGENTS.md and `.claude/commands/content-daily.md`.
+- [UNVERIFIED]:
+  - Grok Automations and the removal of Companions (third-party source only).
+  - The Discord mention exception to MESSAGE_CONTENT.
+  - Messenger/WhatsApp group avatar conventions.
+  - Whether Apple HIG has an empty-state page.
+  - Repo paths for ZUS, course and news.
+- Conflict noted: the CrewAI `max_iter` default is 25 on one docs page and 20 on another [24].
+- Inferred, not sourced: the defaults maxHops=3, maxBotMsgsPerTurn=6, maxParallel=3 and dedupe=60 s are proposals sized after [22][29][30], not numbers from any product.
