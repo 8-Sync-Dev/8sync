@@ -19,6 +19,7 @@ import type { UpdateConfig, UpdateStatus } from "@/lib/server/auto-update";
 import type { KillRow, Scan, Suspect, WatchConfig } from "@/lib/server/machine-watch";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
+import { ChiefPanel } from "./chief-panel";
 import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
 import { SharePanel } from "./share-panel";
 import type { Hq } from "./use-hq";
@@ -1158,6 +1159,7 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
       <div className="mx-auto w-full max-w-5xl space-y-4 px-4 pt-5 pb-10 sm:px-6">
         {m.heavy && m.heavy.length > 0 && <HeavyPanel heavy={m.heavy} api={api} onRestarted={reload} />}
         <WatchPanel api={api} active={active} />
+        <ChiefPanel api={api} active={active} />
         <UpdatePanel api={api} active={active} />
         <div className="gap-4 lg:columns-2 [&>*]:mb-4 [&>*]:break-inside-avoid [&>*:last-child]:mb-0">
           <Panel id="may-load" title="Tải máy">

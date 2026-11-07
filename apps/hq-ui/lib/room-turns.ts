@@ -1,6 +1,7 @@
 // "Kết quả" of a room: its Nhật ký folded into turns. A turn starts at a prompt (the owner, a channel
 // or HQ's inbox frame) and its output is the last reply text before the next prompt: what the agent
 // handed back. Pure, shared by the server (activity route) and the room view.
+import { stripContextLine } from "./room-context";
 import type { ActivityEvent } from "./server/activity";
 
 export type Turn = {
@@ -69,9 +70,9 @@ export function turnsFrom(events: readonly ActivityEvent[], max = TURNS_MAX): Tu
 const FRAME =
   /^(?:\[(?:owner|tự động|chưa xác minh|phòng [^\]\n]+?)(?: → [^\]\n]+)?\]|\[8 Sync HQ · [^\]\n]*\]|8 Sync HQ: the owner sent you \d+ message\(s\)[^\n]*)\n/;
 
-/** What the sender wrote in a prompt (or a timeline row): HQ's frame dropped. */
+/** What the sender wrote in a prompt (or a timeline row): HQ's frame and a room's context line (lib/room-context.ts) dropped. */
 export function promptBody(prompt: string): string {
-  return prompt.replace(FRAME, "").trim();
+  return stripContextLine(prompt.replace(FRAME, "")).trim();
 }
 
 /** An expanded slash command ("# /eccx-full — …" then "Goal: `what the owner typed`"): its heading names the command, not the work. */
