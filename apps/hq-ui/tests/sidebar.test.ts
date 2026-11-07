@@ -132,11 +132,11 @@ describe("sidebar UI", () => {
   async function nav(o: ReturnType<typeof office>, omp: OmpTreeRow[] = [], active: string | null = null, tree?: Partial<SessionTree>) {
     const { createElement } = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
-    const { Nav } = await import("@/components/hq/nav");
+    const { SessionTreeView } = await import("@/components/hq/nav");
     const t: SessionTree = { sessions: mergeSessions(o.office?.rooms ?? [], omp), at: NOW, loading: false, error: null, reload: () => {}, ...tree };
     const noop = () => {};
-    const props = { hq, office: o, tree: t, tab: "workspace", active, onTab: noop, onNew: noop, onOpenSession: noop, onOpenRoom: noop, onOpenRepo: noop, onOpenFolder: noop, onAddProject: noop, onHelp: noop };
-    return renderToStaticMarkup(createElement(Nav, props as unknown as Parameters<typeof Nav>[0]));
+    const props = { hq, office: o, tree: t, active, onNew: noop, onOpenSession: noop, onOpenRoom: noop, onOpenRepo: noop, onOpenFolder: noop };
+    return renderToStaticMarkup(createElement(SessionTreeView, props as unknown as Parameters<typeof SessionTreeView>[0]));
   }
 
   it("groups sessions by project with plain titles and state words; a worktree folds under its repo", async () => {
@@ -148,7 +148,7 @@ describe("sidebar UI", () => {
       [],
       "core",
     );
-    for (const s of ["Phiên mới", "Tổng quan", "Văn phòng", "Vòng lặp", ">8sync-startup<", ">core<", ">dev<", "Đang làm", "Chờ anh", "Alex · 8 Sync", "Cài đặt máy"]) expect(html).toContain(s);
+    for (const s of ["Phiên mới", ">8sync-startup<", ">core<", ">dev<", "Đang làm", "Chờ anh"]) expect(html).toContain(s);
     // The worktree now shows as a branch header (git's lists, fetched after mount), not a glyph on the row.
     expect(html).not.toContain("worktree card-12");
     expect(html).toContain('aria-current="true"');

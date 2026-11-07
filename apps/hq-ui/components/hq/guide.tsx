@@ -1,6 +1,6 @@
 "use client";
 
-import { BellRingIcon, CircleDotIcon, CoffeeIcon, FolderPlusIcon, HourglassIcon, MessagesSquareIcon, PowerIcon, SendIcon, TerminalIcon, type LucideIcon } from "lucide-react";
+import { BellRingIcon, BotIcon, CircleDotIcon, CoffeeIcon, HourglassIcon, MessagesSquareIcon, PowerIcon, SendIcon, TerminalIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -14,30 +14,29 @@ export type GuideStep = { icon: LucideIcon; title: string; body: string };
 
 export const GUIDE_STEPS: GuideStep[] = [
   {
-    icon: FolderPlusIcon,
-    title: "Phòng là session của anh",
-    body:
-      "Mỗi session Claude Code hoặc omp anh mở là một phòng; HQ không tự mở phòng nào. Dự án có phòng tự hiện bên trái; bấm Phiên mới (Ctrl+N) ở thanh bên để mở phòng mới trong một thư mục.",
+    icon: BotIcon,
+    title: "Mỗi bot là một session của anh",
+    body: "Mỗi session Claude Code hoặc omp anh mở là một bot; HQ không tự mở phòng nào. Danh sách bot nằm bên trái (trên điện thoại là mục Bots ở thanh dưới), xếp theo dự án, bot chờ anh lên đầu. Bấm Bot mới để mở bot từ một mẫu trong một thư mục.",
   },
   {
     icon: SendIcon,
-    title: "Nhắn một phòng",
-    body: "Bấm tên phòng để mở Chat phòng rồi gõ tin: tin gõ thẳng vào terminal của phòng hoặc vào inbox của nó. Ở Preview, “Hỏi về ảnh này” gửi ảnh có ghim cho một phòng.",
+    title: "Nhắn một bot",
+    body: "Bấm một bot để mở trang của nó rồi gõ tin ở tab Chat; gõ @ để gọi bot khác hoặc chèn file. Tin đi thẳng vào terminal hoặc inbox của bot.",
   },
   {
     icon: TerminalIcon,
     title: "Theo dõi",
-    body: "Văn phòng: mỗi phòng đang làm gì. Bấm tên phòng ở bên trái để xem Nhật ký từng bước nó làm, hoặc mở terminal của phòng.",
+    body: "Trang bot có Nhật ký từng bước nó làm, Lịch sử phiên (worktree, phiên con), Bản đồ code của repo và Đang biết gì. Nút Terminal mở terminal của bot.",
   },
   {
     icon: BellRingIcon,
     title: "Chỉ trả lời việc cần anh",
-    body: "Khung “Anh cần trả lời” hiện câu hỏi và xin quyền của mọi phòng đang dừng chờ anh, kèm cách mở terminal để trả lời.",
+    body: "Bot chờ anh có nhãn Chờ anh và đứng đầu danh sách; câu hỏi hoặc xin quyền của nó hiện ngay trong Chat, kèm cách mở terminal để trả lời.",
   },
   {
     icon: MessagesSquareIcon,
-    title: "Chat",
-    body: "Tab Chat xem các phòng nhắn nhau và tin anh gửi, theo thời gian.",
+    title: "Nhóm, Tìm và Thêm",
+    body: "Nhóm: vài bot cùng một khung chat, anh @ bot nào thì bot đó nhận. Tìm: tìm bot, nhóm và phiên. Thêm: Tổng quan, Văn phòng, Phiên & dự án, Máy và các trang khác. Trên điện thoại bốn mục này nằm ở thanh dưới.",
   },
   {
     icon: PowerIcon,

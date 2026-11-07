@@ -1,20 +1,17 @@
 "use client";
 
-// The sidebar, laid out like Claude Code Desktop (owner 2026-11-02, from a screenshot): "+ Phiên mới",
-// Tìm and the views as plain rows; then the sessions by project folder → session → sub-session
-// (omp `task` subagents, a Claude Code room's running agents), with "Nhóm & sắp xếp" on a group
-// heading; the account and settings at the bottom. Rules: lib/session-tree.ts.
+// "Phiên & dự án" (under Thêm): every session by project folder → session → sub-session (omp `task`
+// subagents, a Claude Code room's running agents), with "Nhóm & sắp xếp" on a group heading, archive,
+// close and delete. Laid out like Claude Code Desktop's sidebar (owner 2026-11-02); since the Grok-style
+// redesign (owner 2026-11-07) the sidebar lists bots (components/hq/sidebar.tsx) and this is a page.
+// Rules: lib/session-tree.ts.
 import {
   AlertTriangleIcon,
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowLeftIcon,
-  BotIcon,
-  Building2Icon,
-  CalendarClockIcon,
   CheckIcon,
   ChevronDownIcon,
-  CircleHelpIcon,
   ColumnsIcon,
   EllipsisIcon,
   EyeIcon,
@@ -22,22 +19,16 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
-  ImageIcon,
   LayoutDashboardIcon,
   LoaderIcon,
   MessageSquareIcon,
-  MessagesSquareIcon,
-  MoonIcon,
   PlusIcon,
   PowerIcon,
   SearchIcon,
-  SettingsIcon,
-  SunIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useTheme } from "next-themes";
-import { Fragment, useMemo, useState, useSyncExternalStore, type DragEvent, type FormEvent, type MouseEvent } from "react";
+import { Fragment, useMemo, useState, type DragEvent, type FormEvent, type MouseEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -54,23 +45,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { branchIndex, dirOf, folderNote, groupBranches, homeOf, shownOrder, spotOf, type WorktreeSpot } from "@/lib/branches";
-import { botStatus } from "@/lib/bots";
 import { agoShort } from "@/lib/now";
 import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, leanSessions, moveKey, orderGroups, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
 import { groupKey, sidebarGroups, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
-import { MORE_LABEL, MORE_TABS, moreTabs } from "@/lib/tabs";
 import { cn } from "@/lib/utils";
 import { ErrorNote } from "./bits";
-import { BrandMark } from "./brand-mark";
 import { CloseDialog, OmpDeleteDialog, ProjectDeleteDialog, RoomEndDialog, WorktreeDialog, useBranches, useWorktreeKeys, type Confirm } from "./nav-actions";
 import { useArchive, useTreeOrder, useTreePrefs, useUnread, type SessionTree } from "./use-session-tree";
-import type { Hq, Live } from "./use-hq";
+import type { Hq } from "./use-hq";
 import type { OfficeState, Room } from "./use-office";
 import type { KnownProject } from "@/lib/known-projects";
 import type { Project } from "./types";
-
-/** The owner's account line (owner 2026-11-02: "Alex · 8 Sync"). HQ is one owner's local tool: no login. */
-const ACCOUNT = "Alex · 8 Sync";
 
 /** Plain rows: neutral hover, the current one a gray layer (no brand wash: lime is only the mark and the primary button). */
 const row =
@@ -83,16 +68,6 @@ const HOVER =
 const ICON_BTN =
   "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-black/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=open]:bg-black/5 dark:hover:bg-white/10 dark:data-[state=open]:bg-white/10 max-md:size-9";
 
-export type NavView = "bots" | "overview" | "office" | "preview" | "group" | "loops" | (typeof MORE_TABS)[number];
-
-const VIEWS: { tab: NavView; label: string; icon: typeof SearchIcon }[] = [
-  { tab: "bots", label: "Bots", icon: BotIcon },
-  { tab: "overview", label: "Tổng quan", icon: LayoutDashboardIcon },
-  { tab: "office", label: "Văn phòng", icon: Building2Icon },
-  { tab: "preview", label: "Preview", icon: ImageIcon },
-  { tab: "group", label: "Chat", icon: MessagesSquareIcon },
-  { tab: "loops", label: "Vòng lặp", icon: CalendarClockIcon },
-];
 const fold = (s: string) =>
   s
     .normalize("NFD")
@@ -100,30 +75,22 @@ const fold = (s: string) =>
     .replace(/đ/gi, "d")
     .toLowerCase();
 
-export function Nav({
+export function SessionTreeView({
   hq,
   office,
   tree,
-  tab,
   active,
-  onTab,
   onNew,
   onOpenSession,
   onOpenRoom,
   onOpenRepo,
   onOpenFolder,
-  onAddProject,
-  onHelp,
-  contentOn,
 }: {
   hq: Hq;
   office: OfficeState;
   tree: SessionTree;
-  /** The open tab: its row reads as current. */
-  tab: string;
   /** The session on screen (pane or room chat). */
   active: string | null;
-  onTab: (t: NavView | "may") => void;
   /** "+ Phiên mới" (root null) or a group's "+" (that folder). */
   onNew: (root: string | null) => void;
   /** `split`: Alt+click or "Mở cạnh nhau". */
@@ -131,12 +98,7 @@ export function Nav({
   onOpenRoom: (r: Room) => void;
   onOpenRepo: (root: string, name: string) => void;
   onOpenFolder: (id: number, p?: { path: string; name: string }) => void;
-  onAddProject: () => void;
-  onHelp: () => void;
-  /** A content DB is configured: "Nội dung" is offered. */
-  contentOn: boolean;
 }) {
-  const MORE = useMemo(() => moreTabs(contentOn).filter((t) => t !== "loops" && t !== "may"), [contentOn]);
   const { prefs, setGroup, setSort, toggleCollapsed } = useTreePrefs();
   const { order, set: setOrder } = useTreeOrder();
   const archive = useArchive();
@@ -144,7 +106,6 @@ export function Nav({
   const [query, setQuery] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
   const data = office.office;
-  const botsNeed = (data?.rooms ?? []).filter((r) => r.status !== "ended" && botStatus(r) === "needs").length;
   // The newest server clock seen (office or the session poll); 0 until one answers (no times shown).
   const now = Math.max(data?.at ?? 0, tree.at);
 
@@ -314,30 +275,14 @@ export function Nav({
   );
 
   return (
-    <nav aria-label="Phiên và dự án" className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-        {/* The mark keeps the 8 Sync lime/leaf whatever the UI accent is (brand kit: never recolour it). */}
-        <BrandMark className="h-6 w-4 shrink-0 text-brand-ink dark:text-brand" />
-        <span className="text-[15px] font-semibold tracking-tight">8 Sync HQ</span>
-        <LiveDot live={hq.live} />
-      </div>
-
-      <div className="shrink-0 space-y-0.5 px-2 pb-2">
-        <button
-          type="button"
-          onClick={() => onNew(null)}
-          title="Phiên mới (Ctrl+N hoặc Alt+N)"
-          className="mb-1.5 flex h-8 w-full items-center gap-2 rounded-full bg-primary px-3 text-[13px] font-medium text-primary-foreground shadow-xs outline-none transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar motion-reduce:transition-none max-md:h-10"
-        >
-          <PlusIcon className="size-4" aria-hidden /> Phiên mới
-          <kbd className="ml-auto font-sans text-[11px] font-normal opacity-75 max-md:hidden">Ctrl N</kbd>
-        </button>
+    <section aria-label="Phiên và dự án" className="mx-auto flex h-full min-h-0 w-full max-w-2xl flex-col text-sidebar-foreground">
+      <div className="flex shrink-0 items-center gap-2 px-3 pt-3 pb-2 sm:px-4">
         {query == null ? (
-          <button type="button" className={cn(row, "h-7 max-md:h-10")} onClick={() => setQuery("")}>
-            <SearchIcon className="size-4 text-muted-foreground" aria-hidden /> Tìm
+          <button type="button" className={cn(row, "h-9 flex-1 max-md:h-11")} onClick={() => setQuery("")}>
+            <SearchIcon className="size-4 text-muted-foreground" aria-hidden /> Tìm phiên
           </button>
         ) : (
-          <div className="relative">
+          <div className="relative flex-1">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               autoFocus
@@ -346,44 +291,21 @@ export function Nav({
               onKeyDown={(e) => e.key === "Escape" && setQuery(null)}
               placeholder="Tìm phiên, dự án…"
               aria-label="Tìm phiên theo tên hoặc dự án"
-              className="h-7 bg-background pr-7 pl-8 text-[13px] max-md:h-10"
+              className="h-9 bg-background pr-9 pl-8 text-[13px] max-md:h-11"
               spellCheck={false}
               autoComplete="off"
             />
-            <button type="button" className={cn(ICON_BTN, "absolute top-1/2 right-0.5 -translate-y-1/2")} aria-label="Đóng tìm kiếm" onClick={() => setQuery(null)}>
+            <button type="button" className={cn(ICON_BTN, "absolute top-1/2 right-1 -translate-y-1/2")} aria-label="Đóng tìm kiếm" onClick={() => setQuery(null)}>
               <XIcon className="size-3.5" aria-hidden />
             </button>
           </div>
         )}
-        {VIEWS.map((v) => (
-          <button key={v.tab} type="button" className={cn(row, "h-7 max-md:h-10")} aria-current={tab === v.tab} onClick={() => onTab(v.tab)}>
-            <v.icon className="size-4 text-muted-foreground" aria-hidden /> {v.label}
-            {v.tab === "bots" && botsNeed > 0 && (
-              <span className="ml-auto rounded-full bg-st-needs/20 px-1.5 text-[11px] font-semibold text-[color-mix(in_oklch,var(--st-needs),black_42%)] tabular dark:text-st-needs" aria-label={`${botsNeed} bot chờ anh`}>
-                {botsNeed}
-              </span>
-            )}
-          </button>
-        ))}
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger className={cn(row, "h-7 max-md:h-10")} aria-current={(MORE as readonly string[]).includes(tab)}>
-            <EllipsisIcon className="size-4 text-muted-foreground" aria-hidden />
-            {(MORE as readonly string[]).includes(tab) ? MORE_LABEL[tab as (typeof MORE)[number]] : "Thêm"}
-          </DropdownMenuTrigger>
-          {/* No exit fade (`!`: the primitive's animate-out sorts later): an item switches the view, and a
-              fade stalled by a busy or hidden window left the half-transparent menu over the session list
-              (UAT 2026-11-07). */}
-          <DropdownMenuContent align="start" className="min-w-44 data-closed:animate-none!">
-            {MORE.map((t) => (
-              <DropdownMenuItem key={t} onSelect={() => onTab(t)} className={cn(tab === t && "font-semibold")}>
-                {MORE_LABEL[t]}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button type="button" size="sm" onClick={() => onNew(null)} title="Phiên mới (Ctrl+N hoặc Alt+N)" className="shrink-0 max-md:h-11">
+          <PlusIcon aria-hidden /> Phiên mới
+        </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 sm:px-3">
         {archived ? (
           <ArchiveView
             sessions={stored}
@@ -542,8 +464,6 @@ export function Nav({
         )}
       </div>
 
-      <Account onAddProject={onAddProject} onHelp={onHelp} onSettings={() => onTab("may")} settingsCurrent={tab === "may"} />
-
       {confirm?.kind === "room" && (
         <RoomEndDialog
           hq={hq}
@@ -603,7 +523,7 @@ export function Nav({
           }}
         />
       )}
-    </nav>
+    </section>
   );
 }
 
@@ -1034,53 +954,6 @@ function ArchiveView({
         </>
       )}
     </section>
-  );
-}
-
-/** Bottom: the account (theme, add a project, help) and the settings gear (the Máy tab). */
-function Account({ onAddProject, onHelp, onSettings, settingsCurrent }: { onAddProject: () => void; onHelp: () => void; onSettings: () => void; settingsCurrent: boolean }) {
-  const { theme, setTheme, resolvedTheme } = useTheme();
-  // The theme is only known in the browser.
-  const mounted = useSyncExternalStore(noop, () => true, () => false);
-  const dark = mounted && (theme === "system" ? resolvedTheme : theme) === "dark";
-  return (
-    <div className="flex shrink-0 items-center gap-1 border-t border-sidebar-border p-2">
-      <DropdownMenu modal={false}>
-        <DropdownMenuTrigger className={cn(row, "h-9 flex-1 gap-2 max-md:h-11")}>
-          <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background">
-            A
-          </span>
-          <span className="min-w-0 flex-1 truncate font-medium">{ACCOUNT}</span>
-          <ChevronDownIcon className="size-3.5 text-muted-foreground" aria-hidden />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-56">
-          <DropdownMenuItem className="max-md:min-h-10" onSelect={onAddProject}>
-            <FolderPlusIcon aria-hidden /> Thêm dự án…
-          </DropdownMenuItem>
-          <DropdownMenuItem className="max-md:min-h-10" disabled={!mounted} onSelect={() => setTheme(dark ? "light" : "dark")}>
-            {dark ? <SunIcon aria-hidden /> : <MoonIcon aria-hidden />} {dark ? "Giao diện sáng" : "Giao diện tối"}
-          </DropdownMenuItem>
-          <DropdownMenuItem className="max-md:min-h-10" onSelect={onHelp}>
-            <CircleHelpIcon aria-hidden /> Cách dùng HQ
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <button type="button" className={cn(ICON_BTN, "size-8 max-md:size-11", settingsCurrent && "bg-sidebar-accent text-foreground")} aria-label="Cài đặt máy" aria-current={settingsCurrent} title="Cài đặt máy" onClick={onSettings}>
-        <SettingsIcon className="size-4" aria-hidden />
-      </button>
-    </div>
-  );
-}
-
-const noop = () => () => {};
-
-function LiveDot({ live }: { live: Live }) {
-  const label = live === "live" ? "Live" : live === "polling" ? "Cập nhật 3 giây/lần" : live === "connecting" ? "Đang kết nối" : "Đang nối lại";
-  return (
-    <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
-      <span aria-hidden className={cn("size-1.5 rounded-full", live === "live" || live === "polling" ? "bg-st-running" : "bg-st-needs motion-safe:animate-pulse")} />
-      {label}
-    </span>
   );
 }
 

@@ -51,7 +51,7 @@ export function ForwardCards({ hq, bot, all, now, nonce }: { hq: Hq; bot: Bot<Ro
 }
 
 function ForwardCard({ f, to, a, hq }: { f: Forward; to: Bot<Room> | null; a: Bot<Room>; hq: Hq }) {
-  const name = to?.name ?? f.to;
+  const name = to?.display ?? f.to;
   return (
     <article className="rounded-xl border bg-background px-3 py-2.5 text-sm">
       <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -75,7 +75,7 @@ function Reply({ f, to, a, hq }: { f: Forward; to: Bot<Room>; a: Bot<Room>; hq: 
   const summary = brief?.lastReply && (brief.updatedAt ?? 0) > f.ts ? brief.lastReply : null;
   const full = useFullReply(hq.api, to.room, f.ts, !!summary);
   const reply = full ?? summary;
-  if (!reply) return <p className="mt-2 text-xs text-muted-foreground">{to.status === "working" ? `${to.name} đang làm…` : `Chưa có trả lời từ ${to.name}.`}</p>;
+  if (!reply) return <p className="mt-2 text-xs text-muted-foreground">{to.status === "working" ? `${to.display} đang làm…` : `Chưa có trả lời từ ${to.display}.`}</p>;
 
   const send = async () => {
     setBusy(true);
@@ -91,11 +91,11 @@ function Reply({ f, to, a, hq }: { f: Forward; to: Bot<Room>; a: Bot<Room>; hq: 
 
   return (
     <div className="mt-2 border-l-2 border-primary/40 pl-3">
-      <p className="text-[11px] font-medium text-muted-foreground">Trả lời từ {to.name}</p>
+      <p className="text-[11px] font-medium text-muted-foreground">Trả lời từ {to.display}</p>
       {full ? <FullReply text={full} className="mt-0.5" /> : <p className="mt-0.5 whitespace-pre-wrap break-words">{reply}</p>}
       <Button type="button" size="sm" variant="outline" className="mt-2 max-md:h-11" onClick={send} disabled={busy || sent}>
         {sent ? <CheckIcon aria-hidden /> : <CornerDownLeftIcon aria-hidden />}
-        {sent ? `Đã gửi cho ${a.name}` : `Gửi cho ${a.name}`}
+        {sent ? `Đã gửi cho ${a.display}` : `Gửi cho ${a.display}`}
       </Button>
     </div>
   );

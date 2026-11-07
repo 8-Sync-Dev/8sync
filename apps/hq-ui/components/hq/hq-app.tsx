@@ -3,23 +3,22 @@
 import { roomNameOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
-import { ChevronDownIcon, CircleHelpIcon, MenuIcon, SquareTerminalIcon } from "lucide-react";
+import { CircleHelpIcon, SquareTerminalIcon } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNarrow } from "@/hooks/use-narrow";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { botStatus, botSummary } from "@/lib/bots";
+import { botStatus, botSummary, openBotKey } from "@/lib/bots";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { shortName, StatusDot } from "./bits";
 import { FirstRun } from "./first-run";
 import type { LoopsState } from "./loops-view";
 import { Guide, useGuideFirstRun } from "./guide";
-import { AddProjectDialog, Nav, type Scope } from "./nav";
+import { AddProjectDialog, SessionTreeView, type Scope } from "./nav";
 import { useArchive, useSessionTree, useTreeOrder, useTreePrefs } from "./use-session-tree";
 import { COMPOSER_ID, useWorkspace, workspace } from "./workspace-store";
 import { cycleKey, groupSessions, type TreeSession } from "@/lib/session-tree";
@@ -30,7 +29,6 @@ import { FilesPane, filesRootOf } from "./files-sheet";
 import { PathOpenProvider } from "./path-open";
 import type { PreviewState } from "./preview-view";
 import { FloatShell } from "./float-shell";
-import { useEdgeFade } from "./scroll-strip";
 import { TerminalDrawer } from "./terminal-drawer";
 import { WebTerminalSheet } from "./web-terminal-sheet";
 import { WorkspaceView } from "./workspace-view";
@@ -42,8 +40,18 @@ import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { PinnedAsks } from "./pinned-asks";
 import { rootKey } from "@/lib/preview";
 import { ARTIFACT_PARAM } from "@/lib/artifacts";
-import { MORE_LABEL, isMore, moreLabel, moreTabs, viewHeader } from "@/lib/tabs";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { moreTabs, viewHeader, type MoreTab, type NavItem } from "@/lib/tabs";
+import { botRepo } from "@/lib/roster";
+import { groupKey } from "@/lib/sidebar";
+import { BottomTabs } from "./bottom-tabs";
+import { BotHistory } from "./bots/bot-history";
+import type { BotViews } from "./bots/bot-thread";
+import { NewGroupDialog } from "./bots/groups-section";
+import { NewBotSheet } from "./bots/new-bot-sheet";
+import { useRoster } from "./bots/use-roster";
+import { GroupsPage } from "./groups-page";
+import { SearchView } from "./search-view";
+import { Sidebar } from "./sidebar";
 import type { Session } from "./types";
 
 /** A view's chunk on its way: the shape of a page (title, two rows), not a spinner. */
@@ -58,7 +66,7 @@ function ViewLoading() {
 }
 // Every tab but the first screen loads its own chunk on first open (Radix unmounts hidden tabs, so they also stop working).
 const OverviewView = dynamic(() => import("./overview-view").then((m) => m.OverviewView), { loading: ViewLoading });
-// Client only: its layout reads localStorage and the screen width (list beside the thread, or one at a time).
+// Client only: it reads the screen width (a bot's page beside Nhật ký from 1280 px).
 const BotsView = dynamic(() => import("./bots/bots-view").then((m) => m.BotsView), { ssr: false, loading: ViewLoading });
 const OfficeView = dynamic(() => import("./office-view").then((m) => m.OfficeView), { loading: ViewLoading });
 const TeamThread = dynamic(() => import("./team-thread").then((m) => m.TeamThread), { loading: ViewLoading });
@@ -75,8 +83,8 @@ const ContentView = dynamic(() => import("./content-view").then((m) => m.Content
 const ArtifactsView = dynamic(() => import("./artifacts-view").then((m) => m.ArtifactsView), { loading: ViewLoading });
 const CodemapView = dynamic(() => import("./codemap-view").then((m) => m.CodemapView), { loading: ViewLoading });
 
-/** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens · artifacts: files rooms posted. */
-type Tab = "bots" | "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "codemap" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
+/** bots: a bot's page · groups: a group's thread · search: Tìm · tree: every session by project · workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens · artifacts: files rooms posted. */
+type Tab = "bots" | "groups" | "search" | "tree" | "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "codemap" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -84,6 +92,8 @@ const MACHINE_POLL_MS = 5_000;
 /** Scope by any name a session goes by: hq name, Claude session id, or its label. */
 const isScoped = (s: Session, key: string | null) => matchesSession({ ...s, label: sessionLabel(s) }, key);
 const SESSION_NAME_INPUT = "start-session-name";
+/** A history entry while a phone shows a bot or a group full screen: the system Back returns to the list. */
+const HISTORY_KEY = "hqBot";
 
 export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const hq = useHq(token);
@@ -97,11 +107,14 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const narrow = useNarrow();
   const mobile = useIsMobile();
   const tab: Tab = picked ?? "bots";
-  // The bot whose thread is open in Bots (a room key); a phone shows it full screen, without HQ's header.
+  // The bot picked in Bots (a room key) and the group in Nhóm; a phone shows either full screen, without
+  // HQ's header or bottom bar.
   const [bot, setBot] = useState<string | null>(null);
-  const botThread = tab === "bots" && mobile && bot != null;
+  const [groupId, setGroupId] = useState<string | null>(null);
+  // "Bot mới" open, with the template an empty-state card picked; "Nhóm mới" open.
+  const [newBot, setNewBot] = useState<{ template: string | null } | null>(null);
+  const [newGroup, setNewGroup] = useState(false);
   const [target, setTarget] = useState<string | null>(null);
-  const [navOpen, setNavOpen] = useState(false);
   // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
   const [drawer, setDrawer] = useState<string | null>(null);
   const [firstGuide, dismissGuide] = useGuideFirstRun();
@@ -112,18 +125,6 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const previews = usePoll<{ projects: NonNullable<PreviewState["data"]>["projects"] }>(hq.api, "/api/preview", PREVIEW_POLL_MS, tab === "preview" || tab === "overview");
   const machine = usePoll<MachineData>(hq.api, "/api/machine", MACHINE_POLL_MS, true);
   const openMachine = useCallback(() => setTab("may"), []);
-  // Phones scroll the tab row: keep the active tab in view (the Máy chip opens the last ones).
-  // The row is scrolled itself (scrollIntoView would also nudge the page).
-  const tabRow = useRef<HTMLDivElement>(null);
-  useEdgeFade(tabRow);
-  useEffect(() => {
-    const row = tabRow.current;
-    const t = row?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-    if (!row || !t) return;
-    const pad = 16;
-    if (t.offsetLeft - pad < row.scrollLeft) row.scrollTo({ left: t.offsetLeft - pad });
-    else if (t.offsetLeft + t.offsetWidth + pad > row.scrollLeft + row.clientWidth) row.scrollTo({ left: t.offsetLeft + t.offsetWidth + pad - row.clientWidth });
-  }, [tab]);
   const loops = usePoll<NonNullable<LoopsState["data"]>>(hq.api, "/api/loops", LOOPS_POLL_MS, tab === "loops");
   // "Nội dung" exists only while a content DB is configured: asked once per load. A shared calendar
   // link (`?day=` / `?item=`) lands on that tab.
@@ -148,7 +149,6 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     setScope(s);
     setRepo(null);
     if (s.session?.startsWith("hq-")) setTarget(s.session);
-    setNavOpen(false);
   }, []);
 
   // Everything below the header is filtered to the selected project or session.
@@ -203,8 +203,27 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   // current in the sidebar and never collects a blue dot.
   const viewKey = tab === "workspace" ? (ws.composer ? null : ws.ws.active) : tab === "room" ? (room?.key ?? null) : null;
   const tree = useSessionTree(hq, office, viewKey);
+  const roster = useRoster(hq, office, tree.sessions);
+  // The open bot by key (lib/bots openBotKey): the pick, else the one HQ opened by itself, which keeps the
+  // page while other rooms re-sort above it. A wider screen opens the roster's top bot when none is held.
+  const liveBots = useMemo(() => roster.all.map((b) => b.key), [roster.all]);
+  const [held, setHeld] = useState<string | null>(null);
+  const openKey = openBotKey(liveBots, roster.sections[0]?.bots[0]?.key ?? null, bot, held, !mobile);
+  // Adjusting state while rendering (react.dev "storing information from previous renders"): no extra
+  // commit with the wrong bot. A null (rooms not loaded yet, a phone) keeps the last one held.
+  if (openKey != null && openKey !== held) setHeld(openKey);
+  const fullScreen = mobile && ((tab === "bots" && openKey != null) || (tab === "groups" && roster.groups.some((g) => g.id === groupId)));
   // An omp session's sidebar row is keyed by its omp id, not its room's key: its Chat phòng lights that row.
-  const activeKey = tab === "room" && room ? (tree.sessions.find((s) => s.room === room.key)?.key ?? room.key) : viewKey;
+  const activeKey =
+    tab === "room" && room
+      ? (tree.sessions.find((s) => s.room === room.key)?.key ?? room.key)
+      : tab === "bots" && openKey
+        ? (tree.sessions.find((s) => s.room === openKey)?.key ?? openKey)
+        : viewKey;
+  const { unread, markSeen } = roster;
+  useEffect(() => {
+    if (tab === "bots" && openKey && unread.has(openKey)) markSeen(openKey);
+  }, [tab, openKey, unread, markSeen]);
   // Không gian titles the window on screen (or the composer), like Claude Code Desktop.
   const pane = tab === "workspace" && !ws.composer ? ws.ws.panes.find((p) => p.id === ws.ws.active) : undefined;
   const paneSession = pane ? tree.sessions.find((s) => s.ompId === pane.id) : undefined;
@@ -274,6 +293,48 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     setRepo({ root, name });
     setTab("overview");
   };
+  /** A bot's page (Bots). A phone pushes a history entry so its Back returns to the list. */
+  const openBot = useCallback(
+    (key: string) => {
+      if (mobile && window.history.state?.[HISTORY_KEY] == null) window.history.pushState({ ...window.history.state, [HISTORY_KEY]: key }, "");
+      setBot(key);
+      setTab("bots");
+    },
+    [mobile],
+  );
+  /** A group's thread (Nhóm). */
+  const openGroup = useCallback(
+    (id: string) => {
+      if (mobile && window.history.state?.[HISTORY_KEY] == null) window.history.pushState({ ...window.history.state, [HISTORY_KEY]: `group:${id}` }, "");
+      setGroupId(id);
+      setTab("groups");
+    },
+    [mobile],
+  );
+  /** Back from a bot's page or a group: a phone returns to the list; a wider screen puts focus on the bot's row. */
+  const back = () => {
+    if (mobile && window.history.state?.[HISTORY_KEY] != null) window.history.back();
+    else if (mobile || tab === "groups") {
+      setBot(null);
+      setGroupId(null);
+    } else document.querySelector<HTMLElement>(`[data-bot="${CSS.escape(openKey ?? "")}"]`)?.focus();
+  };
+  useEffect(() => {
+    const onPop = () => {
+      if (window.history.state?.[HISTORY_KEY] != null) return;
+      setBot(null);
+      setGroupId(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  /** Bots · Nhóm · Tìm, or one of Thêm's views (lib/tabs). Bots on a phone is the roster. */
+  const onNav = (to: Exclude<NavItem, "more"> | MoreTab) => {
+    if (to === "overview") setRepo(null);
+    if (to === "bots" && mobile) setBot(null);
+    if (to === "groups" && mobile) setGroupId(null);
+    setTab(to);
+  };
   /** Another tab, opened at one thing named in the URL (that tab reads it when it mounts). */
   const openWith = (to: Tab, params: Record<string, string | null>) => {
     const u = new URL(window.location.href);
@@ -308,23 +369,21 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     if (root) workspace.folder(root);
     workspace.composer(true);
     setTab("workspace");
-    setNavOpen(false);
     setTimeout(() => document.getElementById(COMPOSER_ID)?.focus(), 60);
   }, []);
   /**
-   * A session from the sidebar or Tổng quan: a live room (Claude Code or omp) opens its Chat phòng —
-   * Nhật ký, the composer and "Mở terminal" — so both places show the same page (owner 2026-11-03).
-   * An omp session with no live room, or any omp session on `split`, opens in Không gian.
+   * A session from Phiên & dự án, Tìm, a bot's Lịch sử phiên or Tổng quan: a live bot opens its page; another
+   * live room its Chat phòng. An omp session with no live room, or any omp session on `split`, opens in Không gian.
    */
   const openTreeSession = (s: TreeSession, split: boolean) => {
     const r = s.room ? officeRooms.find((x) => x.key === s.room) : undefined;
     if (r && !(split && s.ompId)) {
-      openRoom(r);
+      if (liveBots.includes(r.key)) openBot(r.key);
+      else openRoom(r);
     } else if (s.ompId) {
       workspace.open(token, { id: s.ompId, name: s.name, cwd: s.cwd ?? s.folder }, split);
       setTab("workspace");
     }
-    setNavOpen(false);
   };
   const openTreeRef = useRef(openTreeSession);
   useEffect(() => {
@@ -366,56 +425,70 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [newSession]);
-  const nav = (
-    <Nav
-      hq={hq}
-      office={office}
-      tree={tree}
-      tab={tab}
-      active={activeKey}
-      onTab={(t) => {
-        if (t === "overview") setRepo(null);
-        setTab(t);
-        setNavOpen(false);
-      }}
-      onNew={newSession}
-      onOpenSession={openTreeSession}
-      onOpenRoom={openRoom}
-      onOpenRepo={(root, name) => {
-        openRepo(root, name);
-        setNavOpen(false);
-      }}
-      onOpenFolder={(id, p) => {
-        const f = p ?? hq.projects.data.find((x) => x.id === id);
-        if (f) newSession(f.path);
-      }}
-      onAddProject={focusAddProject}
-      onHelp={() => setGuideOpen(true)}
-      contentOn={contentOn}
-    />
-  );
+  /** A bot page's Lịch sử phiên and Bản đồ code (its repo's map; registered projects of that repo only, so it never falls back to another repo). */
+  const botViews = (key: string): BotViews => {
+    const b = roster.all.find((x) => x.key === key);
+    const where = b ? botRepo(b.room) : null;
+    return {
+      history: () =>
+        b && (
+          <BotHistory
+            bot={{ key, display: b.display, root: where?.root ?? null, section: where?.name ?? b.project ?? "Khác" }}
+            sessions={tree.sessions}
+            now={roster.now}
+            api={hq.api}
+            onOpen={(s) => openTreeSession(s, s.room === key)}
+            onOpenRepo={openRepo}
+          />
+        ),
+      codemap: () =>
+        where ? (
+          <CodemapView
+            token={token}
+            projects={hq.projects.data.filter((p) => groupKey(p.path) === groupKey(where.root))}
+            others={[{ path: where.root, name: where.name }]}
+            onAdded={hq.reload.projects}
+            repo={where.root}
+            active
+          />
+        ) : (
+          <p className="px-4 py-6 text-sm text-muted-foreground">{b?.display ?? "Bot này"} không chạy trong repo git nào, nên chưa có bản đồ code.</p>
+        ),
+    };
+  };
+  const more = moreTabs(contentOn, scope.session != null || tab === "room");
+  const newBotFrom = (template?: string) => setNewBot({ template: template ?? null });
 
   return (
     <>
       {/* viewport-fit=cover (layout.tsx): the notch side in landscape stays clear. */}
-      <div className="grid h-dvh grid-cols-1 grid-rows-1 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:grid-cols-[272px_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 border-r border-sidebar-border md:block">{nav}</aside>
-        <Sheet open={navOpen} onOpenChange={setNavOpen}>
-          <SheetContent side="left" className="w-[19rem] max-w-[85vw] p-0 md:hidden" showCloseButton={false}>
-            <SheetTitle className="sr-only">Phiên và dự án</SheetTitle>
-            {nav}
-          </SheetContent>
-        </Sheet>
+      <div className="grid h-dvh grid-cols-1 grid-rows-1 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:grid-cols-[288px_minmax(0,1fr)]">
+        {!mobile && (
+          <aside className="hidden min-h-0 border-r border-sidebar-border md:block">
+            <Sidebar
+              live={hq.live}
+              roster={roster}
+              tab={tab}
+              openBot={openKey}
+              openGroup={groupId}
+              more={more}
+              onNav={onNav}
+              onOpenBot={openBot}
+              onOpenGroup={openGroup}
+              onNewBot={newBotFrom}
+              onNewGroup={() => setNewGroup(true)}
+              onAddProject={focusAddProject}
+              onHelp={() => setGuideOpen(true)}
+            />
+          </aside>
+        )}
 
-        {/* The composers end at the bottom edge: keep them above a phone's home indicator. */}
-        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0 pb-[env(safe-area-inset-bottom)]">
-          {/* A phone's open bot thread is a full screen of its own (back arrow, safe area): no HQ header over it. */}
-          <header className={cn("shrink-0 border-b bg-background/90 pt-[env(safe-area-inset-top)]", botThread && "hidden")}>
+        {/* The composers end at the bottom edge: keep them above a phone's home indicator (the bottom bar does that itself). */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className={cn("flex min-h-0 flex-col gap-0", (!mobile || fullScreen) && "pb-[env(safe-area-inset-bottom)]")}>
+          {/* A phone's open bot or group is a full screen of its own (back arrow, safe area): no HQ header over it. */}
+          <header className={cn("shrink-0 border-b bg-background/90 pt-[env(safe-area-inset-top)]", fullScreen && "hidden")}>
             {/* Phones: 44 px targets; px-3 and gap-2 leave the title room at 360 px. */}
-            <div className="flex items-center gap-2 px-3 pt-2 sm:gap-3 sm:px-6 sm:pt-3">
-              <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Mở danh sách phiên">
-                <MenuIcon />
-              </Button>
+            <div className="flex items-center gap-2 px-3 py-2 sm:gap-3 sm:px-6 sm:py-3">
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
                 <p
@@ -426,7 +499,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1.5 max-sm:gap-0.5">
-                <Button size="sm" variant="ghost" className="max-sm:size-11 max-sm:px-0" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
+                <Button size="sm" variant="ghost" className="max-sm:hidden" onClick={() => setGuideOpen(true)} aria-label="Cách dùng HQ">
                   <CircleHelpIcon /> <span className="hidden lg:inline">Cách dùng</span>
                 </Button>
                 <Button size="sm" variant={shellOpen ? "secondary" : "ghost"} className="-mr-1 max-sm:size-11 max-sm:px-0 sm:mr-0" onClick={() => setShellOpen((o) => !o)} aria-label="Shell trên máy (Ctrl+`)" aria-pressed={shellOpen} title="Shell trên máy (Ctrl+`)">
@@ -470,71 +543,38 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   </div>
                 )}
               </dl>
-              {!narrow && (
-                <div className="shrink-0">
-                  <MachineChip m={machine.data} onOpen={openMachine} />
-                </div>
-              )}
-            </div>
-            {/* Wide screens: the sidebar lists the views (Claude Code Desktop); phones keep the tab row. */}
-            <div className="mt-1 flex items-center sm:mt-2 md:hidden">
-              {/* Phones: 12 tabs scroll (edges fade while more are hidden, snapping to a tab); each is a full 44 px tall target, its underline kept inside the scroller. */}
-              <TabsList
-                ref={tabRow}
-                variant="line"
-                className="hq-fade-x relative h-9 min-w-0 flex-1 snap-x snap-proximity scroll-px-4 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:gap-5 max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:snap-start max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
-              >
-                <TabsTrigger value="bots" className="flex-none px-0">Bots</TabsTrigger>
-                <TabsTrigger value="workspace" className="flex-none px-0">Không gian</TabsTrigger>
-                <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
-                <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
-                <TabsTrigger value="preview" className="flex-none px-0">Preview</TabsTrigger>
-                <TabsTrigger value="group" className="flex-none px-0">Chat</TabsTrigger>
-                {/* Chat phòng only while a room is open (owner 2026-10-22: "nhiều tab đang bị rối"). */}
-                {(scope.session != null || tab === "room") && (
-                  <TabsTrigger value="room" className="flex-none px-0">
-                    Chat phòng
-                  </TabsTrigger>
-                )}
-                {/* The other tabs, one menu (owner 2026-10-22: "ui ux loạn quá"); its label is the open one. */}
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger
-                    className={cn(
-                      "relative inline-flex h-full flex-none items-center gap-1 text-sm font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                      isMore(tab) ? "text-foreground after:absolute after:inset-x-0 after:bottom-[-5px] after:h-0.5 after:rounded-full after:bg-primary" : "text-muted-foreground hover:text-foreground",
-                    )}
-                    aria-label={`Tab khác: ${moreLabel(tab)}`}
-                  >
-                    {moreLabel(tab)}
-                    {needsYou > 0 && !isMore(tab) && <span aria-label={`${needsYou} phòng chờ anh`} className="size-1.5 rounded-full bg-st-needs" />}
-                    <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
-                  </DropdownMenuTrigger>
-                  {/* No exit fade (`!`: the primitive's animate-out sorts later): an item switches the view,
-                      and a fade stalled by a busy or hidden window left the half-transparent menu over the
-                      new view (UAT 2026-11-07). */}
-                  <DropdownMenuContent align="start" className="min-w-44 data-closed:animate-none!">
-                    {moreTabs(contentOn).map((t) => (
-                      <DropdownMenuItem key={t} onSelect={() => setTab(t)} className={cn(tab === t && "font-semibold")}>
-                        {MORE_LABEL[t]}
-                        {t === "sessions" && needsYou > 0 && <span aria-label={`${needsYou} phòng chờ anh`} className="ml-auto size-1.5 rounded-full bg-st-needs" />}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TabsList>
-              {/* Phones: the header row has no room left, so the chip ends the tab row, compact and set apart by a rule. */}
-              {narrow && (
-                <div className="shrink-0 border-l pr-1.5 pl-1">
-                  <MachineChip m={machine.data} onOpen={openMachine} compact />
-                </div>
-              )}
+              <div className="shrink-0">
+                <MachineChip m={machine.data} onOpen={openMachine} compact={narrow} />
+              </div>
             </div>
           </header>
           {/* Bots lists the waiting bots first and shows each one's question in its thread. */}
           {tab !== "bots" && <PinnedAsks office={office.office} token={token} onOpenRoom={openRoom} />}
           <main className="min-h-0 flex-1">
             <TabsContent value="bots" className="h-full">
-              <BotsView hq={hq} office={office} selected={bot} onSelect={setBot} onDrawer={setDrawer} />
+              <BotsView hq={hq} roster={roster} openKey={openKey} mobile={mobile} onOpen={openBot} onBack={back} onDrawer={setDrawer} onNew={newBotFrom} views={botViews} />
+            </TabsContent>
+            <TabsContent value="groups" className="h-full">
+              <GroupsPage hq={hq} roster={roster} groupId={groupId} mobile={mobile} onOpen={openGroup} onBack={back} onNew={() => setNewGroup(true)} />
+            </TabsContent>
+            <TabsContent value="search" className="h-full">
+              <SearchView roster={roster} sessions={tree.sessions} onOpenBot={openBot} onOpenGroup={openGroup} onOpenSession={(s) => openTreeSession(s, false)} />
+            </TabsContent>
+            <TabsContent value="tree" className="h-full overflow-y-auto">
+              <SessionTreeView
+                hq={hq}
+                office={office}
+                tree={tree}
+                active={activeKey}
+                onNew={newSession}
+                onOpenSession={openTreeSession}
+                onOpenRoom={openRoom}
+                onOpenRepo={openRepo}
+                onOpenFolder={(id, p) => {
+                  const f = p ?? hq.projects.data.find((x) => x.id === id);
+                  if (f) newSession(f.path);
+                }}
+              />
             </TabsContent>
             <TabsContent value="workspace" className="h-full">
               <WorkspaceView token={token} projects={wsProjects} sessions={tree.sessions} />
@@ -632,6 +672,9 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <ActivityView hq={hq} messages={view.messages} />
             </TabsContent>
           </main>
+          {mobile && !fullScreen && (
+            <BottomTabs tab={tab} needs={roster.bots.filter((b) => b.status === "needs").length} more={more} onNav={onNav} onAddProject={focusAddProject} onHelp={() => setGuideOpen(true)} />
+          )}
         </Tabs>
       </div>
       <TerminalDrawer
@@ -661,6 +704,26 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
         onOpenChange={setAddOpen}
         onAdded={(_id, p) => {
           if (p) newSession(p.path);
+        }}
+      />
+      <NewBotSheet
+        hq={hq}
+        open={newBot != null}
+        onOpenChange={(o) => !o && setNewBot(null)}
+        initialTemplate={newBot?.template}
+        onCreated={(key) => {
+          office.retry();
+          openBot(key);
+        }}
+      />
+      <NewGroupDialog
+        hq={hq}
+        open={newGroup}
+        onOpenChange={setNewGroup}
+        all={roster.all}
+        onCreated={(id) => {
+          roster.reloadGroups();
+          openGroup(id);
         }}
       />
       <Toaster position="bottom-right" />

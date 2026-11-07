@@ -53,7 +53,7 @@ export function GroupThread({
   onGroups: () => void;
 }) {
   const byId = useMemo(() => new Map(all.map((b) => [b.room.name, b])), [all]);
-  const nameOf = useCallback((id: string) => (id === "owner" ? "Anh" : (byId.get(id)?.name ?? id.slice(0, 12))), [byId]);
+  const nameOf = useCallback((id: string) => (id === "owner" ? "Anh" : (byId.get(id)?.display ?? id.slice(0, 12))), [byId]);
   const members = group.members.map((id) => ({ id, bot: byId.get(id) ?? null }));
   const awake = members.filter((m) => m.bot).length;
   const bots = useMemo(() => [...mention.filter((b) => group.members.includes(b.id)), ...mention.filter((b) => !group.members.includes(b.id))], [mention, group.members]);
@@ -153,7 +153,7 @@ export function GroupThread({
         {members.map((m) => (
           <li key={m.id} className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-muted/70 pr-2.5 pl-1 text-xs", !m.bot && "opacity-60")}>
             <BotAvatar id={m.bot?.key ?? m.id} status={m.bot?.status ?? "idle"} size={20} />
-            <span className="font-medium">{m.bot?.name ?? m.id.slice(0, 12)}</span>
+            <span className="font-medium">{m.bot?.display ?? m.id.slice(0, 12)}</span>
             {!m.bot && <span className="text-muted-foreground">ngủ</span>}
           </li>
         ))}
@@ -291,7 +291,7 @@ function MemberAnswer({ hq, bot, since }: { hq: Hq; bot: Bot<Room>; since: numbe
       <BotAvatar id={bot.key} status={bot.status} size={28} />
       <div className="flex min-w-0 flex-col items-start gap-1">
         <span className="text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground/80">{bot.name}</span> · {reply ? "trả lời gần nhất" : "đang làm…"}
+          <span className="font-medium text-foreground/80">{bot.display}</span> · {reply ? "trả lời gần nhất" : "đang làm…"}
         </span>
         {reply && (
           <div className="max-w-full rounded-2xl rounded-tl-md border bg-background px-3.5 py-2.5 text-sm">

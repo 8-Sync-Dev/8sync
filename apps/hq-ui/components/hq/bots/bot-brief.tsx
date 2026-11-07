@@ -9,16 +9,14 @@ import type { Room } from "@/lib/server/office";
 import { FileChips, useFileSpots } from "../path-open";
 import { RoomLog } from "../room-log";
 import { useRoomLog } from "../room-outputs";
-import type { Hq } from "../use-hq";
 import { BotAvatar, StatusPill } from "./bot-avatar";
-import { BotKnows } from "./bot-knows";
 
 /**
- * The bot's detail pane: who it is and where it works, the files it wrote lately (its brief from GET /api/brief: waiting, doing, last ask and reply), what it
- * knows of the others ("Bot này đang biết gì": shared facts, its last digest), then its Nhật ký (results per turn, every step). Inside the thread's
- * RoomLogProvider and PathOpenProvider.
+ * The bot's detail pane: who it is and where it works, the files it wrote lately (its brief from GET /api/brief: waiting, doing, last ask and reply),
+ * then its Nhật ký (results per turn, every step). What it knows of the others ("Bot này đang biết gì") is its page's own tab
+ * (components/hq/bots/bot-knows.tsx). Inside the thread's RoomLogProvider and PathOpenProvider.
  */
-export function BotBrief({ hq, bot, brief = null, now, onFull }: { hq: Hq; bot: Bot<Room>; brief?: Brief | null; now: number; onFull?: () => void }) {
+export function BotBrief({ bot, brief = null, now, onFull }: { bot: Bot<Room>; brief?: Brief | null; now: number; onFull?: () => void }) {
   const r = bot.room;
   const ctx = useRoomLog();
   const logFiles = useMemo(() => recentFiles(ctx?.log?.events ?? []), [ctx?.log?.events]);
@@ -37,12 +35,12 @@ export function BotBrief({ hq, bot, brief = null, now, onFull }: { hq: Hq; bot: 
     ["Lần cuối", r.last_active ? agoVi(r.last_active, now) : null],
   ];
   return (
-    <aside aria-label={`Chi tiết ${bot.name}`} className="flex h-full min-h-0 flex-col">
+    <aside aria-label={`Chi tiết ${bot.display}`} className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-3 border-b px-4 py-4">
         <div className="flex items-center gap-3">
           <BotAvatar id={bot.key} status={bot.status} size={48} />
           <div className="min-w-0">
-            <p className="truncate font-semibold tracking-tight">{bot.name}</p>
+            <p className="truncate font-semibold tracking-tight">{bot.display}</p>
             <StatusPill status={bot.status} className="mt-1" />
           </div>
         </div>
@@ -68,7 +66,6 @@ export function BotBrief({ hq, bot, brief = null, now, onFull }: { hq: Hq; bot: 
           </div>
         )}
       </div>
-      <BotKnows hq={hq} bot={bot} />
       <div className="min-h-0 flex-1">
         <RoomLog room={bot.name} onFull={onFull} fill />
       </div>

@@ -1,11 +1,27 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { BOT_STATUS_LABEL, botColors, type BotStatus } from "@/lib/bots";
+import { BOT_STATUS_LABEL, botColors, hashId, type BotStatus } from "@/lib/bots";
 import { cn } from "@/lib/utils";
 
+const FACE = "fill-(--bot-face) dark:fill-(--bot-face-dark)";
+
 /**
- * A bot's face: a soft round blob in its own colour (stable per room id) with two oval eyes. The eyes
+ * The head, one of four by the id's hash (other bits than the colour's), so two bots of one hue still
+ * look apart (owner 2026-11-07: a roster of faces, like Grok's bots): round, rounded square, soft
+ * hexagon, wide bean.
+ */
+function Head({ id }: { id: string }) {
+  const shape = (hashId(id) >>> 9) % 4;
+  if (shape === 1) return <rect x="1" y="1" width="38" height="38" rx="13" className={FACE} />;
+  if (shape === 2)
+    return <path d="M20 3 L35 11.5 L35 28.5 L20 37 L5 28.5 L5 11.5 Z" strokeWidth="5" strokeLinejoin="round" className={cn(FACE, "stroke-(--bot-face) dark:stroke-(--bot-face-dark)")} />;
+  if (shape === 3) return <rect x="0.5" y="4" width="39" height="32" rx="16" className={FACE} />;
+  return <circle cx="20" cy="20" r="20" className={FACE} />;
+}
+
+/**
+ * A bot's face: a soft head in its own colour and shape (stable per id) with two oval eyes. The eyes
  * carry the state: working glances left and right, waiting looks up wide with a badge, error squints
  * shut with a red badge, idle rests half closed. Pure SVG + CSS; reduced motion stops the glance.
  */
@@ -15,9 +31,9 @@ export function BotAvatar({ id, status, size = 40, className }: { id: string; st
   return (
     <span aria-hidden className={cn("relative inline-block shrink-0", className)} style={style}>
       <svg viewBox="0 0 40 40" className="size-full">
-        <circle cx="20" cy="20" r="20" className="fill-(--bot-face) dark:fill-(--bot-face-dark)" />
-        {/* A soft light on the upper left: the blob reads round, not flat. */}
-        <ellipse cx="13" cy="10" rx="9" ry="6" fill="white" opacity="0.28" />
+        <Head id={id} />
+        {/* A soft light on the upper left: the head reads round, not flat. */}
+        <ellipse cx="13" cy="11" rx="8" ry="5" fill="white" opacity="0.28" />
         <Eyes status={status} />
       </svg>
       {(status === "needs" || status === "error") && (

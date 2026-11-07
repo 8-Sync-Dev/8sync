@@ -57,7 +57,7 @@ export function BotConversation({ bot, messages, token, now: officeNow, footer }
       <ConversationContent className="mx-auto w-full max-w-3xl gap-0 px-3 py-3 sm:px-6">
         {ctx?.error && !log ? (
           <div role="alert" className="my-6 space-y-3 rounded-lg bg-destructive/5 px-4 py-3 text-sm">
-            <p className="font-medium">Không đọc được cuộc trò chuyện của {bot.name}.</p>
+            <p className="font-medium">Không đọc được cuộc trò chuyện của {bot.display}.</p>
             <p className="text-muted-foreground">{ctx.error}</p>
             <Button size="sm" variant="outline" onClick={ctx.retry} className="max-md:h-11">
               <RotateCwIcon aria-hidden /> Thử lại
@@ -68,11 +68,11 @@ export function BotConversation({ bot, messages, token, now: officeNow, footer }
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
             <BotAvatar id={bot.key} status={bot.status} size={64} />
-            <p className="font-medium">Chưa có cuộc trò chuyện nào với {bot.name}.</p>
+            <p className="font-medium">Chưa có cuộc trò chuyện nào với {bot.display}.</p>
             <p className="max-w-sm text-sm text-pretty text-muted-foreground">Nhắn ở ô bên dưới. Tin anh gửi, các bước bot làm và câu trả lời của bot hiện ở đây.</p>
           </div>
         ) : (
-          <div aria-label={`Trò chuyện với ${bot.name}`} className="pb-2">
+          <div aria-label={`Trò chuyện với ${bot.display}`} className="pb-2">
             {groups.map((g) => (
               <section key={g.day + g.items[0].key}>
                 <div aria-hidden className="sticky top-0 z-10 -mx-2 flex justify-center bg-background/95 px-2 pt-3 pb-2 backdrop-blur-[2px]">
@@ -174,12 +174,12 @@ const TurnItem = memo(function TurnItem({ it, bot, token, rev }: { it: Extract<T
       ) : null}
       {steps.length > 0 && <Steps steps={steps} errors={turn.errors} live={turn.live} />}
       {output ? (
-        <Theirs id={bot.key} status={bot.status} who={bot.name} at={turn.outputAt} actions={<CopyButton value={output} label="Chép câu trả lời" className="size-7 max-md:size-9" />}>
+        <Theirs id={bot.key} status={bot.status} who={bot.display} at={turn.outputAt} actions={<CopyButton value={output} label="Chép câu trả lời" className="size-7 max-md:size-9" />}>
           <Reply text={output} token={token} rev={rev} />
         </Theirs>
       ) : turn.live ? (
-        <Theirs id={bot.key} status="working" who={bot.name} at={null}>
-          <span className="inline-flex items-center gap-1 py-1" aria-label={`${bot.name} đang làm`}>
+        <Theirs id={bot.key} status="working" who={bot.display} at={null}>
+          <span className="inline-flex items-center gap-1 py-1" aria-label={`${bot.display} đang làm`}>
             {[0, 1, 2].map((i) => (
               <span key={i} className="size-1.5 rounded-full bg-muted-foreground motion-safe:animate-[hq-typing_1.2s_ease-in-out_infinite]" style={{ animationDelay: `${i * 150}ms` }} />
             ))}
@@ -248,7 +248,7 @@ function MessageItem({ it, bot, token }: { it: Extract<ThreadItem<Message>, { ki
     );
   const own = m.from_ === bot.room.name || m.from_ === bot.room.session_id;
   return (
-    <Theirs id={own ? bot.key : (m.from_ ?? "hq")} status={own ? bot.status : "idle"} who={own ? bot.name : (m.from_ ?? "HQ")} at={m.ts}>
+    <Theirs id={own ? bot.key : (m.from_ ?? "hq")} status={own ? bot.status : "idle"} who={own ? bot.display : (m.from_ ?? "HQ")} at={m.ts}>
       <MessageResponse {...pathMarkdown}>{m.text ?? ""}</MessageResponse>
       <ReplyMedia text={m.text} token={token} />
     </Theirs>
