@@ -1,6 +1,6 @@
 "use client";
 
-import { sessionLabel } from "@/lib/labels";
+import { roomNameOf, sessionLabel } from "@/lib/labels";
 import { roomNow } from "@/lib/now";
 import { limitsView, matchesSession } from "@/lib/office";
 import { ChevronDownIcon, CircleHelpIcon, MenuIcon, SquareTerminalIcon } from "lucide-react";
@@ -295,6 +295,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   };
   const liveRooms = hq.sessions.data.filter((s) => s.status !== "ended");
   const roleOf = (name: string) => hq.sessions.data.find((x) => x.name === name || x.session_id === name)?.role ?? null;
+  // Chat names a room "core · su-code", not its raw "omp-c1f506dd…" id (UI audit 2026-11-07).
+  const nameOf = (id: string) => roomNameOf(hq.sessions.data, id);
 
   const focusAddProject = () => setAddOpen(true);
   const focusStartSession = () => {
@@ -431,16 +433,16 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   <SquareTerminalIcon /> <span className="hidden lg:inline">Terminal</span>
                 </Button>
               </div>
-              {/* Below xl the header has no room for these (they pushed the page wider than a tablet); Hạn mức and Sessions carry the same numbers. */}
+              {/* Below xl the header has no room for these (they pushed the page wider than a tablet); Hạn mức and Quản lý phiên carry the same numbers. */}
               <dl className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground xl:flex">
                 <div className="flex items-baseline gap-1.5">
-                  <dt>Running</dt>
+                  <dt>Phòng mở</dt>
                   <dd className="font-mono text-sm font-medium text-foreground tabular">{running}</dd>
                 </div>
                 {limits.length > 0 && (
                   <div className="flex items-center gap-2" title="Hạn mức gói Claude (5 giờ / 7 ngày), từ status line của phiên mới nhất; tự chạy lại khi reset">
-                    <dt className="sr-only">Usage</dt>
-                    <dd className="flex items-center gap-2 font-mono text-foreground tabular">
+                    <dt className="sr-only">Hạn mức</dt>
+                    <dd className="flex items-center gap-2 text-foreground tabular">
                       {limits.map((w, i) => (
                         <span key={w.label} className="flex items-center gap-1.5">
                           {i === 0 && (
@@ -453,7 +455,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                           )}
                           {i > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
                           <span>
-                            {i === 0 ? `${w.pct}% used` : `${w.label} ${w.pct}%`}
+                            {i === 0 ? `Đã dùng ${w.pct}%` : `${w.label} ${w.pct}%`}
                             {w.left && <span className="text-muted-foreground"> {w.left}</span>}
                           </span>
                         </span>
@@ -463,7 +465,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 )}
                 {needsYou > 0 && (
                   <div className="flex items-baseline gap-1.5 text-st-needs">
-                    <dt>Needs you</dt>
+                    <dt>Chờ anh</dt>
                     <dd className="font-mono text-sm font-semibold tabular">{needsYou}</dd>
                   </div>
                 )}
@@ -504,7 +506,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                     aria-label={`Tab khác: ${moreLabel(tab)}`}
                   >
                     {moreLabel(tab)}
-                    {needsYou > 0 && !isMore(tab) && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
+                    {needsYou > 0 && !isMore(tab) && <span aria-label={`${needsYou} phòng chờ anh`} className="size-1.5 rounded-full bg-st-needs" />}
                     <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
                   </DropdownMenuTrigger>
                   {/* No exit fade (`!`: the primitive's animate-out sorts later): an item switches the view,
@@ -514,7 +516,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                     {moreTabs(contentOn).map((t) => (
                       <DropdownMenuItem key={t} onSelect={() => setTab(t)} className={cn(tab === t && "font-semibold")}>
                         {MORE_LABEL[t]}
-                        {t === "sessions" && needsYou > 0 && <span aria-label={`${needsYou} need you`} className="ml-auto size-1.5 rounded-full bg-st-needs" />}
+                        {t === "sessions" && needsYou > 0 && <span aria-label={`${needsYou} phòng chờ anh`} className="ml-auto size-1.5 rounded-full bg-st-needs" />}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
@@ -555,7 +557,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               <OfficeView data={office} selected={scope.session} onOpen={openRoom} onStart={focusStartSession} token={token} repo={repo?.root ?? null} onAll={() => setRepo(null)} />
             </TabsContent>
             <TabsContent value="group" className="flex h-full min-h-0 flex-col">
-              <TeamThread rows={group.messages} filters={{ roleOf }} token={token} onOpenSession={openSession} />
+              <TeamThread rows={group.messages} filters={{ roleOf }} token={token} onOpenSession={openSession} nameOf={nameOf} />
             </TabsContent>
             <TabsContent value="room" className="h-full">
               {scope.session == null ? (

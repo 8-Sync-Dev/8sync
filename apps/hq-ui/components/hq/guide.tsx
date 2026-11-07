@@ -17,7 +17,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: FolderPlusIcon,
     title: "Phòng là session của anh",
     body:
-      "Mỗi session Claude Code hoặc omp anh mở là một phòng; HQ không tự mở phòng nào. Dự án có phòng tự hiện bên trái; thêm thư mục ở đó để mở session mới từ tab Sessions.",
+      "Mỗi session Claude Code hoặc omp anh mở là một phòng; HQ không tự mở phòng nào. Dự án có phòng tự hiện bên trái; bấm Phiên mới (Ctrl+N) ở thanh bên để mở phòng mới trong một thư mục.",
   },
   {
     icon: SendIcon,
@@ -48,7 +48,7 @@ export const GUIDE_STEPS: GuideStep[] = [
 
 export const GUIDE_LEGEND: { icon: LucideIcon; label: string; hint: string }[] = [
   { icon: CircleDotIcon, label: "Đang làm", hint: "đang chạy việc" },
-  { icon: BellRingIcon, label: "Cần bạn", hint: "chờ bạn trả lời hoặc duyệt" },
+  { icon: BellRingIcon, label: "Chờ anh", hint: "chờ anh trả lời hoặc duyệt" },
   { icon: CoffeeIcon, label: "Rảnh", hint: "chưa có việc" },
 ];
 
@@ -98,7 +98,7 @@ export function Guide({ open, onOpenChange }: { open: boolean; onOpenChange: (op
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Cách dùng</DialogTitle>
-          <DialogDescription>Lần đầu? Làm theo 5 bước này.</DialogDescription>
+          <DialogDescription>Lần đầu? Làm theo {GUIDE_STEPS.length} bước này.</DialogDescription>
         </DialogHeader>
         <ol className="flex flex-col gap-3">
           {GUIDE_STEPS.map((s, i) => (

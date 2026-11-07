@@ -122,17 +122,17 @@ export function TeamView({
         {top && <div className="mb-6">{top}</div>}
         <SessionStrip sessions={sessions} />
         {error ? (
-          <ErrorNote what="messages" error={error} onRetry={hq.reload.messages} />
+          <ErrorNote what="tin nhắn" error={error} onRetry={hq.reload.messages} />
         ) : loading ? (
           <TimelineSkeleton />
         ) : messages.length === 0 ? (
           <ConversationEmptyState
             icon={<MessagesSquareIcon />}
-            title="No conversation yet"
-            description="Messages you send, replies from sessions, and messages sessions send each other show up here as they happen."
+            title="Chưa có tin nào"
+            description="Tin anh gửi, trả lời của phòng và tin các phòng nhắn nhau hiện ở đây ngay khi có."
           />
         ) : (
-          <div aria-label="Team timeline" className="pb-2">
+          <div aria-label="Dòng thời gian của phòng" className="pb-2">
             {/* One section per day: its separator sticks only while that day is in view, then the next day's pushes it out (no stacked separators). */}
             {groups.map((g) => (
               <section key={g.day + g.rows[0].id}>
@@ -248,10 +248,10 @@ function SessionStrip({ sessions }: { sessions: Session[] }) {
   const live = fresh.filter((s) => s.status !== "ended");
   if (live.length === 0) return null;
   return (
-    <ul aria-label="Sessions" className="mb-4 divide-y rounded-xl border bg-card text-sm">
+    <ul aria-label="Phòng đang mở" className="mb-4 divide-y rounded-xl border bg-card text-sm">
       {live.map((s) => {
-        const state = s.waiting ? "Waiting for you" : STATUS_LABEL[s.status];
-        const via = s.channel ? "Channel" : s.tmux ? "Terminal" : "Not started here";
+        const state = s.waiting ? "Chờ anh" : STATUS_LABEL[s.status];
+        const via = s.channel ? "Channel" : s.tmux ? "Terminal" : "Không mở từ HQ";
         return (
           <li key={s.name}>
             <details className="group/s">
@@ -264,19 +264,19 @@ function SessionStrip({ sessions }: { sessions: Session[] }) {
                 <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/s:rotate-180" aria-hidden />
               </summary>
               <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1 px-3 pt-1 pb-3 text-xs text-muted-foreground">
-                <dt>Name</dt>
+                <dt>Tên</dt>
                 <dd className="truncate font-mono">{s.name}</dd>
                 {s.cwd && (
                   <>
-                    <dt>Folder</dt>
+                    <dt>Thư mục</dt>
                     <dd className="truncate font-mono" title={s.cwd}>{s.cwd}</dd>
                   </>
                 )}
-                <dt>Via</dt>
+                <dt>Nhận qua</dt>
                 <dd>{via}</dd>
                 {(s.waiting || s.detail) && (
                   <>
-                    <dt>Detail</dt>
+                    <dt>Chi tiết</dt>
                     <dd>{s.waiting ?? s.detail}</dd>
                   </>
                 )}
@@ -300,13 +300,13 @@ function StartCta({ onStartSession, unreachable, extra }: { onStartSession?: () 
           </p>
         ) : (
           <>
-            <p className="min-w-0 flex-1 text-sm text-muted-foreground">No session is running, so there is nobody to message.</p>
+            <p className="min-w-0 flex-1 text-sm text-muted-foreground">Chưa có phiên nào chạy, nên chưa nhắn được phòng nào.</p>
             {onStartSession ? (
               <Button size="sm" onClick={onStartSession}>
-                <PlayIcon /> Start a session
+                <PlayIcon /> Mở phiên
               </Button>
             ) : (
-              <span className="text-sm font-medium">Start one in the Sessions tab.</span>
+              <span className="text-sm font-medium">Bấm Phiên mới ở thanh bên để mở một phiên.</span>
             )}
           </>
         )}
@@ -404,7 +404,7 @@ function EventRow({ m, who: label }: { m: Message; who: Who }) {
 
 function TimelineSkeleton() {
   return (
-    <div className="space-y-5 pt-4" aria-busy="true" aria-label="Loading timeline">
+    <div className="space-y-5 pt-4" aria-busy="true" aria-label="Đang tải tin nhắn">
       {[60, 80, 45].map((w, i) => (
         <div key={i} className="space-y-2">
           <Skeleton className="h-3 w-24" />
@@ -537,7 +537,7 @@ export function Composer({
 
   const disabled = targets.length === 0;
   const hint = !current
-    ? "Start a session to message it."
+    ? "Mở một phiên để nhắn."
     : via === "inbox"
       ? isOmpRoomId(current.session_id ?? current.name)
         ? `Gửi ${inboxText(current.inbox_live, current.session_id ?? current.name)}.`
@@ -545,14 +545,14 @@ export function Composer({
           ? "Inbox: mod 8sync-inbox đang chạy — session nhận tin ngay khi rảnh, trả lời hiện ở đây."
           : "Inbox: session nhận tin khi xong lượt đang làm (Stop hook). Nhận ngay khi rảnh: gõ /reload-plugins trong phiên đó (không cần restart)."
       : current.channel_state === "blocked-by-org"
-      ? "Typed into the session's terminal (Channels off for your org)."
+      ? "Gõ vào terminal của phiên (org tắt channel)."
       : current.channel_state === "unresponsive"
-        ? "Typed into the session's terminal (the channel stopped answering)."
+        ? "Gõ vào terminal của phiên (channel không còn trả lời)."
         : current.channel
-      ? "Delivered through the channel; replies appear here."
+      ? "Gửi qua channel; trả lời hiện ở đây."
       : hq.channelMode?.mode === "off"
-        ? "Typed into the session's terminal (Channels are off)."
-        : "Typed into the session's terminal until its channel connects.";
+        ? "Gõ vào terminal của phiên (channel đang tắt)."
+        : "Gõ vào terminal của phiên cho tới khi channel kết nối.";
 
   return (
     <ComposerDock id={inline ? "bot" : "room"} inline={inline} draft={text.trim().length > 0 || att.files.length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
@@ -572,7 +572,7 @@ export function Composer({
                   {current.waiting && (
                     <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <WaitingBadge what={current.waiting} />
-                      {current.waiting} — Claude is waiting for you in the terminal — answer it first (Open terminal).
+                      {current.waiting} — Claude đang chờ anh trong terminal — trả lời ở đó trước (Mở terminal).
                     </p>
                   )}
                   <ChannelNotice state={current.channel_state} />
@@ -595,15 +595,15 @@ export function Composer({
                   disabled={disabled}
                   rows={inline ? 1 : 2}
                   maxLength={4000}
-                  placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file${bots?.length ? " hoặc gọi bot khác" : ""}` : "Message"}
+                  placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file${bots?.length ? " hoặc gọi bot khác" : ""}` : "Tin nhắn"}
                   className={cn("max-h-[40dvh] resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent", inline ? "min-h-11 max-sm:max-h-[30dvh]" : "min-h-14")}
                 />
                 <AttachList a={att} token={hq.token} />
                 <div className={cn("flex items-center gap-2 px-2 pb-2", !inline && "max-sm:flex-wrap")}>
                   {!(inline && targets.length <= 1) && (
                   <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
-                    <SelectTrigger size="sm" className="h-7 min-w-0 gap-1.5 border-0 bg-muted/60 font-mono text-xs max-sm:basis-full sm:max-w-[55%]" aria-label="Send to session">
-                      <SelectValue placeholder="Pick a session" />
+                    <SelectTrigger size="sm" className="h-7 min-w-0 gap-1.5 border-0 bg-muted/60 font-mono text-xs max-sm:basis-full sm:max-w-[55%]" aria-label="Gửi tới phiên">
+                      <SelectValue placeholder="Chọn phiên" />
                     </SelectTrigger>
                     <SelectContent>
                       {targets.map((s) => (
@@ -621,8 +621,8 @@ export function Composer({
                   <div className="ml-auto flex shrink-0 items-center gap-1.5">
                     {extra}
                     <Button type="submit" size="sm" className={inline ? TOUCH : undefined} disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
-                    title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
-                    <SendHorizontalIcon /> Send
+                    title={current?.waiting ? "Claude đang chờ anh trong terminal — trả lời ở đó trước (Mở terminal)" : undefined}>
+                    <SendHorizontalIcon /> Gửi
                     </Button>
                   </div>
                 </div>

@@ -13,7 +13,8 @@ describe("guide", () => {
     expect(text).not.toMatch(/ccc auto|Board|card|Mở team|Giao việc|critic|Sấm Sét/);
   });
   it("has the 3-status legend and tips", () => {
-    expect(GUIDE_LEGEND.map((l) => l.label)).toEqual(["Đang làm", "Cần bạn", "Rảnh"]);
+    // Same words as the office and Bots (lib/now.ts NOW_LABEL).
+    expect(GUIDE_LEGEND.map((l) => l.label)).toEqual(["Đang làm", "Chờ anh", "Rảnh"]);
     expect(GUIDE_TIPS.join(" ")).toMatch(/\/do.*\/ship-loop.*Haiku/);
   });
 });

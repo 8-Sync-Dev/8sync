@@ -2,6 +2,7 @@
 
 import { ArrowDownIcon, GaugeIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNow } from "@/hooks/use-now";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { hhmm, resetClock } from "@/lib/office";
@@ -85,16 +86,6 @@ function useUsage(token: string) {
   }, [token, tick]);
 
   return { data, error, retry: useCallback(() => setTick((t) => t + 1), []) };
-}
-
-/** Re-render every 30 s so countdowns and "đọc lúc" stay true between polls. */
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(t);
-  }, []);
-  return now;
 }
 
 /** Plan windows, then tokens per room from the transcripts. */

@@ -51,39 +51,38 @@ export function FirstRun({
   const steps = [
     {
       done: state.hasProject,
-      title: "Add a project folder",
-      body: "Paste the absolute path of a repo in the sidebar. Sessions start inside it.",
+      title: "Thêm một thư mục dự án",
+      body: "Dán đường dẫn tuyệt đối của một repo ở thanh bên. Phiên mở bên trong thư mục đó.",
       action: !state.hasProject && (
         <Button size="sm" onClick={onAddProject}>
-          Add folder
+          Thêm thư mục
         </Button>
       ),
     },
     {
       done: state.hasSession,
-      title: "Start a session",
-      body: "Runs the official claude CLI in a tmux session named hq-<name> on this machine.",
+      title: "Mở một phiên",
+      body: "Chạy claude CLI chính thức trong một phiên tmux tên hq-<tên> trên máy này.",
       action: state.hasProject && !state.hasSession && (
         <Button size="sm" onClick={onStartSession}>
-          Start session
+          Mở phiên
         </Button>
       ),
     },
     {
       done: state.hasChannel,
       optional: true,
-      title: "Enable Channels for two-way chat",
+      title: "Bật Channels để chat hai chiều",
       body: state.orgBlocked ? (
         <>
-          Your Claude org has Channels turned off, so messages are typed into the terminal and replies arrive when a
-          turn ends. An org Owner can enable Channels in claude.ai → Org settings → Claude Code; then start a new
-          session.
+          Org Claude của anh đang tắt Channels, nên tin được gõ vào terminal và trả lời về khi xong lượt. Owner của org
+          bật Channels ở claude.ai → Org settings → Claude Code; rồi mở phiên mới.
         </>
       ) : (
         <>
-          Run <code className="rounded bg-muted px-1 font-mono text-[12px]">pnpm run mcp-config</code> in{" "}
-          <code className="rounded bg-muted px-1 font-mono text-[12px]">apps/hq-channel</code>, then start a new session.
-          Replies come back here. Without it, your messages are typed into the session&apos;s terminal.
+          Chạy <code className="rounded bg-muted px-1 font-mono text-[12px]">pnpm run mcp-config</code> trong{" "}
+          <code className="rounded bg-muted px-1 font-mono text-[12px]">apps/hq-channel</code>, rồi mở phiên mới. Trả
+          lời sẽ về đây. Không có nó, tin của anh được gõ vào terminal của phiên.
         </>
       ),
     },
@@ -97,13 +96,13 @@ export function FirstRun({
           variant="ghost"
           className="absolute top-2 right-2 text-muted-foreground"
           onClick={dismiss}
-          aria-label="Hide setup checklist"
+          aria-label="Ẩn danh sách cài đặt"
         >
           <XIcon />
         </Button>
       )}
       <h2 id="first-run-title" className="text-sm font-semibold">
-        Set up your team
+        Cài đặt HQ
       </h2>
       <ol className="mt-3 space-y-3">
         {steps.map((s, i) => (
@@ -120,8 +119,8 @@ export function FirstRun({
             <div className="min-w-0 flex-1">
               <p className={cn("text-sm font-medium", s.done && "text-muted-foreground line-through decoration-1")}>
                 {s.title}
-                {s.optional && <span className="ml-1.5 font-normal text-muted-foreground">(optional)</span>}
-                <span className="sr-only">{s.done ? ", done" : ", to do"}</span>
+                {s.optional && <span className="ml-1.5 font-normal text-muted-foreground">(tuỳ chọn)</span>}
+                <span className="sr-only">{s.done ? ", đã xong" : ", chưa làm"}</span>
               </p>
               {!s.done && <p className="mt-0.5 max-w-prose text-[13px] text-pretty text-muted-foreground">{s.body}</p>}
             </div>

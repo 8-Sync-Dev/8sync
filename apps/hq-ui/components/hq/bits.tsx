@@ -6,11 +6,12 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { SessionStatus } from "./types";
 
+// Same words as the office/Bots (lib/now.ts NOW_LABEL): the UI is Vietnamese end to end.
 export const STATUS_LABEL: Record<SessionStatus, string> = {
-  running: "Working",
-  idle: "Idle",
-  needs_input: "Needs you",
-  ended: "Ended",
+  running: "Đang làm",
+  idle: "Rảnh",
+  needs_input: "Chờ anh",
+  ended: "Đã dừng",
 };
 
 const DOT: Record<SessionStatus, string> = {
@@ -182,46 +183,37 @@ export function ErrorNote({ error, onRetry, what }: { error: string; onRetry?: (
     >
       <AlertTriangleIcon className="size-4 shrink-0 text-destructive" aria-hidden />
       <span className="min-w-0 flex-1">
-        Could not load {what}: <span className="text-muted-foreground">{error}</span>
+        Chưa tải được {what}: <span className="text-muted-foreground">{error}</span>
       </span>
       {onRetry && (
-        <Button size="sm" variant="outline" onClick={onRetry}>
-          <RotateCwIcon /> Retry
+        <Button size="sm" variant="outline" className="max-sm:h-10" onClick={onRetry}>
+          <RotateCwIcon /> Thử lại
         </Button>
       )}
     </div>
   );
 }
 
+/** "22:51": 24-hour, the way the owner reads a clock (not the browser's "10:51 PM"). */
 export function clock(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-export function dayLabel(ts: number): string {
+/** A chat day separator: "Hôm nay" / "Hôm qua" / "Th 2, 3 thg 11". */
+export function dayLabel(ts: number, now = Date.now()): string {
   const d = new Date(ts);
-  const today = new Date();
+  const today = new Date(now);
   const y = new Date(today);
   y.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === y.toDateString()) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  if (d.toDateString() === today.toDateString()) return "Hôm nay";
+  if (d.toDateString() === y.toDateString()) return "Hôm qua";
+  return d.toLocaleDateString("vi-VN", { weekday: "short", month: "short", day: "numeric" });
 }
 
-export function ago(ts: number | null, now = Date.now()): string {
-  if (!ts) return "unknown";
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 48) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
-}
-
-/** "hq-api" → "api" for display; uuids are shortened. */
+/** "hq-api" → "api" for display; the owner is "anh"; uuids are shortened. */
 export function shortName(name: string | null | undefined): string {
-  if (!name) return "unknown";
-  if (name === "owner") return "you";
+  if (!name) return "không rõ";
+  if (name === "owner") return "anh";
   if (name.startsWith("hq-")) return name.slice(3);
   // Never show a full uuid as primary text.
   return /^[0-9a-f-]{20,}$/i.test(name) ? name.slice(0, 8) : name;

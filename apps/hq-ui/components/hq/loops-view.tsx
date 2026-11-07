@@ -8,6 +8,7 @@ import { entryFor, useFollowRepo } from "@/lib/follow-repo";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { eccxArgs, eccxExample, eccxFlags, eccxLine, eccxMessage, eccxReaches, type EccxCommand } from "@/lib/eccx";
+import { loopStop } from "@/lib/labels";
 import { agoShort } from "@/lib/now";
 import type { ProjectLoops } from "@/lib/server/loops";
 import { cn } from "@/lib/utils";
@@ -32,14 +33,15 @@ export function LoopsView({ loops, repo = null, token, rooms }: { loops: LoopsSt
     <div className="h-full overflow-y-auto">
       <section aria-labelledby="loops" className="max-w-5xl space-y-3 px-4 py-4 sm:px-6">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <h2 id="loops" className="flex items-center gap-1.5 text-sm font-semibold">
-            <RepeatIcon aria-hidden className="size-3.5 text-muted-foreground" />
-            Vòng lặp
-            <span className="text-xs font-normal text-muted-foreground">/ship-loop, đọc từ su-code/ship/*/LOOP.md</span>
+          {/* The app header already says "Vòng lặp" (lib/tabs viewHeader): only the source here. */}
+          <h2 id="loops" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <RepeatIcon aria-hidden className="size-3.5" />
+            <span className="sr-only">Vòng lặp:</span>
+            /ship-loop, đọc từ su-code/ship/*/LOOP.md
           </h2>
           {list.length > 1 && (
             <Select value={cur?.root ?? ""} onValueChange={setPick}>
-              <SelectTrigger size="sm" className="ml-auto max-w-64 text-xs" aria-label="Dự án">
+              <SelectTrigger size="sm" className="ml-auto max-w-64 text-xs max-sm:h-10" aria-label="Dự án">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -69,7 +71,7 @@ export function LoopsView({ loops, repo = null, token, rooms }: { loops: LoopsSt
                 </span>
                 <span className="text-xs whitespace-nowrap tabular">
                   {l.iter != null ? `lượt ${l.iter}${l.maxIter != null ? `/${l.maxIter}` : ""}` : "chưa chạy lượt"}
-                  <span className={cn("ml-2", l.running ? "font-medium text-st-running" : "text-muted-foreground")}>{l.running ? "đang chạy" : l.stopped ? `dừng: ${l.stopped}` : "không rõ"}</span>
+                  <span className={cn("ml-2", l.running ? "font-medium text-st-running" : "text-muted-foreground")}>{l.running ? "đang chạy" : l.stopped ? loopStop(l.stopped) : "không rõ"}</span>
                 </span>
                 <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={l.last ?? undefined}>
                   {l.last ?? "chưa có bằng chứng"} <span className="font-sans">· {agoShort(l.at, now)}</span>

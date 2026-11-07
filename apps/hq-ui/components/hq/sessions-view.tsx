@@ -13,31 +13,33 @@ import { sessionLabel } from "@/lib/labels";
 import { splitSessions } from "@/lib/sessions-list";
 import { ROLES, modelShort } from "@/lib/roles";
 import { RoleBadge } from "./role-badge";
-import { EmptyState, ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge, ago, shortName } from "./bits";
+import { EmptyState, ErrorNote, STATUS_LABEL, StatusDot, WaitingBadge, shortName } from "./bits";
+import { useNow } from "@/hooks/use-now";
+import { agoVi } from "@/lib/now";
 import type { Hq } from "./use-hq";
 import type { ChannelMode, Project, Session } from "./types";
 
 const TerminalPanel = dynamic(() => import("./terminal").then((m) => m.TerminalPanel), { ssr: false });
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-/** "Xoá session rác": DELETE /api/sessions drops the rows of sessions that are gone; running ones stay. */
+/** "Xoá phiên rác": DELETE /api/sessions drops the rows of sessions that are gone; running ones stay. */
 function ClearEnded({ hq, n }: { hq: Hq; n: number }) {
   const [busy, setBusy] = useState(false);
   async function clear() {
     setBusy(true);
     try {
       const r = await hq.api<{ deleted: number }>("/api/sessions", { method: "DELETE" });
-      toast.success(`Đã xoá ${r.deleted} session đã dừng`, { description: "Session đang chạy giữ nguyên; tin nhắn cũ vẫn còn trong Chat." });
+      toast.success(`Đã xoá ${r.deleted} phiên đã dừng`, { description: "Phiên đang chạy giữ nguyên; tin nhắn cũ vẫn còn trong Chat." });
       await hq.reload.sessions();
     } catch (e) {
-      toast.error("Chưa xoá được session rác", { description: (e as Error).message });
+      toast.error("Chưa xoá được phiên rác", { description: (e as Error).message });
     } finally {
       setBusy(false);
     }
   }
   return (
-    <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void clear()} title="Xoá khỏi danh sách mọi session đã dừng. Không dừng session nào đang chạy.">
-      <Trash2Icon aria-hidden /> {busy ? "Đang xoá…" : `Xoá session rác (${n})`}
+    <Button type="button" variant="outline" size="sm" className="max-sm:h-10" disabled={busy} onClick={() => void clear()} title="Xoá khỏi danh sách mọi phiên đã dừng. Không dừng phiên nào đang chạy.">
+      <Trash2Icon aria-hidden /> {busy ? "Đang xoá…" : `Xoá phiên rác (${n})`}
     </Button>
   );
 }
@@ -56,6 +58,7 @@ export function SessionsView({
   nameInputId: string;
 }) {
   const [viewing, setViewing] = useState<string | null>(null);
+  const now = useNow();
   // Ended sessions fold away (owner 2026-10-22: "session cũ rác dư thừa quá nhiều"); HQ drops their rows after 3 days.
   const [showEnded, setShowEnded] = useState(false);
   const split = splitSessions(sessions);
@@ -64,7 +67,7 @@ export function SessionsView({
   const viewingSession = sessions.find((x) => x.name === viewing);
   // omp rooms carry no project id: name them by their folder, as the office does.
   const projectName = (id: number | null, cwd: string | null) =>
-    projects.find((p) => p.id === id)?.name ?? cwd?.split(/[\\/]/).filter(Boolean).pop() ?? "No project";
+    projects.find((p) => p.id === id)?.name ?? cwd?.split(/[\\/]/).filter(Boolean).pop() ?? "Không có dự án";
 
   return (
     <div className="h-full overflow-y-auto">
@@ -72,7 +75,7 @@ export function SessionsView({
         <StartSession hq={hq} projects={projects} projectId={projectId} inputId={nameInputId} mode={hq.channelMode} />
 
         {error ? (
-          <ErrorNote what="sessions" error={error} onRetry={hq.reload.sessions} />
+          <ErrorNote what="danh sách phiên" error={error} onRetry={hq.reload.sessions} />
         ) : loading ? (
           <div className="space-y-2">
             {[0, 1, 2].map((i) => (
@@ -80,22 +83,22 @@ export function SessionsView({
             ))}
           </div>
         ) : shown.length === 0 ? (
-          <EmptyState icon={<MonitorIcon />} title="No sessions here yet">
-            Start one above. Sessions you run yourself with <code className="font-mono text-[12px]">claude</code> also
-            show up once their hooks report in.
+          <EmptyState icon={<MonitorIcon />} title="Chưa có phiên nào">
+            Mở một phiên ở trên. Phiên anh tự chạy bằng <code className="font-mono text-[12px]">claude</code> cũng hiện
+            ra khi hook của nó báo về.
           </EmptyState>
         ) : (
           <div className="relative overflow-x-auto rounded-xl border">
             <table className="w-full min-w-[640px] text-sm">
-              <caption className="sr-only">Sessions</caption>
+              <caption className="sr-only">Phiên</caption>
               <thead className="text-left text-xs text-muted-foreground">
                 <tr className="border-b">
-                  <th scope="col" className="px-3 py-2 font-medium">Session</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Project</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Status</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Messages</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Started</th>
-                  <th scope="col" className="px-3 py-2"><span className="sr-only">Actions</span></th>
+                  <th scope="col" className="px-3 py-2 font-medium">Phiên</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Dự án</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Trạng thái</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Nhận tin qua</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Bắt đầu</th>
+                  <th scope="col" className="px-3 py-2"><span className="sr-only">Thao tác</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -128,13 +131,13 @@ export function SessionsView({
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {!s.tmux ? (
-                        <span className="text-muted-foreground">Not started here</span>
+                        <span className="text-muted-foreground">Không mở từ HQ</span>
                       ) : s.channel_state === "blocked-by-org" ? (
                         <span
                           className="inline-flex items-center gap-1 text-muted-foreground"
-                          title="Channels are off for your Claude org; messages are typed into the terminal."
+                          title="Org Claude của anh tắt channel; tin được gõ vào terminal."
                         >
-                          <ShieldOffIcon className="size-3" aria-hidden /> Terminal · Channels off by org
+                          <ShieldOffIcon className="size-3" aria-hidden /> Terminal · org tắt channel
                         </span>
                       ) : s.channel ? (
                         <span className="inline-flex items-center gap-1 text-via-channel">
@@ -146,7 +149,7 @@ export function SessionsView({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground tabular">{ago(s.started_at)}</td>
+                    <td className="px-3 py-2 text-xs whitespace-nowrap text-muted-foreground tabular">{agoVi(s.started_at, now) || "—"}</td>
                     <td className="px-3 py-2">
                       {s.tmux && (
                         <div className="flex justify-end gap-1">
@@ -154,9 +157,9 @@ export function SessionsView({
                             size="sm"
                             variant={s.waiting ? "outline" : "ghost"}
                             onClick={() => setViewing(s.name)}
-                            aria-label={s.waiting ? `Answer ${sessionLabel(s)} in its terminal` : `Open ${sessionLabel(s)} terminal`}
+                            aria-label={s.waiting ? `Trả lời ${sessionLabel(s)} trong terminal` : `Mở terminal của ${sessionLabel(s)}`}
                           >
-                            <TerminalSquareIcon /> {s.waiting ? "Answer" : "Terminal"}
+                            <TerminalSquareIcon /> {s.waiting ? "Trả lời" : "Terminal"}
                           </Button>
                           <StopButton hq={hq} name={s.name} />
                         </div>
@@ -170,8 +173,8 @@ export function SessionsView({
         )}
         {!error && !loading && split.ended.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
-              {showEnded ? "Ẩn session đã dừng" : `Hiện session đã dừng (${split.ended.length})`}
+            <Button type="button" variant="ghost" size="sm" className="text-muted-foreground max-sm:h-10" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
+              {showEnded ? "Ẩn phiên đã dừng" : `Hiện phiên đã dừng (${split.ended.length})`}
             </Button>
             <ClearEnded hq={hq} n={split.ended.length} />
           </div>
@@ -182,7 +185,7 @@ export function SessionsView({
         <SheetContent side="right" className="w-full gap-3 p-4 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl">
           <SheetHeader className="p-0 pr-8">
             <SheetTitle className="text-sm">{viewingSession ? sessionLabel(viewingSession) : shortName(viewing ?? "")}</SheetTitle>
-            <SheetDescription>Live pane, refreshed every 1.5 s. The keys below go straight to this session.</SheetDescription>
+            <SheetDescription>Màn hình trực tiếp, làm mới mỗi 1,5 giây. Phím bên dưới gửi thẳng vào phiên này.</SheetDescription>
           </SheetHeader>
           {viewing && <TerminalPanel api={hq.api} name={viewing} session={sessions.find((x) => x.name === viewing)} />}
         </SheetContent>
@@ -207,7 +210,7 @@ function StopButton({ hq, name }: { hq: Hq; name: string }) {
     setBusy(true);
     try {
       await hq.api(`/api/sessions/${encodeURIComponent(name)}/stop`, { method: "POST" });
-      toast.success(`Stopped ${shortName(name)}`);
+      toast.success(`Đã dừng ${shortName(name)}`);
       await hq.reload.sessions();
     } catch (e) {
       toast.error((e as Error).message);
@@ -219,12 +222,12 @@ function StopButton({ hq, name }: { hq: Hq; name: string }) {
 
   return (
     <Button size="sm" variant={armed ? "destructive" : "ghost"} onClick={click} disabled={busy} aria-live="polite">
-      <SquareIcon /> {armed ? "Confirm stop" : "Stop"}
+      <SquareIcon /> {armed ? "Bấm lần nữa để dừng" : "Dừng"}
     </Button>
   );
 }
 
-/** "Start session": one session the owner names, in a project folder, optionally with a role (its model). */
+/** "Mở phiên": one session the owner names, in a project folder, optionally with a role (its model). */
 function StartSession({
   hq,
   projects,
@@ -250,7 +253,7 @@ function StartSession({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!project || !nameOk) {
-      setError(project ? "Use 1-32 lowercase letters, digits or '-', starting with a letter or digit." : "Add a project folder first.");
+      setError(project ? "Dùng 1–32 chữ thường, số hoặc '-', bắt đầu bằng chữ hoặc số." : "Thêm thư mục dự án trước.");
       return;
     }
     setBusy(true);
@@ -262,8 +265,8 @@ function StartSession({
       });
       toast.success(
         r.channel.mode === "channel"
-          ? `Started hq-${bare}. Approve the channel prompt in its terminal once.`
-          : `Started hq-${bare} without a channel; messages are typed into its terminal.`,
+          ? `Đã mở hq-${bare}. Duyệt lời nhắc channel trong terminal của nó một lần.`
+          : `Đã mở hq-${bare} không có channel; tin được gõ vào terminal.`,
       );
       setName("");
       await hq.reload.sessions();
@@ -279,11 +282,11 @@ function StartSession({
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1">
           <span id="start-project-label" className="block text-xs font-medium text-muted-foreground">
-            Project
+            Dự án
           </span>
           <Select value={project ? String(project.id) : ""} onValueChange={setPicked} disabled={!projects.length}>
-            <SelectTrigger size="sm" className="w-44" aria-labelledby="start-project-label">
-              <SelectValue placeholder="No folders yet" />
+            <SelectTrigger size="sm" className="w-44 max-sm:h-11" aria-labelledby="start-project-label">
+              <SelectValue placeholder="Chưa có thư mục" />
             </SelectTrigger>
             <SelectContent>
               {projects.map((p) => (
@@ -296,7 +299,7 @@ function StartSession({
         </div>
         <div className="min-w-40 flex-1 space-y-1">
           <label htmlFor={inputId} className="block text-xs font-medium text-muted-foreground">
-            Session name
+            Tên phiên
           </label>
           {/* Phones: 16 px so iOS does not zoom on focus. */}
           <div className="flex h-7 items-center rounded-md border border-input bg-transparent font-mono text-[13px] focus-within:ring-2 focus-within:ring-ring/50 max-sm:h-11 max-sm:text-base dark:bg-input/30">
@@ -320,7 +323,7 @@ function StartSession({
             Vai trò
           </span>
           <Select value={role} onValueChange={setRole}>
-            <SelectTrigger size="sm" className="w-64 max-w-full" aria-labelledby="start-role-label">
+            <SelectTrigger size="sm" className="w-64 max-w-full max-sm:h-11" aria-labelledby="start-role-label">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -333,15 +336,15 @@ function StartSession({
             </SelectContent>
           </Select>
         </div>
-        <Button type="submit" size="sm" disabled={busy || !project || !nameOk}>
-          <PlayIcon /> {busy ? "Starting…" : "Start session"}
+        <Button type="submit" size="sm" className="max-sm:h-11" disabled={busy || !project || !nameOk}>
+          <PlayIcon /> {busy ? "Đang mở…" : "Mở phiên"}
         </Button>
       </div>
       <p id="start-help" className={cn("mt-2 text-xs", error ? "text-destructive" : "text-muted-foreground")}>
         {error ??
           (mode?.mode === "off"
-            ? `Runs claude in tmux. Channels off: ${mode.reason ?? "disabled"}.`
-            : "Runs claude in tmux with the 8sync-hq channel loaded.")}
+            ? `Chạy claude trong tmux. Channel tắt: ${mode.reason ?? "đã tắt"}.`
+            : "Chạy claude trong tmux, nạp sẵn channel 8sync-hq.")}
       </p>
     </form>
   );

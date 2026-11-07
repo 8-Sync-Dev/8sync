@@ -15,6 +15,8 @@ describe("HQ tab bar groups", () => {
     expect(moreLabel("loops")).toBe("Vòng lặp");
     expect(moreLabel("know")).toBe("Tri thức");
     expect(moreLabel("artifacts")).toBe("Kết quả");
+    expect(moreLabel("sessions")).toBe("Quản lý phiên");
+    expect(moreLabel("activity")).toBe("Hoạt động");
     expect(isMore("preview")).toBe(false);
     expect(isMore("activity")).toBe(true);
   });

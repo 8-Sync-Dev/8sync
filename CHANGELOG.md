@@ -10,6 +10,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - HQ: hai bot nhắn qua lại ngoài nhóm (`hq.mjs send`) không còn ping-pong mãi: cùng nội dung từ phòng A tới phòng B trong 60 giây bị bỏ (200 `dropped`), quá 12 tin A→B trong 10 phút bị từ chối 409 `pair-limit` cho tới khi anh nhắn A hoặc B. Tin anh gửi Chief và một tin phòng→phòng bình thường vẫn đi như cũ; bộ đếm cũng reset khi HQ khởi động lại. Skill hq-control dặn bot gặp `hop-limit`/`pair-limit` thì dừng chờ anh, gặp `dropped` thì không gửi lại.
 - HQ › Bots: trong khung chat 1:1 của bot A gõ `@B …` thì tin tới B kèm ngữ cảnh của A; câu trả lời của B hiện ở thread A thành thẻ "Trả lời từ B" với nút [Gửi cho A], không tự chuyển về A.
 
+### Changed
+- HQ › UI tiếng Việt hết: tab "Quản lý phiên" (trước là Sessions) và "Hoạt động" (Activity) dịch toàn bộ bảng, nút, toast, lỗi; trạng thái chung Đang làm / Rảnh / Chờ anh / Đã dừng; giờ kiểu 24h vi-VN, ngăn ngày "Hôm nay / Hôm qua", "x phút trước"; thanh số liệu đầu trang "Phòng mở · Đã dùng 0% · Chờ anh"; Chat phòng, danh sách cài đặt lần đầu, hộp lỗi "Chưa tải được … · Thử lại" cũng dịch. Máy: "Gửi khẩn ngay".
+- HQ › Kết quả, Bản đồ code, Vòng lặp không lặp lại tên tab ngay dưới tiêu đề nữa (chỉ còn dòng mô tả, điện thoại ẩn luôn). Tổng quan: nhóm trạng thái rỗng chỉ còn tên và số 0, không còn khối "Không có.".
+
+### Fixed
+- HQ › Chat tổng ghi tên phòng ("core · su-code") thay cho id thô "omp-c1f506dd…" và "you → … 2m ago".
+- HQ › Vòng lặp và Báo cáo: lý do dừng viết bằng lời ("xong", "dừng: hết lượt", "dừng: không còn thay đổi") thay cho "dừng: done / no-change".
+- HQ › Văn phòng trên điện thoại: chữ trạng thái không còn cụt thành "R…", model không lặp ở mọi dòng; Báo cáo ẩn cột Model dưới 640 px để bảng ít phải cuộn ngang.
+- HQ › Cách dùng: ghi đúng "6 bước" (trước ghi 5), bước 1 chỉ nút Phiên mới (Ctrl+N) thay cho "tab Sessions"; chú thích dùng "Chờ anh" như mọi chỗ khác.
+
 ## [0.138.0] — 2026-11-07
 ### Added
 - HQ › Bots: nút **Bot mới** ở đầu danh sách mở một sheet duy nhất: chọn mẫu (lưới thẻ emoji, tên, mục đích; tab "Mẫu" / "Của tôi") → chọn thư mục (dự án dùng gần đây lên đầu, thư mục khớp mẫu được ghim kèm nhãn "Gợi ý", "Thư mục khác…" để duyệt máy) → tên tự gợi ý `<mẫu>-<dự án>`, báo ngay khi sai luật hay trùng → tin nhắn đầu tùy chọn. "Tạo và gửi" hoặc "Chỉ tạo"; xong thì sheet đóng và thread của bot mới mở. Có 12 mẫu sẵn: 6 mẫu chung (Trống, Dev fullstack, Reviewer, Tester, Nghiên cứu, Lập kế hoạch) và 6 mẫu cho 8 Sync (Content full ngày, Research marketing, Viết khóa học, Biên tập tin, Phát hành ZUS, Phát hành TIA). Mẫu riêng của anh là file JSON trong `~/.config/8sync/hq/templates/`, chỉ nằm trên máy; file hỏng bị bỏ qua, mẫu trùng id thay mẫu có sẵn. Danh sách trống giờ gợi ý 3 mẫu để tạo bot đầu tiên. Điện thoại: sheet toàn màn hình, mẫu cuộn ngang hai hàng.

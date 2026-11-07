@@ -135,10 +135,11 @@ export function ArtifactsView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2.5 sm:px-6">
-        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-          <InboxIcon aria-hidden className="size-3.5 text-muted-foreground" />
-          Kết quả
-          <span className="text-xs font-normal text-muted-foreground max-sm:hidden">file các phòng đăng cho anh xem</span>
+        {/* The app header already says "Kết quả": here only what it is (screen readers keep the name). */}
+        <h2 className="flex items-center gap-1.5 text-xs text-muted-foreground max-sm:sr-only">
+          <InboxIcon aria-hidden className="size-3.5" />
+          <span className="sr-only">Kết quả:</span>
+          file các phòng đăng cho anh xem
         </h2>
         <div className="ml-auto flex items-center gap-2">
           {groups.length > 1 && (
