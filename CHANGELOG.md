@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.140.0] — 2026-11-08
+
 ### Added
 - HQ › Bots › "Bot mới": chọn engine (Claude Code | omp) và model + mức suy nghĩ ngay dưới mẫu, mặc định theo mẫu, anh đổi được. Danh sách model omp lấy từ `omp models` (provider đã nối key/đăng nhập), Claude Code là Opus/Sonnet/Haiku 5.5; menu model dùng chung với chip model ở ô chat. Dòng "Chạy bằng …" hiện đúng lựa chọn (VD `omp · GLM-5.3 · suy nghĩ cao`). Mẫu riêng (JSON) nhận thêm `model` (omp: `<provider>/<model>`) và `thinking`.
 - HQ API: `POST /api/sessions` nhận `engine` (`claude` mặc định | `omp`) cùng `model`/`thinking`. Server kiểm hết: engine lạ → 400; Claude Code chỉ nhận model trong danh sách vai trò và mức `--effort` hợp lệ (422); omp chỉ nhận model có trong `omp models` và mức model đó hỗ trợ (422, 503 khi omp chưa trả danh sách), chạy bằng `--model <selector>:<level>`. Chỉ truyền argv, không qua shell. `GET /api/models?engine=omp` trả danh sách cho bot mới.
