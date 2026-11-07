@@ -3,12 +3,12 @@
 
 /// Every top-level verb the dispatcher in `ccc::run` routes (plus `help` itself).
 pub(crate) const VERBS: &[&str] =
-    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "know", "rm", "new", "compact", "secret", "cancel", "risk", "term", "awake", "eco", "sleep"];
+    &["help", "hook", "statusline", "kit", "login-kind", "show", "report", "status", "policy", "loop", "hint", "inbox", "ls", "list", "urgent", "goal", "know", "rm", "new", "compact", "secret", "cancel", "risk", "grade", "term", "awake", "eco", "sleep"];
 
 /// Words that look like verbs: never a session name, never a headless claude launch.
 /// Includes hook sub-verbs people type without `hook`, and the verbs removed with the board
 /// (an old script's `8sync ccc auto …` must never open a session named "auto").
-pub(crate) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "know", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "auto", "meet", "standup", "term", "stop", "awake", "eco", "sleep"];
+pub(crate) const RESERVED: &[&str] = &["help", "compact", "statusline", "login-kind", "show", "report", "loop", "hint", "inbox", "msg", "know", "kit", "guard", "hook", "ship-grant", "secret", "idle", "delegate", "cancel", "risk", "grade", "auto", "meet", "standup", "term", "stop", "awake", "eco", "sleep"];
 
 pub(super) const TEXT: &str = "\
 8sync ccc — Claude Code + kit của 8 Sync. Mọi lệnh (chạy `8sync ccc <verb>`):
@@ -67,6 +67,7 @@ AN TOÀN
   8sync ccc hook <verify|verify-stop|guard|watchdog|session-start|stop-failure|resume-note|ship-grant|plugin <hook>>
                                hook do kit đăng ký, không gõ tay
   8sync ccc risk [--base <ref>] [--paths a,b] [--release] [--json]   gate bắt buộc cho diff này từ tên file đổi (token nguyên từ, không đọc nội dung): /sec luôn; người review khi đụng high-risk hoặc có --release; /harden khi đụng .claude/ · settings · hook của kit
+  8sync ccc grade [--base origin/main] [--head HEAD] --check <lệnh>... --held-out <lệnh>... [--allow <glob>]... [--keep] [--json]   bộ chấm ngoài tầm với của Worker: apply diff base...head vào worktree sạch (thư mục temp) rồi chạy check; diff sửa test/CI/hook → REJECTED (exit 3), không chạy gì; PASS 0 · FAIL 1 · ERROR 2; luôn xoá worktree temp
   8sync ccc term <session-id> [--cols 120] [--rows 34]   terminal thật của một phòng nền cho HQ web: chạy `claude attach` trong pseudo-terminal (ConPTY trên Windows), stdin nhận JSON {\"i\":\"phím\"} hoặc {\"r\":[cột,dòng]}, stdout là màn hình; đóng stdin chỉ rời phòng, phòng vẫn chạy
   8sync ccc term --shell [--cols 120] [--rows 34]   cùng giao thức, nhưng là shell thật trên máy (thư mục hiện tại) cho terminal nổi của HQ: zsh của 8sync (prompt + gợi ý) nếu đã cài, không thì pwsh/powershell (Windows) hoặc $SHELL; không cài/tải gì; đóng stdin là tắt shell
   8sync ccc secret keys <file.env>  tên key trong file (không bao giờ in giá trị)
