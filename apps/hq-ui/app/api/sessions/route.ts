@@ -6,7 +6,7 @@ import { beats, channelStates, isFresh, notePane } from "@/lib/server/channel";
 import { detectPane } from "@/lib/server/pane";
 import { loadFloor, ompSessions } from "@/lib/server/floor";
 import { capturePlain, channelArgs, listClaudeAgents, listTmux, mergedSessions } from "@/lib/server/proc";
-import { toTmuxName, validateProjectPath } from "@/lib/server/validate";
+import { clampText, toTmuxName, validateProjectPath } from "@/lib/server/validate";
 
 export const runtime = "nodejs";
 
@@ -48,12 +48,15 @@ export async function POST(req: Request) {
   if (!dir.ok) return bad(`project folder: ${dir.error}`, 409);
   if (body.role != null && body.role !== "" && !isRoleId(body.role)) return bad("role: unknown role", 422);
   if (body.model != null && body.model !== "" && !isModelId(body.model)) return bad("model: not an allowed model", 422);
+  // `prompt`: the session's first message, passed to `claude` at start (it waits behind any boot dialog).
+  const prompt = body.prompt == null || body.prompt === "" ? null : clampText(body.prompt);
+  if (prompt && !prompt.ok) return bad(`prompt: ${prompt.error}`, 422);
   const role = isRoleId(body.role) ? body.role : null;
   const model = isModelId(body.model) ? body.model : (roleOf(role)?.model ?? null);
   if ((await listTmux()).some((t) => t.name === name.value)) return bad(`${name.value} is already running`, 409);
   let r;
   try {
-    r = await startHqSession(o.db, { name: name.value, projectId: project.id, cwd: dir.value, role, model, port: uiPort(req) });
+    r = await startHqSession(o.db, { name: name.value, projectId: project.id, cwd: dir.value, role, model, port: uiPort(req), prompt: prompt?.ok ? prompt.value : undefined });
   } catch (e) {
     return bad((e as Error).message, 500);
   }

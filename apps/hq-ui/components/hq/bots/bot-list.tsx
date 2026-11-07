@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFlip } from "@/hooks/use-flip";
 import { BOT_STATUS_LABEL, botCounts, stepKey, type Bot, type BotFilter } from "@/lib/bots";
+import { BUILT_IN_TEMPLATES, SUGGESTED_TEMPLATE_IDS } from "@/lib/templates";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import { BotAvatar, StatusPill } from "./bot-avatar";
+import { TEMPLATE_TINT } from "./new-bot-sheet";
 
 const FILTERS: BotFilter[] = ["all", "needs", "working", "idle", "error"];
 
@@ -48,7 +50,8 @@ export function BotList({
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  onNew: () => void;
+  /** "Bot mới": the sheet, with a template already picked when given (an empty-state card). */
+  onNew: (templateId?: string) => void;
   /** The Chief of Staff's bot key (pinned first by the caller), shown with a "Chief" badge. */
   chief?: string | null;
 }) {
@@ -69,7 +72,8 @@ export function BotList({
   return (
     <section aria-label="Danh sách bot" className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 space-y-2 border-b px-3 pt-3 pb-2.5">
-        <div className="relative">
+        <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
           <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
@@ -100,6 +104,10 @@ export function BotList({
               <XIcon aria-hidden className="size-4" />
             </button>
           )}
+        </div>
+          <Button size="sm" onClick={() => onNew()} className="h-9 shrink-0 max-md:h-11">
+            <PlusIcon aria-hidden /> Bot mới
+          </Button>
         </div>
         <div role="group" aria-label="Lọc theo trạng thái" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]">
           {FILTERS.filter((f) => f === "all" || f !== "error" || counts.error > 0).map((f) => {
@@ -136,14 +144,33 @@ export function BotList({
             </Button>
           </div>
         ) : !all.length ? (
-          <div className="space-y-3 px-4 py-8 text-sm">
-            <p className="font-medium">Chưa có bot nào đang chạy.</p>
-            <p className="text-pretty text-muted-foreground">
-              Mỗi phiên Claude Code hoặc omp đang mở trên máy là một bot ở đây. Mở một phiên mới, hoặc chạy <code className="font-mono text-xs">8sync . core</code> trong repo.
-            </p>
-            <Button size="sm" onClick={onNew} className="max-md:h-11">
-              <PlusIcon aria-hidden /> Phiên mới
+          <div className="space-y-4 px-4 py-8 text-sm">
+            <div className="space-y-1.5">
+              <p className="font-medium">Chưa có bot nào.</p>
+              <p className="text-pretty text-muted-foreground">Tạo bot đầu tiên từ một mẫu: mỗi bot làm việc trong một thư mục.</p>
+            </div>
+            <Button size="sm" onClick={() => onNew()} className="max-md:h-11">
+              <PlusIcon aria-hidden /> Bot mới
             </Button>
+            <ul aria-label="Mẫu gợi ý" className="space-y-1.5">
+              {SUGGESTED_TEMPLATE_IDS.map((id) => BUILT_IN_TEMPLATES.find((t) => t.id === id)!).map((t) => (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    onClick={() => onNew(t.id)}
+                    className="flex w-full items-center gap-3 rounded-xl border bg-card p-2.5 text-left outline-none transition-colors hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none max-md:min-h-14"
+                  >
+                    <span aria-hidden className={cn("grid size-9 shrink-0 place-items-center rounded-lg text-base ring-1", TEMPLATE_TINT[t.color])}>
+                      {t.emoji}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-medium">{t.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{t.purpose}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : !bots.length ? (
           <div className="space-y-3 px-4 py-8 text-sm">

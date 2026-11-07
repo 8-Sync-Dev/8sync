@@ -12,6 +12,7 @@ import { usePoll } from "../use-poll";
 import { BotAvatar } from "./bot-avatar";
 import { BotList } from "./bot-list";
 import { BotThread } from "./bot-thread";
+import { NewBotSheet } from "./new-bot-sheet";
 
 const WIDE = "(min-width: 1280px)";
 const subscribeWide = (on: () => void) => {
@@ -36,19 +37,19 @@ export function BotsView({
   selected,
   onSelect,
   onDrawer,
-  onNew,
 }: {
   hq: Hq;
   office: OfficeState;
   selected: string | null;
   onSelect: (key: string | null) => void;
   onDrawer: (session: string) => void;
-  onNew: () => void;
 }) {
   const mobile = useIsMobile();
   const wide = useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE).matches, () => false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<BotFilter>("all");
+  // "Bot mới": open, with the template an empty-state card picked.
+  const [newBot, setNewBot] = useState<{ template: string | null } | null>(null);
   const q = useDeferredValue(query);
   const rooms = office.office?.rooms;
   const now = office.office?.at ?? 0;
@@ -106,7 +107,7 @@ export function BotsView({
       loading={loading}
       error={office.error}
       onRetry={office.retry}
-      onNew={onNew}
+      onNew={(template) => setNewBot({ template: template ?? null })}
       chief={chief}
     />
   );
@@ -120,9 +121,28 @@ export function BotsView({
       </div>
     </div>
   );
+  const sheet = (
+    <NewBotSheet
+      hq={hq}
+      open={newBot != null}
+      onOpenChange={(o) => !o && setNewBot(null)}
+      initialTemplate={newBot?.template}
+      onCreated={(key) => {
+        office.retry();
+        open(key);
+      }}
+    />
+  );
 
-  if (mobile) return <div className="h-full min-h-0">{bot ? thread : list}</div>;
+  if (mobile)
+    return (
+      <div className="h-full min-h-0">
+        {bot ? thread : list}
+        {sheet}
+      </div>
+    );
   return (
+    <>
     <ResizablePanelGroup orientation="horizontal" className="h-full min-h-0" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged}>
       <ResizablePanel id="list" defaultSize="30" minSize="22" maxSize="45" className="min-h-0">
         {list}
@@ -132,5 +152,7 @@ export function BotsView({
         {thread}
       </ResizablePanel>
     </ResizablePanelGroup>
+    {sheet}
+    </>
   );
 }

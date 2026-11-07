@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- HQ › Bots: nút **Bot mới** ở đầu danh sách mở một sheet duy nhất: chọn mẫu (lưới thẻ emoji, tên, mục đích; tab "Mẫu" / "Của tôi") → chọn thư mục (dự án dùng gần đây lên đầu, thư mục khớp mẫu được ghim kèm nhãn "Gợi ý", "Thư mục khác…" để duyệt máy) → tên tự gợi ý `<mẫu>-<dự án>`, báo ngay khi sai luật hay trùng → tin nhắn đầu tùy chọn. "Tạo và gửi" hoặc "Chỉ tạo"; xong thì sheet đóng và thread của bot mới mở. Có 12 mẫu sẵn: 6 mẫu chung (Trống, Dev fullstack, Reviewer, Tester, Nghiên cứu, Lập kế hoạch) và 6 mẫu cho 8 Sync (Content full ngày, Research marketing, Viết khóa học, Biên tập tin, Phát hành ZUS, Phát hành TIA). Mẫu riêng của anh là file JSON trong `~/.config/8sync/hq/templates/`, chỉ nằm trên máy; file hỏng bị bỏ qua, mẫu trùng id thay mẫu có sẵn. Danh sách trống giờ gợi ý 3 mẫu để tạo bot đầu tiên. Điện thoại: sheet toàn màn hình, mẫu cuộn ngang hai hàng.
+- HQ API: `GET /api/templates` trả mẫu bot; `POST /api/sessions` nhận thêm `prompt` (tin đầu, truyền cho `claude` khi khởi động).
+
 ### Changed
 - HQ › Bots: danh sách bot sắp lại kiểu Messenger: bot vừa bận trượt mượt lên vị trí mới (~300 ms, sáng nhẹ một nhịp), các dòng nó vượt qua dịch xuống, bot mới hiện dần vào. Anh đang cuộn xuống giữa danh sách thì dòng đang đọc đứng yên, không bị kéo lên đầu. Máy bật "giảm chuyển động" thì không có gì trượt.
 - HQ › sidebar "Phiên" gọn lại: mỗi dự án chỉ hiện phiên đang chạy, chờ anh hay lỗi, phiên đang mở, phiên xong chưa xem và tối đa 3 phiên mới dùng trong 24 giờ; phần còn lại (cùng các worktree không có phiên) nằm sau một dòng "Xem thêm · N phiên cũ, M worktree trống". Dự án không có gì gần đây thu thành một dòng tên, bấm vào để xem hết. Tìm kiếm vẫn hiện mọi phiên khớp.
