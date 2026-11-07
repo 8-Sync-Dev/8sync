@@ -353,11 +353,11 @@ ALWAYS = [("trail", "STEP 0 before any grep/read of code"), ("karpathy-guideline
           ("impeccable", "every UI step")]
 
 # CLI tools that are not skills, filed under a category: (name, when + how). Rendered as a
-# `## Tools` list for both harnesses. graphify is trail's RULE #0 fallback (see
+# `## Tools` list for both harnesses. graphify shares RULE #0 with trail (see
 # assets/skills/00-force-load.md).
 TOOLS = {
-    "core": [("graphify", "only when `trail` falls short (`no indexed callers`, or the path A→B): "
-                          "`GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (re-run after edits), then "
+    "core": [("graphify", "who calls X, what X calls, impact, path A→B: "
+                          "`GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (once per session + after edits), then "
                           "`graphify explain <symbol>` / `graphify path \"A()\" \"B()\"`; skip `graphify query` (~2K tokens)")],
 }
 

@@ -143,7 +143,7 @@ fn install_gitleaks() -> Result<()> {
           · omp AI CLI                          (official installer: install.sh / install.ps1)
           · paru                                (AUR helper — Arch family only)
           · trail                               (code map for agents: npm i -g @trailhq/trail-code --ignore-scripts)
-          · graphify                            (fallback code graph, needs uv: uv tool install graphifyy)
+          · graphify                            (code graph for callers/impact/path, needs uv: uv tool install graphifyy)
           · forge + zsh                         (`8sync forge <name>`; Windows: MSYS2 zsh; Linux without sudo: static zsh)
           · Claude Code + 8sync kit             (`8sync ccc . <name>`; official installer; agents · skills · hooks)
           · gitleaks                            (secret scanner for the pre-commit hook; GitHub release)
@@ -285,7 +285,7 @@ pub fn run(a: Args) -> Result<()> {
             ));
         }
         ui::info("would install trail (npm install -g @trailhq/trail-code --ignore-scripts) if missing, then `trail telemetry disable`");
-        ui::info("would install graphify (uv tool install graphifyy) if missing and uv is present: fallback code graph for callers trail misses");
+        ui::info("would install graphify (uv tool install graphifyy) if missing and uv is present: code graph for callers, impact and path A→B");
         ui::info("would install forge (GitHub release) + zsh (Windows: MSYS2 zsh) if missing");
         ui::info("would install Claude Code (official installer) if missing + the 8sync kit into ~/.claude");
         ui::info("would install gitleaks (GitHub release → ~/.local/bin, sha256-checked) if missing");
@@ -686,7 +686,7 @@ const GRAPHIFY_PKG: &str = "graphifyy==0.9.102";
 /// name, `graphify path A B`). Needs `uv` (Python tool installer); without it the step only says
 /// how to get it, since STEP 0 still works with trail alone.
 fn install_graphify() -> Result<()> {
-    ui::step("graphify (fallback code graph: callers trail misses, path A→B)");
+    ui::step("graphify (code graph: callers, impact, path A→B)");
     if let Ok(bin) = which::which("graphify") {
         ui::skip("graphify", &format!("present ({})", bin.display()));
         return Ok(());

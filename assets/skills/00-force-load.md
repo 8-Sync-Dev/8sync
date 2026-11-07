@@ -1,12 +1,12 @@
 # 00 — Force Load Skills (managed by `8sync harness init`)
 
-## 🔴 RULE #0 — CODE MAP FIRST, ALWAYS (trail CLI first)
+## 🔴 RULE #0 — CODE MAP FIRST, ALWAYS (graphify + trail)
 
-Before any other tool call, answer codebase questions with the code map (`trail`) — NOT grep/find/Read. Deterministic tree-sitter, no model call, far cheaper than file-by-file exploration:
+Before any other tool call, answer codebase questions with the code map (`graphify` + `trail`) — NOT grep/find/Read. Deterministic tree-sitter, no model call, far cheaper than file-by-file exploration:
 
 - **trail** (local code map; `8sync trail` sets a repo up once): `trail ask "<question>"` (code inlined at file:line) · `trail grep <pattern>` · `trail skeleton <file>` · `trail callers <symbol>` (`--direction out` = callees) · `trail map`. Skill: `~/.omp/skills/trail/SKILL.md`.
-- **graphify** (fallback, only when trail falls short): trail says `no indexed callers` (a common name like `open`) or you need the path A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (PowerShell: `$env:GRAPHIFY_MAX_WORKERS=4; graphify update . --no-cluster`; first run ~20 s, then ~2 s incremental, so re-run after edits), then `graphify explain <symbol>` (ambiguous name → `graphify explain <id>` with an id from its list) / `graphify path "A()" "B()"`. Skip `graphify query` (~2K tokens a call).
-- **Default to trail** for "how does X work / where is X / who calls X / what depends on X", impact analysis, route→handler, architecture. After learning something durable: `trail note "<fact>"`.
+- **graphify** (code graph; `8sync setup` installs it): **who calls X · what X calls · impact · path A→B** → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` once per session and after edits (PowerShell: `$env:GRAPHIFY_MAX_WORKERS=4; graphify update . --no-cluster`; first run ~20 s, then ~2 s incremental), then `graphify explain <symbol>` (ambiguous name → `graphify explain <id>` with an id from its list) / `graphify path "A()" "B()"`. Skip `graphify query` (~2K tokens a call). Measured on su-code (2026-11-07): `graphify explain` 1.4 s, ~170 tokens.
+- **trail** for "where is X / how does X work", text hits with symbol context, file outlines, route→handler, architecture (`trail callers` when graphify is missing). Every code search goes through one of the two, never raw grep. After learning something durable: `trail note "<fact>"`.
 - **Nén những gì BẠN phát lại:** báo cáo/prompt subagent/nội dung dài sắp re-emit → `mcp__headroom_compress` (60–95% ít token; `headroom_retrieve` giải nén theo hash). omp tự spill tool-output quá dài ra artifact — KHÔNG paste lại blob đã spill.
 - Only `Read` a raw file when you're about to edit it (read-before-edit). Falling back to `rg`/`fd`/`Read` for exploration first is a **violation**.
 

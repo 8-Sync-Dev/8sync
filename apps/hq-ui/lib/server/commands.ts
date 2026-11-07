@@ -1,10 +1,12 @@
 // Slash commands for the composer's "/" autocomplete (GET /api/commands), first name wins:
 // omp's built-ins (/model, /settings, /compact: lib/server/omp-builtins.ts), the owner's omp commands
-// (`~/.omp/agent/commands/*.md`), what a running omp reports through the 8sync-inbox extension
-// (`<state>/omp-commands.json`: `/skill:<name>`, plugin, MCP-prompt and extension commands), then
-// Claude Code commands (`~/.claude/commands/*.md`). The name is the file name; the description comes
-// from the frontmatter (else the first line of the body). Names and descriptions only, never the
-// command bodies. Tested in tests/commands.test.ts.
+// (`~/.omp/agent/commands/*.md`, where 8sync also deploys /solo, /autopilot, /ship-*), what a running
+// omp reports through the 8sync-inbox extension (`<state>/omp-commands.json`: `/skill:<name>`, plugin,
+// MCP-prompt and extension commands), then Claude Code commands (`~/.claude/commands/*.md`) and the
+// skills Claude Code also runs as `/name` (`~/.claude/skills/<name>/SKILL.md`, e.g. /solo, /ship-loop;
+// `user-invocable: false` hides one from Claude Code's "/" list, so here too). The name is the file or
+// folder name; the description comes from the frontmatter (else the first line of the body). Names and
+// descriptions only, never the command bodies. Tested in tests/commands.test.ts.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,6 +59,31 @@ export function readCommands(dir: string, source: SlashCommand["source"]): Slash
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** The skills in `dir` (`<name>/SKILL.md`) Claude Code offers as `/name`, sorted; a missing folder is none. */
+export function readSkills(dir: string): SlashCommand[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: SlashCommand[] = [];
+  for (const name of names) {
+    if (!NAME_RE.test(name)) continue;
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(dir, name, "SKILL.md"), "utf8").slice(0, 8192);
+    } catch {
+      continue;
+    }
+    const fm = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    if (fm && /^user-invocable\s*:\s*false\s*$/m.test(fm[1])) continue;
+    out.push({ name, description: commandDescription(text), source: "claude" });
+    if (out.length >= PER_SOURCE_MAX) break;
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /**
  * The commands a running omp reported (`{"commands":[{"name","description"}]}`, written by the
  * 8sync-inbox extension at session start); a missing or broken file is none.
@@ -79,13 +106,14 @@ export function readOmpSession(file: string): SlashCommand[] {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** omp's built-ins, its command files, the live session's list, then Claude Code's; first name wins. */
+/** omp's built-ins, its command files, the live session's list, then Claude Code's commands and skills; first name wins. */
 export function listCommands(home = os.homedir()): SlashCommand[] {
   const all: SlashCommand[] = [
     ...OMP_BUILTINS.map(([name, description]): SlashCommand => ({ name, description, source: "omp" })),
     ...readCommands(path.join(home, ".omp", "agent", "commands"), "omp"),
     ...readOmpSession(path.join(home, ".local", "state", "8sync", "hq", "omp-commands.json")),
     ...readCommands(path.join(home, ".claude", "commands"), "claude"),
+    ...readSkills(path.join(home, ".claude", "skills")),
   ];
   const seen = new Set<string>();
   return all.filter((c) => !seen.has(c.name) && (seen.add(c.name), true));
