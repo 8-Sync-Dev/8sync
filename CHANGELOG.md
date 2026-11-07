@@ -31,6 +31,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 - HQ › Văn phòng trên điện thoại: chữ trạng thái không còn cụt thành "R…", model không lặp ở mọi dòng; Báo cáo ẩn cột Model dưới 640 px để bảng ít phải cuộn ngang.
 - HQ › Cách dùng: ghi đúng "6 bước" (trước ghi 5), bước 1 chỉ nút Phiên mới (Ctrl+N) thay cho "tab Sessions"; chú thích dùng "Chờ anh" như mọi chỗ khác.
 - HQ › đăng nhập: mở HQ từ link trong Zalo/Messenger/Telegram không còn hiện màn "Đăng nhập bằng GitHub" dù anh đã đăng nhập. Cookie `hq_pub` vẫn SameSite=Strict nên lần mở từ app khác không mang nó; màn đăng nhập giờ hỏi thử `/api/version` cùng origin, nếu trả 401 (cookie còn hạn, chỉ thiếu token) thì tự tải lại một lần, 403 thì ở yên; cờ trong sessionStorage (30 giây) chặn tải lại lặp.
+- HQ › Bots › Bản đồ code (UAT 0.139.0): bot chạy trong thư mục con của repo đã đăng ký (VD `core · su-code` ở `su-code\apps\hq-ui`) không còn hiện "Chọn một repo…": tab tự chọn dự án khớp với thư mục repo, git top-level hoặc cwd của bot (không phân biệt hoa/thường, `\`/`/`, tiền tố `\\?\`; worktree `.claude/worktrees` tính về repo; khớp sâu nhất thắng). Bot không khớp dự án nào (VD `coding` ở `8sync-startup`) hiện nút "Tạo bản đồ code cho repo này" thay vì danh sách chọn rỗng.
 
 ## [0.138.0] — 2026-11-07
 ### Added

@@ -42,7 +42,7 @@ import { rootKey } from "@/lib/preview";
 import { ARTIFACT_PARAM } from "@/lib/artifacts";
 import { moreTabs, viewHeader, type MoreTab, type NavItem } from "@/lib/tabs";
 import { botRepo } from "@/lib/roster";
-import { groupKey } from "@/lib/sidebar";
+import { repoProject } from "@/lib/codemap";
 import { BottomTabs } from "./bottom-tabs";
 import { BotHistory } from "./bots/bot-history";
 import type { BotViews } from "./bots/bot-thread";
@@ -425,10 +425,11 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [newSession]);
-  /** A bot page's Lịch sử phiên and Bản đồ code (its repo's map; registered projects of that repo only, so it never falls back to another repo). */
+  /** A bot page's Lịch sử phiên and Bản đồ code (its repo's map: only the registered project matching the bot's folders, so it never falls back to another repo). */
   const botViews = (key: string): BotViews => {
     const b = roster.all.find((x) => x.key === key);
     const where = b ? botRepo(b.room) : null;
+    const mapped = b && where ? repoProject(hq.projects.data, [where.root, b.room.project?.root, b.room.cwd]) : null;
     return {
       history: () =>
         b && (
@@ -445,10 +446,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
         where ? (
           <CodemapView
             token={token}
-            projects={hq.projects.data.filter((p) => groupKey(p.path) === groupKey(where.root))}
+            projects={mapped ? [mapped] : []}
             others={[{ path: where.root, name: where.name }]}
             onAdded={hq.reload.projects}
-            repo={where.root}
+            repo={mapped?.path ?? where.root}
             active
           />
         ) : (
