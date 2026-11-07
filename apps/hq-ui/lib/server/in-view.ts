@@ -23,12 +23,13 @@ export function liveProjects(sessions: RoomRow[], projectOf: (cwd: string | null
 /**
  * The roots of rooms that ended (git root, else the cwd): a finished room's results still name its files.
  * A drive or file-system root and the home folder or one above it are left out: an ended room run there
- * would open the whole disk to the viewer.
+ * would open the whole disk to the viewer. A cwd that is not absolute on this OS (`C:\` on Linux) is no
+ * folder here: resolving it against the server's own cwd would make one up.
  */
 export function endedRoots(sessions: RoomRow[], projectOf: (cwd: string | null) => ProjectInfo | null, home = os.homedir()): string[] {
   const out = new Map<string, string>();
   for (const s of sessions) {
-    if (s.status !== "ended" || !s.cwd) continue;
+    if (s.status !== "ended" || !s.cwd || !path.isAbsolute(s.cwd)) continue;
     const root = path.resolve(projectOf(s.cwd)?.root ?? s.cwd);
     if (path.parse(root).root === root || inside(home, root)) continue;
     out.set(root.toLowerCase(), root);

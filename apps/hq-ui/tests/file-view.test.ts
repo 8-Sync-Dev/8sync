@@ -114,6 +114,7 @@ describe("files/locate: finding what a reply names", () => {
   it("says why a path is not usable: a folder, a UNC share, a relative path without the room's folder", async () => {
     expect(await one(path.join(repo, "docs"))).toMatchObject({ ok: false, status: 422 });
     expect(await one("\\\\evil-host\\share\\a.mp4")).toMatchObject({ ok: false, status: 422 });
+    expect(await one("//evil-host/share/a.mp4")).toMatchObject({ ok: false, status: 422 });
     expect(await one("out/highlight lien quan.mp4", null)).toMatchObject({ ok: false, status: 422 });
     const unc = await locate(req("/api/files/locate", { method: "POST", token: getToken(), origin: ORIGIN, body: { base: "\\\\evil-host\\share", paths: ["a.mp4"] } }));
     expect(unc.status).toBe(422);
