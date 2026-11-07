@@ -15,7 +15,6 @@ Owner 2026-11-07 `/solo` (auto, không hỏi): `/solo` mạnh nhất (research w
 
 - [x] v0.135.0 (PR #354) + v0.135.1 (PR #355): HQ tự cập nhật, UAT thật: HQ live tự lên 0.135.1 lúc 18:02 không cần `8sync up`, trang tự tải lại
 - [ ] v0.135.2: giữ lần tự cài qua restart, đọc binary ngay, sửa chữ lúc đổi bản; UAT = HQ tự lên 0.135.2
-- [ ] (cũ) v0.135.0: HQ tự cập nhật (10 phút, `8sync up`, Máy › Tự cập nhật); UAT thật bằng v0.135.1 mà không gõ `8sync up`
 
 ## Current
 Worktree `C:\Users\Projects\su-code-watch`, nhánh `fix/hq-update-status`.
