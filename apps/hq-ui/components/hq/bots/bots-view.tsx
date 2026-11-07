@@ -4,7 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState, useSyncExt
 import { useDefaultLayout } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { botList, filterBots, pinChief, type BotFilter } from "@/lib/bots";
+import { botList, filterBots, pinChief, threadHint, type BotFilter } from "@/lib/bots";
 import type { ChiefView } from "@/lib/server/chief";
 import type { OfficeState } from "../use-office";
 import type { Hq } from "../use-hq";
@@ -83,6 +83,7 @@ export function BotsView({
     return () => window.removeEventListener("popstate", onPop);
   }, [onSelect]);
 
+  const loading = !office.office && !office.error;
   const list = (
     <BotList
       all={all}
@@ -94,7 +95,7 @@ export function BotsView({
       filter={filter}
       onFilter={setFilter}
       onOpen={open}
-      loading={!office.office && !office.error}
+      loading={loading}
       error={office.error}
       onRetry={office.retry}
       onNew={onNew}
@@ -106,8 +107,8 @@ export function BotsView({
   ) : (
     <div className="grid h-full place-items-center px-6 text-center">
       <div className="flex flex-col items-center gap-3">
-        <BotAvatar id="8 Sync" status="idle" size={64} />
-        <p className="text-sm text-muted-foreground">{all.length ? "Chọn một bot để xem cuộc trò chuyện." : "Bot sẽ hiện ở đây khi có phiên đang chạy."}</p>
+        {!loading && <BotAvatar id="8 Sync" status="idle" size={64} />}
+        <p className="text-sm text-muted-foreground">{threadHint(loading, office.error != null, all.length)}</p>
       </div>
     </div>
   );

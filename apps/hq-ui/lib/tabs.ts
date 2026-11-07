@@ -43,3 +43,17 @@ export function moreLabel(tab: string): string {
 export function barTabs(roomOpen: boolean): readonly string[] {
   return roomOpen ? MAIN_TABS : MAIN_TABS.filter((t) => t !== "room");
 }
+
+// The views that list rooms/projects keep the room/project header ("Tất cả phòng · 6 dự án · 11 phòng",
+// a project, a room). Every other view is titled by its own name (UAT 2026-11-07: "Bản đồ code" and
+// "Máy" were headed "Tất cả phòng"). The repo-filtered ones name the repo they show.
+const ROOM_VIEWS: readonly string[] = ["overview", "office", "room", "group", "sessions"];
+const REPO_VIEWS: readonly string[] = ["preview", "loops", "know", "artifacts", "report"];
+
+/** The header of a view that is not a room/project list; null = the room/project header. */
+export function viewHeader(tab: string, repoName: string | null): { title: string; subtitle: string } | null {
+  if (ROOM_VIEWS.includes(tab)) return null;
+  const title = tab === "preview" ? "Preview" : isMore(tab) ? MORE_LABEL[tab] : null;
+  if (title == null) return null;
+  return { title, subtitle: repoName && REPO_VIEWS.includes(tab) ? repoName : "" };
+}

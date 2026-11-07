@@ -243,6 +243,16 @@ export function botSummary(bots: readonly Pick<Bot, "status">[]): string {
     .join(" · ");
 }
 
+/**
+ * The thread pane with no bot open (UAT 2026-11-07): it says "no bots yet" only once /api/office has
+ * answered with none. Before the first answer the list is a skeleton, so the pane stays neutral.
+ */
+export function threadHint(loading: boolean, failed: boolean, bots: number): string {
+  if (loading) return "Đang tải danh sách bot…";
+  if (bots) return "Chọn một bot để xem cuộc trò chuyện.";
+  return failed ? "Chưa đọc được danh sách bot." : "Bot sẽ hiện ở đây khi có phiên đang chạy.";
+}
+
 /** ↑/↓ in the list: the next key (clamped at the ends); the first one when nothing is selected. */
 export function stepKey(keys: readonly string[], current: string | null, dir: 1 | -1): string | null {
   if (!keys.length) return null;

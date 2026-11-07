@@ -42,7 +42,7 @@ import { MachineChip, type MachineView as MachineData } from "./machine-chip";
 import { PinnedAsks } from "./pinned-asks";
 import { rootKey } from "@/lib/preview";
 import { ARTIFACT_PARAM } from "@/lib/artifacts";
-import { MORE_LABEL, isMore, moreLabel, moreTabs } from "@/lib/tabs";
+import { MORE_LABEL, isMore, moreLabel, moreTabs, viewHeader } from "@/lib/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Session } from "./types";
 
@@ -209,6 +209,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const pane = tab === "workspace" && !ws.composer ? ws.ws.panes.find((p) => p.id === ws.ws.active) : undefined;
   const paneSession = pane ? tree.sessions.find((s) => s.ompId === pane.id) : undefined;
   const liveRoomsNow = officeRooms.filter((r) => r.status !== "ended");
+  const named = viewHeader(tab, repo?.name ?? null);
   const title =
     tab === "bots"
       ? "Bots"
@@ -216,6 +217,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
       ? pane
         ? (paneSession?.title ?? pane.name)
         : "Phiên mới"
+      : named
+        ? named.title
       : scope.session
         ? scoped
           ? sessionLabel(scoped)
@@ -230,6 +233,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
         : ""
       : tab === "workspace"
       ? (pane?.cwd ?? ws.folder ?? "")
+      : named
+        ? named.subtitle
       : scope.session
         ? (view.sessions[0]?.cwd ?? project?.path ?? "")
         : project
@@ -502,7 +507,10 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                     {needsYou > 0 && !isMore(tab) && <span aria-label={`${needsYou} need you`} className="size-1.5 rounded-full bg-st-needs" />}
                     <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-44">
+                  {/* No exit fade (`!`: the primitive's animate-out sorts later): an item switches the view,
+                      and a fade stalled by a busy or hidden window left the half-transparent menu over the
+                      new view (UAT 2026-11-07). */}
+                  <DropdownMenuContent align="start" className="min-w-44 data-closed:animate-none!">
                     {moreTabs(contentOn).map((t) => (
                       <DropdownMenuItem key={t} onSelect={() => setTab(t)} className={cn(tab === t && "font-semibold")}>
                         {MORE_LABEL[t]}

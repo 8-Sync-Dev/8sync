@@ -370,7 +370,10 @@ export function Nav({
             <EllipsisIcon className="size-4 text-muted-foreground" aria-hidden />
             {(MORE as readonly string[]).includes(tab) ? MORE_LABEL[tab as (typeof MORE)[number]] : "Thêm"}
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-44">
+          {/* No exit fade (`!`: the primitive's animate-out sorts later): an item switches the view, and a
+              fade stalled by a busy or hidden window left the half-transparent menu over the session list
+              (UAT 2026-11-07). */}
+          <DropdownMenuContent align="start" className="min-w-44 data-closed:animate-none!">
             {MORE.map((t) => (
               <DropdownMenuItem key={t} onSelect={() => onTab(t)} className={cn(tab === t && "font-semibold")}>
                 {MORE_LABEL[t]}

@@ -13,6 +13,7 @@ import {
   promptSender,
   recentFiles,
   stepKey,
+  threadHint,
   stepsByTurn,
   threadItems,
   type BotMessage,
@@ -129,6 +130,13 @@ describe("bot search and keys", () => {
     expect(stepKey(["a", "b", "c"], "c", 1)).toBe("c");
     expect(stepKey(["a", "b", "c"], "a", -1)).toBe("a");
     expect(stepKey([], "a", 1)).toBeNull();
+  });
+  it("says 'no bots' only after /api/office answered with none, never while the first load is pending (UAT 2026-11-07)", () => {
+    expect(threadHint(true, false, 0)).toBe("Đang tải danh sách bot…");
+    expect(threadHint(true, false, 3)).toBe("Đang tải danh sách bot…");
+    expect(threadHint(false, false, 0)).toBe("Bot sẽ hiện ở đây khi có phiên đang chạy.");
+    expect(threadHint(false, true, 0)).toBe("Chưa đọc được danh sách bot.");
+    expect(threadHint(false, false, 2)).toBe("Chọn một bot để xem cuộc trò chuyện.");
   });
 });
 

@@ -7,6 +7,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - Quan sát phòng đọc chữ "Không tiến triển" và nhãn "việc nền" từ cùng hằng số mà `deriveFloor` dùng, nên đổi câu chữ ở tab Văn phòng không còn làm observer nhầm phòng đứng thành phòng lỗi API. Test dựng caption bằng chính `deriveFloor`.
+- HQ (UAT 0.136.0): menu "Thêm" ở sidebar và menu tab trên header đóng ngay khi chọn mục, nhấn Escape hoặc bấm ra ngoài. Trước đây hiệu ứng mờ dần lúc đóng có thể bị treo khi máy bận hoặc cửa sổ bị che, để lại một menu nửa trong suốt đè lên danh sách phiên. Header giờ ghi đúng tên view đang mở ("Bản đồ code", "Máy", "Hạn mức"…; các view lọc theo repo kèm tên repo) thay vì "Tất cả phòng · N dự án · M phòng"; Tổng quan, Văn phòng, Chat, Chat phòng và Sessions giữ header phòng/dự án như cũ. Tab Bots lúc đang tải lần đầu không hiện số 0 trên các chip lọc, và khung bên phải chỉ ghi "Đang tải danh sách bot…"; câu "Bot sẽ hiện ở đây…" chỉ hiện khi đã tải xong mà không có bot nào.
 
 ## [0.136.0] — 2026-11-07
 
