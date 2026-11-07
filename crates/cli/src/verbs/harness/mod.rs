@@ -22,6 +22,7 @@ pub(crate) mod global;
 pub(crate) mod ecc;
 mod ecc_omp;
 mod init;
+mod lessons;
 pub(crate) mod memory;
 mod model;
 mod local_model;
@@ -55,7 +56,7 @@ mod sessions;
       8sync harness global            apply omp rules MACHINE-WIDE (all projects) + Anthropic token-optimizer defaults
       8sync harness global --sweep    …and stamp the project layer (block · memory · ECC rules) into every omp project under ~/Projects
       8sync harness init              explicit full bootstrap with progress UI
-      8sync harness up                refresh AGENTS.md block/memory/ECC rules + rebuild the trail map to current state
+      8sync harness up                refresh AGENTS.md block/memory/ECC rules, curate KNOWLEDGE (k-ids, `used:` counters) + rebuild the trail map
       8sync harness up --pull        refresh AND re-pull registered skills from their source repos
       8sync harness up --commit      refresh AND git-commit agent memory (portable; default off)
       8sync harness up --loop 10m     foreground: refresh every 10m (Ctrl-C to stop)
@@ -302,7 +303,7 @@ fn print_help() {
 
     println!("\nOVERWRITE POLICY (default = NEVER overwrite — only add what's missing)");
     println!("  user-owned : su-code/*.md · CHANGELOG.md · AGENTS.md outside sentinels · .claude/rules/ecc/<pack> once present · hooks · your config keys");
-    println!("               → seed-if-missing or sentinel-block updates ONLY; your edits are never clobbered");
+    println!("               → seed-if-missing, sentinel blocks, KNOWLEDGE curator (ids/counters/dedupe) ONLY; your text is never rewritten");
     println!("  managed    : ~/.omp/skills (bundled) · 00-force-load.md · APPEND_SYSTEM.md · extensions/commands");
     println!("{}", crate::brand::render("               → 8sync-shipped copies, refreshed when the binary updates"));
 

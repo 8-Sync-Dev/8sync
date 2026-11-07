@@ -10,6 +10,7 @@
 
 **Quy tắc bất biến:**
 - Sau mỗi thay đổi: cập nhật `CHANGELOG.md` (mục `[Unreleased]`) + ghi bài học vào `su-code/KNOWLEDGE.md`.
+- Bài học: `- validated|failure YYYY-MM-DD: …`; xong việc thêm dòng `used: k-12+ k-40-` (`+` giúp ích, `-` gây hại).
 - Đọc `su-code/STATE.md` đầu phiên; rewrite nó ở mỗi phase-boundary (Goal · Checklist · Current · Next).
 
 **Skills / agents / commands:** plugin ECC `ecc@ecc` (global) + rule của repo trong `.claude/rules/ecc/`.

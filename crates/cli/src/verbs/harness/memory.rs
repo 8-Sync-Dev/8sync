@@ -323,7 +323,7 @@ pub(crate) fn seed_harness_memory(root: &Path) -> Result<()> {
             // KNOWLEDGE.md carries an append-only "Learnings" zone below the managed
             // breadcrumb block (which `harness up` overwrites) so learnings persist.
             let content = if f == "KNOWLEDGE.md" {
-                "# KNOWLEDGE (8sync managed — append-only)\n\n## Learnings (append-only — ghi DƯỚI đây; KHÔNG sửa block `8sync:harness` ở trên)\n\nMỗi entry prefix `validated:` (test/build xác nhận) · `hypothesis:` (chưa) · `failure:` (lỗi đã gặp + cách sửa; đọc đầu phiên để khỏi lặp).\n\n_empty_\n".to_string()
+                "# KNOWLEDGE (8sync managed — append-only)\n\n## Learnings (append-only — ghi DƯỚI đây; KHÔNG sửa block `8sync:harness` ở trên)\n\nMỗi entry `- validated YYYY-MM-DD: …` (test/build xác nhận) · `- failure YYYY-MM-DD: …` (lỗi đã gặp + cách sửa; đọc đầu phiên để khỏi lặp) · `hypothesis:` (chưa). `harness up` gán `[k-<id>] (+helped/-harmful)`; xong việc ghi `used: k-12+ k-40-`.\n\n_empty_\n".to_string()
             } else if f == "STATE.md" {
                 STATE_TEMPLATE.to_string()
             } else if f == "PLAYBOOKS.md" {
@@ -356,7 +356,8 @@ pub(crate) fn seed_harness_memory(root: &Path) -> Result<()> {
     let body = "## 🧠 8sync harness\n\n\
 - **STEP 0:** `trail ask` / `trail grep` / `trail skeleton` / `trail callers` thay grep/đọc cả file.\n\
 - **Skills/agents/commands:** plugin ECC `ecc@ecc` (global) + rule của repo trong `.claude/rules/ecc/`.\n\
-- **Sau mỗi thay đổi:** cập nhật `CHANGELOG.md` (Unreleased) + ghi học được vào file này (prefix `validated:` nếu test/build xác nhận, `hypothesis:` nếu chưa).";
+- **Sau mỗi thay đổi:** cập nhật `CHANGELOG.md` (Unreleased) + ghi học được vào file này (prefix `validated:` nếu test/build xác nhận, `failure:` nếu lỗi, `hypothesis:` nếu chưa).\n\
+- **Counter:** `harness up` gán `[k-<id>] (+helped/-harmful)` cho mục `validated`/`failure`; xong việc thêm 1 dòng `used: k-12+ k-40-` (`+` giúp ích, `-` gây hại) → cộng counter, gộp mục trùng, harmful > helpful chuyển vào `su-code/archive/`.";
     upsert_block(
         &agents_dir.join("KNOWLEDGE.md"),
         "<!-- 8sync:harness:begin -->",
@@ -366,48 +367,74 @@ pub(crate) fn seed_harness_memory(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Bound the append-only `## Learnings` zone in su-code/KNOWLEDGE.md (anti
-/// context-rot, Hindsight 4-lever): when it exceeds the budget, archive the
-/// OLDER lines to su-code/archive/ and keep the most recent, leaving a pointer.
-/// Best-effort; git history preserves the full trail.
+/// Curate su-code/KNOWLEDGE.md (KNOWLEDGE v2, see `lessons.rs`: ids,
+/// `used:` counters, duplicate merge, harmful → archive), then bound the
+/// append-only `## Learnings` zone (anti context-rot, Hindsight 4-lever): when it
+/// exceeds the budget, archive the OLDER lines to su-code/archive/ and keep the
+/// most recent, leaving a pointer. Writes only when something changed and keeps
+/// each line's own ending (CRLF/LF). Best-effort; git history keeps the trail.
 pub(crate) fn consolidate_learnings(root: &Path) -> Result<()> {
     const BUDGET: usize = 200;
     let path = root.join("su-code/KNOWLEDGE.md");
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Ok(());
     };
-    let Some(hpos) = content.find("\n## Learnings") else {
-        return Ok(());
-    };
-    // Body = everything after the header line's trailing newline.
-    let Some(nl) = content[hpos + 1..].find('\n') else {
-        return Ok(());
-    };
-    let after_header = hpos + 1 + nl + 1;
-    let head = &content[..after_header];
-    let body_lines: Vec<&str> = content[after_header..].lines().collect();
-    if body_lines.len() <= BUDGET {
-        return Ok(());
-    }
-    let keep_from = body_lines.len() - BUDGET;
-    let archived = body_lines[..keep_from].join("\n");
-    let kept = body_lines[keep_from..].join("\n");
-    let stamp = now_stamp().trim_start_matches("epoch:").to_string();
     let archive_dir = root.join("su-code/archive");
-    std::fs::create_dir_all(&archive_dir)?;
-    std::fs::write(
-        archive_dir.join(format!("KNOWLEDGE-{}.md", stamp)),
-        format!("# Archived learnings ({})\n\n{}\n", now_stamp(), archived),
-    )?;
-    let new = format!(
-        "{}_(consolidated {} dòng cũ → su-code/archive/KNOWLEDGE-{}.md)_\n{}",
-        head, keep_from, stamp, kept
-    );
-    std::fs::write(&path, new)?;
-    ui::ok(&format!(
-        "consolidated KNOWLEDGE learnings → archived {} older line(s)",
-        keep_from
-    ));
+    let stamp = now_stamp().trim_start_matches("epoch:").to_string();
+    let c = super::lessons::curate(&content, || super::lessons::archived_max_id(&archive_dir));
+    if !c.unknown.is_empty() {
+        let ids: Vec<String> = c.unknown.iter().map(|n| format!("k-{n}")).collect();
+        ui::warn(&format!("KNOWLEDGE used: unknown id(s) {} — ignored", ids.join(" ")));
+    }
+    if !c.archived.is_empty() {
+        std::fs::create_dir_all(&archive_dir)?;
+        std::fs::write(
+            archive_dir.join(format!("KNOWLEDGE-{stamp}-curated.md")),
+            format!("# Archived learnings ({}) — trùng hoặc harmful > helpful\n\n{}", now_stamp(), c.archived),
+        )?;
+    }
+    if c.assigned + c.marks + c.merged + c.harmful > 0 {
+        ui::ok(&format!(
+            "KNOWLEDGE curator: {} new id(s), {} used mark(s), {} duplicate(s) merged, {} harmful → su-code/archive/",
+            c.assigned, c.marks, c.merged, c.harmful
+        ));
+    }
+    let mut text = c.text;
+    if let Some(hpos) = text.find("\n## Learnings") {
+        // Body = everything after the header line's trailing newline.
+        if let Some(nl) = text[hpos + 1..].find('\n') {
+            let after_header = hpos + 1 + nl + 1;
+            let body: Vec<&str> = text[after_header..].split_inclusive('\n').collect();
+            if body.len() > BUDGET {
+                // Pointer + BUDGET-1 kept lines = BUDGET, so a rerun is a no-op.
+                let keep_from = body.len() - (BUDGET - 1);
+                let archived = body[..keep_from].concat();
+                std::fs::create_dir_all(&archive_dir)?;
+                std::fs::write(
+                    archive_dir.join(format!("KNOWLEDGE-{}.md", stamp)),
+                    format!("# Archived learnings ({})\n\n{}\n", now_stamp(), archived.trim_end()),
+                )?;
+                let head = &text[..after_header];
+                let eol = if head.ends_with("\r\n") { "\r\n" } else { "\n" };
+                let new = format!(
+                    "{}_(consolidated {} dòng cũ → su-code/archive/KNOWLEDGE-{}.md)_{}{}",
+                    head,
+                    keep_from,
+                    stamp,
+                    eol,
+                    body[keep_from..].concat()
+                );
+                text = new;
+                ui::ok(&format!(
+                    "consolidated KNOWLEDGE learnings → archived {} older line(s)",
+                    keep_from
+                ));
+            }
+        }
+    }
+    if text != content {
+        std::fs::write(&path, text)?;
+    }
     Ok(())
 }
 
