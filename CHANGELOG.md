@@ -5,6 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.139.0] — 2026-11-07
 ### Added
 - HQ: giao diện mới xoay quanh Bot (kiểu Grok Bot). Thanh bên máy tính là danh sách bot: mặt, tên, vai trò, trạng thái (Đang làm · Chờ anh · Rảnh), chấm tin chưa xem; bot chờ anh lên đầu, nhóm theo dự án, ghim/ẩn lưu ở máy, "Bot ẩn" gập lại, Nhóm nằm dưới. Bot chính (phiên solo) đứng đầu với nhãn "Chính" và thấy thẻ "Trả lời từ B". Worktree, phiên con và "+N cũ hơn" không còn ở thanh bên mà nằm trong trang bot › Lịch sử phiên.
 - HQ: điều hướng còn 4 mục Bots · Nhóm · Tìm · Thêm (các trang cũ vào Thêm, link/tab cũ vẫn mở được; "Phiên & dự án" là trang trong Thêm). Trên điện thoại (≤768px) là thanh 4 mục ở đáy (vùng chạm ≥44px, chừa safe area), không còn dải tab trên đầu; danh sách bot toàn màn hình → chạm một bot mở chat toàn màn hình, nút Quay lại và nút Back của máy đưa về danh sách, ô nhắn dính đáy.
