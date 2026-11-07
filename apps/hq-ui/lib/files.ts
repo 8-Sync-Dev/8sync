@@ -41,6 +41,18 @@ export type FileView = {
 export type FileSave = { root: string; path: string; text: string; hash: string };
 export type FileSaved = { ok: true; hash: string; mtime: number; size: number };
 
+/** POST /api/files/locate: at most this many paths, each at most FILES_REF_MAX characters. */
+export const FILES_LOCATE_MAX = 40;
+export const FILES_REF_MAX = 1024;
+/** POST /api/files/locate body: paths a room's reply names (absolute, relative to `base`, or a bare name) and the room's folder. */
+export type FileLocate = { base: string | null; paths: string[] };
+/**
+ * Where one named path is, as the viewer opens it (`root` = the file's real folder, `rel` = its name), or
+ * why not (404 not there, 403 outside the projects HQ knows or a secret, 422 not a usable path).
+ */
+export type FileSpot = { path: string; ok: true; root: string; rel: string; kind: FileKind | null; size: number } | { path: string; ok: false; status: number; error: string };
+export type FileSpots = { files: FileSpot[] };
+
 const q = (root: string, rel: string) => `root=${encodeURIComponent(root)}&path=${encodeURIComponent(rel)}`;
 export const filesListUrl = (root: string, rel: string) => `/api/files?${q(root, rel)}`;
 export const filesFileUrl = (root: string, rel: string) => `/api/files/file?${q(root, rel)}`;

@@ -11,7 +11,7 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { ErrorNote } from "./bits";
 import { CopyButton } from "./copy-button";
 import { FolderButton } from "./folder-button";
-import { pathComponents } from "./path-open";
+import { pathMarkdown } from "./path-open";
 import { RoomOutputs, useRoomLog } from "./room-outputs";
 import { SelectionAsk } from "./selection-ask";
 
@@ -153,7 +153,7 @@ function LogProse({ text, files, className }: { text: string; files: Attachment[
           clamped && "max-h-44 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]",
         )}
       >
-        <MessageResponse components={pathComponents}>{text}</MessageResponse>
+        <MessageResponse {...pathMarkdown}>{text}</MessageResponse>
       </div>
       {files.length > 0 && (
         // Names only: the chat below shows the files themselves; the full path stays in the hover title.

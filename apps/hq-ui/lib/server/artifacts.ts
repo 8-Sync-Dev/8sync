@@ -13,7 +13,7 @@ import { rootKey } from "../preview";
 import { fileSecret, safeEqual } from "./auth";
 import { stamp } from "./db";
 import { projectOf } from "./office";
-import { mediaSecretPath } from "./paths";
+import { configDir, mediaSecretPath, stateDir } from "./paths";
 import type { SentFile } from "./send-file";
 
 export const TITLE_MAX = 200;
@@ -24,8 +24,9 @@ export const LINK_MAX = 2000;
 const ID = /^[0-9a-f]{32}$/;
 export const isArtifactId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
 /** Folders a registered file may never sit under, and names that read like a credential. */
-const BLOCKED_DIR: Record<string, true> = { ".git": true, ".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, node_modules: true };
-const SECRET_NAME = /(^\.env)|secret|credential|password|passwd|id_rsa|id_ed25519|private[-_]?key|ui-token/i;
+const BLOCKED_DIR: Record<string, true> = { ".git": true, ".ssh": true, ".gnupg": true, ".aws": true, ".azure": true, ".docker": true, ".kube": true, node_modules: true };
+const SECRET_NAME =
+  /(^\.env)|secret|credential|password|passwd|id_rsa|id_ed25519|^id_(?:dsa|ecdsa)|private[-_]?key|ui-token|^\.(?:netrc|npmrc|pgpass|pypirc)$|\.(?:pem|key|p12|pfx|jks|keystore|kdbx|session|pkl)$/i;
 
 export const inside = (real: string, base: string) => {
   const a = process.platform === "win32" ? real.toLowerCase() : real;
@@ -33,9 +34,13 @@ export const inside = (real: string, base: string) => {
   return a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 };
 
-/** A real path HQ may point at: no credential-looking name, no `.git`/`.ssh`/`node_modules`… between `root` and it. */
+/**
+ * A real path HQ may point at: no credential-looking name, no `.git`/`.ssh`/`node_modules`… between `root`
+ * and it, nothing in HQ's own config/state folders (its token, session keys, database).
+ */
 export function allowedUnder(real: string, root: string): boolean {
   if (SECRET_NAME.test(baseName(real))) return false;
+  if (inside(real, configDir()) || inside(real, stateDir())) return false;
   return !path.relative(root, real).split(path.sep).some((seg) => Object.hasOwn(BLOCKED_DIR, seg.toLowerCase()));
 }
 

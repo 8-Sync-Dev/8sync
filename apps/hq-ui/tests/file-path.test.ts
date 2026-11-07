@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absFilePath, splitFilePath } from "@/lib/file-path";
+import { FILE_LINK, absFilePath, bareFileNamesIn, fileLinkPath, localLinkPath, relFilePath, remarkFileLinks, splitFilePath } from "@/lib/file-path";
 
 describe("absFilePath", () => {
   it("takes Windows, POSIX and home paths to a file", () => {
@@ -57,5 +57,47 @@ describe("splitFilePath", () => {
     expect(splitFilePath("/b.pdf")).toEqual({ dir: "/", name: "b.pdf" });
     expect(splitFilePath("~/b.md")).toEqual({ dir: "~/", name: "b.md" });
     expect(splitFilePath("/x/y/b.md")).toEqual({ dir: "/x/y", name: "b.md" });
+  });
+});
+
+describe("relFilePath", () => {
+  it("takes a path with a folder relative to the room, not a bare name, an absolute path or prose", () => {
+    expect(relFilePath("src/lib/a.ts")).toBe("src/lib/a.ts");
+    expect(relFilePath("./out/clip.mp4")).toBe("./out/clip.mp4");
+    expect(relFilePath("..\\out\\clip.mp4:3")).toBe("..\\out\\clip.mp4");
+    for (const s of ["a.ts", "C:\\x\\a.ts", "/x/a.ts", "~/a.md", "src/lib", "npm run out/a.ts", "src/*.ts", "https://x.dev/a.js", "out/.env"]) expect(relFilePath(s), s).toBeNull();
+  });
+});
+
+describe("localLinkPath", () => {
+  it("turns a link to a local file into its path: file:, absolute, relative, a bare name", () => {
+    expect(localLinkPath("file:///C:/Users/me/out/a%20b.mp4")).toBe("C:/Users/me/out/a b.mp4");
+    expect(localLinkPath("file:///home/me/clip.webm")).toBe("/home/me/clip.webm");
+    expect(localLinkPath("C:\\Users\\me\\out\\clip.mp4")).toBe("C:\\Users\\me\\out\\clip.mp4");
+    expect(localLinkPath("out/clip.mp4#t=3")).toBe("out/clip.mp4");
+    expect(localLinkPath("clip.mp4")).toBe("clip.mp4");
+  });
+
+  it("leaves web links, anchors, folders, drive-relative and UNC paths alone", () => {
+    for (const s of ["https://8syncdev.com/a.mp4", "mailto:a@b.c", "javascript:alert(1)", "#tai-lieu", "?x=1", "out/", "C:clip.mp4", "\\\\host\\s\\a.mp4", "//cdn/a.js", "file://host/share/a.mp4", "file:///C:/x/%E0%A4%A.mp4", ""])
+      expect(localLinkPath(s), s).toBeNull();
+  });
+
+  it("rewrites file links in a markdown tree to FILE_LINK and reads them back", () => {
+    const file = { type: "link", url: "C:\\out\\a b.mp4", children: [] };
+    const web = { type: "link", url: "https://x.dev", children: [] };
+    const def = { type: "definition", url: "out/clip.mp4" };
+    remarkFileLinks()({ type: "root", children: [{ type: "paragraph", children: [file, web] }, def] });
+    expect(file.url.startsWith(FILE_LINK)).toBe(true);
+    expect(fileLinkPath(file.url)).toBe("C:\\out\\a b.mp4");
+    expect(web.url).toBe("https://x.dev");
+    expect(fileLinkPath(def.url)).toBe("out/clip.mp4");
+    expect(fileLinkPath("/hq-open-files?p=x")).toBeNull();
+  });
+});
+
+describe("bareFileNamesIn", () => {
+  it("picks file names in code spans once, never paths, versions or prose", () => {
+    expect(bareFileNamesIn("Xem `clip.mp4`, `report.pdf` và lại `clip.mp4`; không lấy `out/a.mp4`, `v1.2`, `npm run build`, `.env`.")).toEqual(["clip.mp4", "report.pdf"]);
   });
 });

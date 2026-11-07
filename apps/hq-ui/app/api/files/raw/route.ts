@@ -34,7 +34,7 @@ export async function GET(req: Request) {
     if ("res" in o) return o.res;
     db = o.db;
   }
-  const root = filesRoot(given, await knownRoots(db));
+  const root = filesRoot(given, await knownRoots(db, { ended: true }));
   if (isFail(root)) return bad(root.error, root.status);
   const f = rawFile(root, rel);
   if (isFail(f)) return bad(f.error, f.status);

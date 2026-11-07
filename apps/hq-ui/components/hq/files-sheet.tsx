@@ -403,7 +403,7 @@ export function FileViewer({
     <article aria-label={baseName(rel)} className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b px-3 py-2">
         {onBack && (
-          <Button type="button" variant="ghost" size="icon-sm" className="-ml-1 shrink-0 @xl/files:hidden max-sm:size-10" onClick={onBack} aria-label="Về cây thư mục">
+          <Button type="button" variant="ghost" size="icon-sm" className="-ml-1 shrink-0 @xl/files:hidden max-sm:size-11" onClick={onBack} aria-label="Về cây thư mục">
             <ArrowLeftIcon />
           </Button>
         )}
@@ -426,10 +426,10 @@ export function FileViewer({
           )}
         </nav>
         <div className="flex shrink-0 items-center gap-0.5">
-          <CopyButton value={full} label="Chép đường dẫn" className="max-sm:size-10" />
-          <FolderButton path={rel} base={root} api={api} className="max-sm:size-10" />
+          <CopyButton value={full} label="Chép đường dẫn" className="max-sm:size-11" />
+          <FolderButton path={rel} base={root} api={api} className="max-sm:size-11" />
           {cur?.view && (
-            <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground max-sm:size-10">
+            <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground max-sm:size-11">
               <a href={`${cur.view.src}&download=1`} download={cur.view.name} aria-label="Tải về" title="Tải về">
                 <DownloadIcon />
               </a>
@@ -718,7 +718,7 @@ function PdfFrame({ root, view, token }: { root: string; view: FileView; token: 
   return <iframe src={cur.url} title={view.name} className="h-[min(75dvh,56rem)] w-full rounded-lg border" />;
 }
 
-function Note({ title, children, tone }: { title: string; children: string; tone?: "error" }) {
+export function Note({ title, children, tone }: { title: string; children: string; tone?: "error" }) {
   return (
     <div role={tone === "error" ? "alert" : undefined} className={cn("mx-auto max-w-md space-y-1 rounded-lg border px-4 py-3 text-sm", tone === "error" ? "border-destructive/30 bg-destructive/5" : "bg-muted/30")}>
       <p className="font-medium">{title}</p>

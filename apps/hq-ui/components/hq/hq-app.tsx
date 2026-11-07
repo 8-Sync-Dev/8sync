@@ -538,8 +538,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                   }}
                 />
               ) : (
-              <RoomLogProvider sessionId={room?.session_id ?? null} cwd={room?.cwd ?? null} token={token} working={roomState?.state === "working"}>
-              <PathOpenProvider token={token}>
+              <RoomLogProvider sessionId={room?.session_id ?? null} token={token} working={roomState?.state === "working"}>
+              <PathOpenProvider token={token} base={room?.cwd ?? null}>
                 <TeamView
                   hq={hq}
                   messages={view.messages}
