@@ -38,6 +38,32 @@ export type GraphifyAnswer =
   | { kind: "nopath"; from: string; to: string }
   | { kind: "text"; text: string };
 
+/**
+ * A Giải thích / Đường đi input: what the owner reads (`showToast()`), and the graphify node id HQ
+ * pinned behind it when the label alone may name several nodes. Typing in the field drops the id.
+ */
+export type SymbolField = { text: string; id: string | null };
+export const typedField = (text: string): SymbolField => ({ text, id: null });
+/** What goes to graphify: the pinned id while there is one, else the text. */
+export const symbolOf = (f: SymbolField): string => (f.id ?? f.text).trim();
+/**
+ * "Tìm đường từ đây" on an explain card: the field shows the node's label. The id goes underneath
+ * unless the owner's own question (`asked`, what graphify got) was that label and named this node
+ * alone; a card reached by an id (a pick among same-named nodes) or by a looser name keeps the id.
+ */
+export const fieldFromCard = (x: Pick<ExplainAnswer, "name" | "id">, asked: string): SymbolField => ({
+  text: x.name,
+  id: x.id && asked.trim() !== x.name ? x.id : null,
+});
+/**
+ * A candidate picked from a "khớp N chỗ" list: ask again with its id in place of the ambiguous name,
+ * on whichever end of a path graphify could not resolve; the field keeps the readable name.
+ */
+export function pickAsked<T extends { mode: string; a: SymbolField; b: SymbolField }>(asked: T, query: string, id: string): T {
+  const field: SymbolField = { text: query, id };
+  return asked.mode === "path" && symbolOf(asked.b) === query.trim() ? { ...asked, b: field } : { ...asked, a: field };
+}
+
 const lines = (text: string) => text.replace(/\r\n?/g, "\n").split("\n");
 
 /** `apps/x.ts:L17`, `apps/x.ts L164`, `apps/x.ts`: the file and line, or null when there is no file. */

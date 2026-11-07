@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CONFIDENCE_VI, relationVi, type ExplainAnswer, type GraphifyAnswer, type Link, type PathAnswer, type Where } from "@/lib/graphify-answer";
+import { CONFIDENCE_VI, fieldFromCard, pickAsked, relationVi, symbolOf, typedField, type ExplainAnswer, type GraphifyAnswer, type Link, type PathAnswer, type SymbolField, type Where } from "@/lib/graphify-answer";
 import { agoVi } from "@/lib/now";
 import { cn } from "@/lib/utils";
 import type { Api } from "./use-hq";
@@ -19,7 +19,8 @@ const TAP = "max-sm:min-h-11";
 
 type GraphifyUpdate = { state: "running" | "done" | "failed"; startedAt: number; endedAt: number | null; tail: string; error: string | null };
 type Mode = "explain" | "path";
-type Asked = { mode: Mode; a: string; b: string };
+/** The fields as asked: their labels for the inputs, `symbolOf` for graphify. */
+type Asked = { mode: Mode; a: SymbolField; b: SymbolField };
 type Result = { asked: Asked; answer: GraphifyAnswer | null; text: string | null; cached: boolean; error: string | null };
 type OnOpen = (file: string, line: number | null) => void;
 
@@ -91,8 +92,8 @@ export function GraphifyPanel({ api, project, active, onUpdated, onOpen }: { api
     if (!fast) onUpdated();
   }, [fast, onUpdated]);
   const [mode, setMode] = useState<Mode>("explain");
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
+  const [a, setA] = useState<SymbolField>(typedField(""));
+  const [b, setB] = useState<SymbolField>(typedField(""));
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<Result | null>(null);
 
@@ -106,13 +107,15 @@ export function GraphifyPanel({ api, project, active, onUpdated, onOpen }: { api
     }
   };
   const run = async (q: Asked) => {
-    if (busy || !q.a.trim() || (q.mode === "path" && !q.b.trim())) return;
+    const qa = symbolOf(q.a);
+    const qb = symbolOf(q.b);
+    if (busy || !qa || (q.mode === "path" && !qb)) return;
     setMode(q.mode);
     setA(q.a);
     setB(q.b);
     setBusy(true);
     try {
-      const body = q.mode === "explain" ? { project, action: "explain", symbol: q.a } : { project, action: "path", a: q.a, b: q.b };
+      const body = q.mode === "explain" ? { project, action: "explain", symbol: qa } : { project, action: "path", a: qa, b: qb };
       const r = await api<{ text: string; cached: boolean; answer: GraphifyAnswer }>(`/api/codemap/graphify`, { method: "POST", body });
       setRes({ asked: q, answer: r.answer, text: r.text, cached: r.cached, error: null });
     } catch (err) {
@@ -123,15 +126,15 @@ export function GraphifyPanel({ api, project, active, onUpdated, onOpen }: { api
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    void run({ mode, a: a.trim(), b: b.trim() });
+    void run({ mode, a: { ...a, text: a.text.trim() }, b: { ...b, text: b.text.trim() } });
   };
-  const explain = (symbol: string) => void run({ mode: "explain", a: symbol, b: "" });
+  const explain = (symbol: string) => void run({ mode: "explain", a: typedField(symbol), b: typedField("") });
   const endRef = useRef<HTMLInputElement>(null);
-  /** "Tìm đường từ đây": the node becomes the start, the owner types where to. */
-  const pathFrom = (id: string) => {
+  /** "Tìm đường từ đây": the node's label becomes the start (its id underneath when needed), the owner types where to. */
+  const pathFrom = (start: SymbolField) => {
     setMode("path");
-    setA(id);
-    setB("");
+    setA(start);
+    setB(typedField(""));
     requestAnimationFrame(() => endRef.current?.focus());
   };
 
@@ -196,8 +199,8 @@ export function GraphifyPanel({ api, project, active, onUpdated, onOpen }: { api
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
-            value={a}
-            onChange={(e) => setA(e.target.value)}
+            value={a.text}
+            onChange={(e) => setA(typedField(e.target.value))}
             maxLength={SYMBOL_MAX}
             placeholder={mode === "explain" ? "Tên hàm, class hay file: checkAuth()" : "Từ: POST()"}
             aria-label={mode === "explain" ? "Ký hiệu cần giải thích" : "Điểm đầu"}
@@ -212,8 +215,8 @@ export function GraphifyPanel({ api, project, active, onUpdated, onOpen }: { api
                 <ArrowLeftRightIcon className="max-sm:rotate-90" />
               </Button>
               <Input
-                value={b}
-                onChange={(e) => setB(e.target.value)}
+                value={b.text}
+                onChange={(e) => setB(typedField(e.target.value))}
                 maxLength={SYMBOL_MAX}
                 placeholder="Đến: safeEqual()"
                 aria-label="Điểm cuối"
@@ -225,7 +228,7 @@ export function GraphifyPanel({ api, project, active, onUpdated, onOpen }: { api
               />
             </>
           )}
-          <Button type="submit" disabled={busy || !a.trim() || (mode === "path" && !b.trim())} className="h-9 max-sm:h-11">
+          <Button type="submit" disabled={busy || !symbolOf(a) || (mode === "path" && !symbolOf(b))} className="h-9 max-sm:h-11">
             {busy ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : mode === "explain" ? <SearchIcon /> : <RouteIcon />}
             {mode === "explain" ? "Giải thích" : "Tìm đường"}
           </Button>
@@ -279,12 +282,12 @@ function AnswerView({
   asked: Asked;
   run: (q: Asked) => void;
   explain: (s: string) => void;
-  pathFrom: (id: string) => void;
+  pathFrom: (start: SymbolField) => void;
   onOpen: OnOpen;
 }) {
   switch (answer.kind) {
     case "explain":
-      return <ExplainCard x={answer} explain={explain} onOpen={onOpen} pathFrom={pathFrom} />;
+      return <ExplainCard x={answer} explain={explain} onOpen={onOpen} pathFrom={() => pathFrom(fieldFromCard(answer, symbolOf(asked.a)))} />;
     case "path":
       return <PathList p={answer} explain={explain} />;
     case "ambiguous":
@@ -298,8 +301,8 @@ function AnswerView({
               <li key={c.id}>
                 <button
                   type="button"
-                  // Ask again with the picked id in place of the ambiguous name (either end of a path).
-                  onClick={() => run(asked.mode === "path" && asked.b === answer.query ? { ...asked, b: c.id } : { ...asked, a: c.id })}
+                  // Ask again with the picked id in place of the ambiguous name (either end of a path); the field keeps the name.
+                  onClick={() => run(pickAsked(asked, answer.query, c.id))}
                   className="block w-full min-w-0 px-3 py-2 text-left outline-none hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset max-sm:min-h-11"
                 >
                   <span className="block truncate font-mono text-xs">{c.file}</span>
@@ -320,7 +323,8 @@ function AnswerView({
       return (
         <Note>
           <span className="block">
-            Không có đường gọi một chiều từ <span className="font-mono">{answer.from}</span> tới <span className="font-mono">{answer.to}</span>.
+            {/* The labels the owner reads, not the node ids HQ may have sent underneath. */}
+            Không có đường gọi một chiều từ <span className="font-mono">{asked.a.text || answer.from}</span> tới <span className="font-mono">{asked.b.text || answer.to}</span>.
           </span>
           <Button type="button" size="sm" variant="outline" className="mt-2 max-sm:h-11" onClick={() => run({ mode: "path", a: asked.b, b: asked.a })}>
             <ArrowLeftRightIcon /> Thử chiều ngược lại
@@ -337,7 +341,7 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 /** One node: where it is, who calls it, what it calls, the rest of its links. */
-function ExplainCard({ x, explain, onOpen, pathFrom }: { x: ExplainAnswer; explain: (s: string) => void; onOpen: OnOpen; pathFrom: (id: string) => void }) {
+function ExplainCard({ x, explain, onOpen, pathFrom }: { x: ExplainAnswer; explain: (s: string) => void; onOpen: OnOpen; pathFrom: () => void }) {
   const groups: [string, Link[]][] = [
     ["Nơi gọi", x.callers],
     ["Gọi tới", x.callees],
@@ -353,7 +357,7 @@ function ExplainCard({ x, explain, onOpen, pathFrom }: { x: ExplainAnswer; expla
         </div>
         {x.where && <WhereButton where={x.where} onOpen={onOpen} />}
         {x.id && (
-          <Button type="button" size="sm" variant="outline" className="mt-1 max-sm:h-11" onClick={() => pathFrom(x.id!)}>
+          <Button type="button" size="sm" variant="outline" className="mt-1 max-sm:h-11" onClick={pathFrom}>
             <RouteIcon /> Tìm đường từ đây
           </Button>
         )}

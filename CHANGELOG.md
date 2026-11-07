@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- HQ › Bản đồ code (UAT 0.140.0): "Tìm đường từ đây" trên thẻ Giải thích điền ô "Điểm đầu" bằng tên đọc được (`showToast()`) thay cho id nội bộ của graphify (`su_code_skills_…_showtoast`). Khi tên có thể trùng nhiều node (thẻ mở từ một lựa chọn trong danh sách "khớp N chỗ", hay câu hỏi khác tên node), HQ vẫn gửi id cho graphify ở dưới; chọn một mục trong danh sách trùng cũng giữ tên trong ô (điểm đầu hay điểm cuối). Gõ lại ô thì bỏ id. Thông báo "Không có đường…" cũng ghi tên thay cho id.
+
 ## [0.140.0] — 2026-11-08
 
 ### Added
