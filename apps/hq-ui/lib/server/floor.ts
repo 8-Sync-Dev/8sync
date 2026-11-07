@@ -10,6 +10,7 @@ import { coreGet } from "./core";
 import { inboxLive, type InboxTarget } from "./inbox";
 import { readRoomModel } from "./models";
 import { mergedSessions, run, type SessionView } from "./proc";
+import { runningChildren } from "./omp-children";
 import { ompRepoDir } from "./omp-sessions";
 
 type LsRow = LsInput & {
@@ -134,6 +135,10 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
   for (const s of paired.values()) used.add(s.name);
   const rows: FloorRow[] = ls.map((r, i) => {
     const hq = paired.get(i) ?? null;
+    const live = r.status === "running" || r.status === "active" || (hq != null && hq.status !== "ended");
+    // An omp room that answered while its `task` subagents keep running is still at work.
+    const transcript = r.engine === "omp" && r.turn_open === false && live && isOmpRoomId(r.inbox_id) ? transcripts.get(r.inbox_id) : undefined;
+    const bg_jobs = transcript ? runningChildren(transcript, now) : null;
     // hq may report its session uuid as `name` (unnamed session): keep the ls name, the id goes to `sid`.
     const name = hq && !UUID_ISH.test(hq.name) ? hq.name : r.name;
     const title = roomLabel(r.title?.trim() || (hq && hq.label !== hq.name ? hq.label : "") || (hq?.name.startsWith("hq-") ? hq.name : "") || short(r.name));
@@ -151,9 +156,9 @@ async function build(db: DatabaseSync): Promise<{ rows: FloorRow[]; transcripts:
       tokens: typeof r.tokens === "number" ? r.tokens : null,
       inbox_id: typeof r.inbox_id === "string" ? r.inbox_id : null,
       // Alive: a process has it open (`8sync ls`) or its hq session is in tmux / `claude agents`.
-      live: r.status === "running" || r.status === "active" || (hq != null && hq.status !== "ended"),
+      live,
       model: typeof r.model === "string" ? r.model : null,
-      ...deriveFloor(r, hq, now),
+      ...deriveFloor(bg_jobs?.length ? { ...r, bg_jobs } : r, hq, now),
     };
   });
   // hq sessions `8sync ls` does not know (fresh tmux panes, `claude agents` only).

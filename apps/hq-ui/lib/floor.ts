@@ -15,6 +15,8 @@ export type LsInput = {
   stalled_error?: string | boolean | null;
   /** false: the session's last turn ended (it sits at its prompt even while its process runs); absent from older CLIs. */
   turn_open?: boolean | null;
+  /** omp: subagents still running in the background after the room's own turn ended (set by HQ, lib/server/omp-children.ts). */
+  bg_jobs?: string[] | null;
 };
 
 export type HqInput = {
@@ -81,6 +83,9 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
     const err = typeof ls.stalled_error === "string" ? ls.stalled_error : null;
     return make("stalled", `${err ?? "Lỗi API"} — cần anh xử lý`);
   }
+  // The room answered but its background subagents still run (omp "Waiting for N background jobs"): it is
+  // working, and their results will come back into this room.
+  if (ls?.bg_jobs?.length) return make("running", `Chờ ${ls.bg_jobs.length} việc nền: ${ls.bg_jobs.join(", ")}`, "việc nền");
   // The transcript says the last turn ended: the agent answered and waits for a new prompt, even though
   // its process still holds the session ("running"). Its last step is history, not work in progress.
   if (ls?.turn_open === false) return total > 0 && doneN >= total ? make("done", text || `Xong ${progress}`) : make("idle", "Đang chờ prompt mới");

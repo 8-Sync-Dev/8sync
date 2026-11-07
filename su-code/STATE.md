@@ -9,10 +9,11 @@ Owner 2026-11-07 `/solo` (auto, không hỏi): `/solo` mạnh nhất (research w
 - [x] Sửa inbox Orca: tra lại room id, `session_switch`, poll treo 60 s, setModel 20 s (6 test)
 - [x] Xem file nhắc tới trong HQ: `POST /api/files/locate` + FileChips/PathLink, UAT 390/1280
 - [x] APK `apps/hq-android/` + `hq-android.yml` (ký v2/v3, UAT emulator không chặn), roadmap `docs/hq-android.md`
-- [ ] v0.133.0 (PR #351): CI → merge → tag → APK gắn vào release → `8sync up` → UAT
+- [x] v0.133.0 (PR #351): released, APK gắn vào release, `8sync up` + UAT
+- [ ] v0.133.1: phòng omp còn subagent chạy nền hiện đang làm (owner báo 12:15)
 
 ## Current
-Worktree `C:\Users\Projects\su-code-rel133`, nhánh `release/v0.133.0`, PR #351.
+Worktree `C:\Users\Projects\su-code-bgwork`, nhánh `fix/omp-bg-working`.
 
 ## Next
 - Thử APK trên điện thoại thật với `8sync hq ui --tailnet`; P1: APK theo ABI, thanh trạng thái theo màu trang.
