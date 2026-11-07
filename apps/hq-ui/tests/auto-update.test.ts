@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { blockedWhy, newer, tagOf, updateNow, updateReset, type UpdateDeps } from "@/lib/server/auto-update";
+import { blockedWhy, newer, tagOf, tail, updateNow, updateReset, type UpdateDeps } from "@/lib/server/auto-update";
 
 describe("auto-update", () => {
   beforeEach(() => updateReset());
@@ -91,5 +91,9 @@ describe("auto-update", () => {
     const offline = fake({ latest: null, bin: "0.134.0" });
     expect(await updateNow(false, offline.deps)).toMatchObject({ error: expect.stringContaining("GitHub") });
     expect(offline.ups).toEqual([]);
+  });
+
+  it("keeps the last lines of `8sync up` without its colour codes", () => {
+    expect(tail("a\nb\n\x1b[1m\x1b[33m!\x1b[39m\x1b[0m HQ đang chạy\n\x1b[34m·\x1b[0m note")).toBe("b\n! HQ đang chạy\n· note");
   });
 });

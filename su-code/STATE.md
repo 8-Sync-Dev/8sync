@@ -14,7 +14,7 @@ Owner 2026-11-07 `/solo` (auto, không hỏi): `/solo` mạnh nhất (research w
 - [x] v0.134.0 (PR #353): HQ › Máy › Canh máy (phòng canh, cron mặc định 30 phút, khẩn khi tăng đột biến, Gửi urgent ngay, Nghi vấn + Kill) + `eco scan`/`eco kill <pid:start>`
 
 - [x] v0.135.0 (PR #354) + v0.135.1 (PR #355): HQ tự cập nhật, UAT thật: HQ live tự lên 0.135.1 lúc 18:02 không cần `8sync up`, trang tự tải lại
-- [ ] v0.135.2: giữ lần tự cài qua restart, đọc binary ngay, sửa chữ lúc đổi bản; UAT = HQ tự lên 0.135.2
+- [x] v0.135.2 (PR #356, HQ tự lên 18:23): giữ lần tự cài qua restart, đọc binary ngay, sửa chữ lúc đổi bản; UAT = HQ tự lên 0.135.2
 
 ## Current
 Worktree `C:\Users\Projects\su-code-watch`, nhánh `fix/hq-update-status`.
