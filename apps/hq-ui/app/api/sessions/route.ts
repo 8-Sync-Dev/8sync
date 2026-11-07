@@ -1,6 +1,10 @@
 import { type ProjectRow } from "@/lib/server/db";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { isModelId, isRoleId, roleOf } from "@/lib/roles";
+import { effortsFor, isClaudeEffort, ompStartModel, SELECTOR_RE } from "@/lib/room-model";
+import { isBotEngine } from "@/lib/templates";
+import { ompModels } from "@/lib/server/models";
+import { createOmpSession } from "@/lib/server/omp-create";
 import { startHqSession } from "@/lib/server/start";
 import { beats, channelStates, isFresh, notePane } from "@/lib/server/channel";
 import { detectPane } from "@/lib/server/pane";
@@ -31,11 +35,37 @@ export async function GET(req: Request) {
   return json({ sessions: [...sessions, ...omp], channel_mode: channelMode() });
 }
 
+/**
+ * A new bot. `engine` (default "claude"): "claude" starts `claude` in a registered project (`{name, project,
+ * role?, model?, thinking?, prompt?}`: `--model` one of lib/roles.ts MODELS, `--effort` one of CLAUDE_EFFORTS);
+ * "omp" creates an omp session (`{cwd, name, model?, thinking?, worktree?, prompt?}`, lib/server/omp-create.ts:
+ * `model` one of `omp models`, `thinking` one of its levels, sent as `--model <selector>:<level>`). Anything
+ * else is refused: no client string reaches argv unchecked.
+ */
 export async function POST(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
   const body = await readBody(req);
   if (!body) return bad("JSON body required");
+  const engine = body.engine == null || body.engine === "" ? "claude" : body.engine;
+  if (!isBotEngine(engine)) return bad("engine: claude hoặc omp", 400);
+  const thinking = body.thinking == null || body.thinking === "" ? null : body.thinking;
+  if (engine === "omp") {
+    const model = body.model == null || body.model === "" ? null : body.model;
+    if (model === null) {
+      if (thinking !== null) return bad("thinking: chọn model omp trước", 422);
+      return createOmpSession(req, o, body, null);
+    }
+    if (typeof model !== "string" || !SELECTOR_RE.test(model)) return bad("model must be <provider>/<model>", 422);
+    const list = await ompModels();
+    if (list.length === 0) return bad("omp chưa trả danh sách model (chạy `omp models` để xem lỗi): bỏ chọn model để chạy model mặc định", 503);
+    const choice = list.find((m) => m.selector === model);
+    if (!choice) return bad("omp không có model này (hoặc chưa đăng nhập provider)", 422);
+    if (thinking !== null && (typeof thinking !== "string" || !effortsFor("omp", choice).includes(thinking))) return bad(`thinking: model này nhận ${effortsFor("omp", choice).join(", ")}`, 422);
+    return createOmpSession(req, o, body, ompStartModel(model, thinking));
+  }
+  if (thinking !== null && !isClaudeEffort(thinking)) return bad("thinking: not an allowed effort", 422);
+  const effort = isClaudeEffort(thinking) ? thinking : null;
   const name = toTmuxName(body.name);
   if (!name.ok) return bad(name.error, 422);
   const projectId = Number(body.project);
@@ -56,7 +86,7 @@ export async function POST(req: Request) {
   if ((await listTmux()).some((t) => t.name === name.value)) return bad(`${name.value} is already running`, 409);
   let r;
   try {
-    r = await startHqSession(o.db, { name: name.value, projectId: project.id, cwd: dir.value, role, model, port: uiPort(req), prompt: prompt?.ok ? prompt.value : undefined });
+    r = await startHqSession(o.db, { name: name.value, projectId: project.id, cwd: dir.value, role, model, effort, port: uiPort(req), prompt: prompt?.ok ? prompt.value : undefined });
   } catch (e) {
     return bad((e as Error).message, 500);
   }

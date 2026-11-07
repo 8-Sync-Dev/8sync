@@ -15,8 +15,12 @@ import {
   nameProblem,
   orderFolders,
   parseTemplate,
+  runForEngine,
   slugify,
   suggestName,
+  templateRun,
+  withModel,
+  withThinking,
   type BotTemplate,
 } from "@/lib/templates";
 import { ORIGIN, req, tempHome } from "./helpers";
@@ -70,6 +74,13 @@ describe("parseTemplate", () => {
       { role: "boss" },
       { model: "gpt-5" },
       { engine: "omp", role: "quick" },
+      { engine: "omp", role: undefined, model: "claude-opus-5-5" },
+      { engine: "omp", role: undefined, model: "zai/glm 5" },
+      { engine: "omp", role: undefined, model: `zai/${"m".repeat(130)}` },
+      { engine: "omp", role: undefined, thinking: "high" },
+      { engine: "omp", role: undefined, model: "zai/glm-5.3", thinking: "turbo" },
+      { thinking: "off" },
+      { thinking: "ultra" },
       { instructions: "1\n2\n3\n4\n5\n6\n7" },
       { instructions: "x".repeat(1201) },
       { instructions: "a\x1bb" },
@@ -83,6 +94,8 @@ describe("parseTemplate", () => {
       { purpose: "a\nb" },
     ];
     for (const b of bad) expect(parseTemplate({ ...valid, ...b }), JSON.stringify(b)).toBeNull();
+    expect(parseTemplate({ ...valid, model: "claude-opus-5-5", thinking: "high" })).toMatchObject({ model: "claude-opus-5-5", thinking: "high" });
+    expect(parseTemplate({ ...valid, role: undefined, engine: "omp", model: "zai/glm-5.3", thinking: "off" })).toMatchObject({ engine: "omp", model: "zai/glm-5.3", thinking: "off" });
     for (const x of [null, [], "x", 5]) expect(parseTemplate(x)).toBeNull();
   });
 });
@@ -195,26 +208,67 @@ describe("the create request", () => {
     expect(firstPrompt(tpl("blank"), " hi ")).toBe("hi");
     expect(firstPrompt({ instructions: "Làm A.", skills: ["x", "y"] }, "Việc 1")).toBe("Làm A.\nSkill nên nạp: x, y.\n\nViệc 1");
   });
-  it("Claude Code: POST /api/sessions with the template's role and the prompt", () => {
+  it("Claude Code: POST /api/sessions, engine claude, the template's role, its role's model, the prompt", () => {
     const r = createRequest({ template: tpl("reviewer"), name: " review-su-code ", project: folder, message: "Review nhánh này", send: true });
-    expect(r).toEqual({ url: "/api/sessions", body: { name: "review-su-code", project: 7, role: "reviewer", prompt: firstPrompt(tpl("reviewer"), "Review nhánh này") } });
+    expect(r).toEqual({ url: "/api/sessions", body: { engine: "claude", name: "review-su-code", project: 7, role: "reviewer", model: "claude-sonnet-5-5", prompt: firstPrompt(tpl("reviewer"), "Review nhánh này") } });
     expect(botKeyOf(r, { session: { name: "hq-review-su-code" } })).toBe("hq-review-su-code");
     expect(botKeyOf(r, {})).toBe("hq-review-su-code");
   });
   it("'Chỉ tạo' leaves the owner's message out; a blank template sends no prompt", () => {
     expect(createRequest({ template: tpl("reviewer"), name: "r", project: folder, message: "Bỏ qua", send: false }).body).toMatchObject({ prompt: firstPrompt(tpl("reviewer"), "") });
-    expect(createRequest({ template: tpl("blank"), name: "b", project: folder, message: "x", send: false })).toEqual({ url: "/api/sessions", body: { name: "b", project: 7, role: "quick" } });
+    expect(createRequest({ template: tpl("blank"), name: "b", project: folder, message: "x", send: false })).toEqual({
+      url: "/api/sessions",
+      body: { engine: "claude", name: "b", project: 7, role: "quick", model: "claude-haiku-5-5" },
+    });
   });
   it("Claude Code needs a registered project", () => {
     expect(() => createRequest({ template: tpl("blank"), name: "b", project: { id: null, path: "/x" }, message: "", send: false })).toThrow();
   });
-  it("omp: POST /api/omp/sessions with the folder, worktree and prompt = instructions + message", () => {
-    const r = createRequest({ template: tpl("cpa-full"), name: "cpa-full-content", project: { id: null, path: "C:\\t\\content-post-agency" }, message: "Làm bộ nội dung hôm nay", send: true, worktree: true });
+  it("omp: the folder, worktree and prompt = instructions + message; omp's own model by default", () => {
+    const r = createRequest({ template: tpl("researcher"), name: "researcher-su-code", project: { id: null, path: "C:\\t\\su-code" }, message: "Tìm nguồn", send: true, worktree: true });
     expect(r).toEqual({
-      url: "/api/omp/sessions",
-      body: { cwd: "C:\\t\\content-post-agency", name: "cpa-full-content", worktree: true, prompt: `${tpl("cpa-full").instructions}\nSkill nên nạp: cpa-ops-cli, cpa-app-attach, brand-8sync.\n\nLàm bộ nội dung hôm nay` },
+      url: "/api/sessions",
+      body: { engine: "omp", cwd: "C:\\t\\su-code", name: "researcher-su-code", worktree: true, prompt: `${tpl("researcher").instructions}\nSkill nên nạp: deep-research-web, last30days.\n\nTìm nguồn` },
     });
-    expect(createRequest({ template: { ...tpl("cpa-full"), instructions: "", skills: [] }, name: "c", project: folder, message: "", send: true })).toEqual({ url: "/api/omp/sessions", body: { cwd: folder.path, name: "c" } });
+    expect(createRequest({ template: { ...tpl("researcher"), instructions: "", skills: [] }, name: "c", project: folder, message: "", send: true })).toEqual({ url: "/api/sessions", body: { engine: "omp", cwd: folder.path, name: "c" } });
     expect(botKeyOf(r, { id: "omp-abc" })).toBe("omp-abc");
+  });
+});
+
+describe("engine + model: the template's by default, the owner's pick when given", () => {
+  const folder = { id: 7, path: "C:\\w\\su-code" };
+  const omp = (thinking: string[]) => ({ selector: "zai/glm-5.3", provider: "zai", name: "GLM-5.3", thinking });
+  it("templateRun: engine, model (Claude: else the role's), level", () => {
+    expect(templateRun(tpl("tester"))).toEqual({ engine: "claude", model: "claude-haiku-5-5", thinking: null });
+    expect(templateRun(tpl("researcher"))).toEqual({ engine: "omp", model: null, thinking: null });
+    const own = parseTemplate({ ...valid, role: undefined, engine: "omp", model: "zai/glm-5.3", thinking: "high" })!;
+    expect(templateRun(own)).toEqual({ engine: "omp", model: "zai/glm-5.3", thinking: "high" });
+  });
+  it("switching engine: the template's run for its own engine, else that engine's default", () => {
+    expect(runForEngine(tpl("tester"), "omp")).toEqual({ engine: "omp", model: null, thinking: null });
+    expect(runForEngine(tpl("tester"), "claude")).toEqual(templateRun(tpl("tester")));
+  });
+  it("override: a Claude Code template run on omp drops the role and sends the omp model + level", () => {
+    const r = createRequest({ template: tpl("tester"), run: { engine: "omp", model: "zai/glm-5.3", thinking: "high" }, name: "t", project: folder, message: "", send: false });
+    expect(r.body).toEqual({ engine: "omp", cwd: folder.path, name: "t", model: "zai/glm-5.3", thinking: "high", prompt: firstPrompt(tpl("tester"), "") });
+    const c = createRequest({ template: tpl("tester"), run: { engine: "claude", model: "claude-opus-5-5", thinking: "max" }, name: "t", project: folder, message: "", send: false });
+    expect(c.body).toMatchObject({ engine: "claude", role: "tester", model: "claude-opus-5-5", thinking: "max" });
+    // An omp template run on Claude Code: no role, the account's model.
+    expect(createRequest({ template: tpl("researcher"), run: runForEngine(tpl("researcher"), "claude"), name: "x", project: folder, message: "", send: false }).body).toEqual({
+      engine: "claude",
+      name: "x",
+      project: 7,
+      prompt: firstPrompt(tpl("researcher"), ""),
+    });
+  });
+  it("withThinking / withModel: same level clears; omp needs a model for a level; a level the new model lacks clears", () => {
+    const run = { engine: "omp" as const, model: "zai/glm-5.3", thinking: null };
+    expect(withThinking(run, "high")).toEqual({ ...run, thinking: "high" });
+    expect(withThinking({ ...run, thinking: "high" }, "high")).toEqual(run);
+    expect(withThinking({ ...run, model: null }, "high")).toEqual({ ...run, model: null });
+    expect(withModel({ ...run, thinking: "xhigh" }, "zai/glm-5.3", [omp(["low", "high"])])).toEqual(run);
+    expect(withModel({ ...run, thinking: "high" }, "zai/glm-5.3", [omp(["low", "high"])])).toEqual({ ...run, thinking: "high" });
+    expect(withModel({ ...run, thinking: "high" }, null, [])).toEqual({ ...run, model: null });
+    expect(withModel({ engine: "claude", model: "claude-opus-5-5", thinking: "max" }, null, [])).toEqual({ engine: "claude", model: null, thinking: "max" });
   });
 });

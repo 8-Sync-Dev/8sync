@@ -15,11 +15,17 @@ export const runtime = "nodejs";
  * (providers with a key or login); `apply` null while the room runs an 8sync-inbox from before the
  * switch (it writes no model state, and would type the control message as text). Claude Code rooms
  * HQ types into: the `/model` aliases. A Claude session started elsewhere (inbox only): `apply` null.
+ * `?engine=omp` without a session: the list "Bot mới" offers a new omp bot (`apply` null).
  */
 export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
-  const session = new URL(req.url).searchParams.get("session");
+  const q = new URL(req.url).searchParams;
+  const session = q.get("session");
+  if (!session && q.get("engine") === "omp") {
+    const reply: ModelsReply = { engine: "omp", models: await ompModels(), efforts: [...OMP_THINKING], current: null, apply: null };
+    return json(reply);
+  }
   if (isOmpRoomId(session)) {
     const current = readRoomModel(session);
     const reply: ModelsReply = { engine: "omp", models: await ompModels(), efforts: [...OMP_THINKING], current, apply: current ? "inbox" : null };

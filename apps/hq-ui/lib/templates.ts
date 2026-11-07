@@ -3,10 +3,13 @@
 // ~/.config/8sync/hq/templates/ (lib/server/templates.ts reads them through `parseTemplate`) and replace a
 // built-in one with the same id. Text only: never a token, never client or CRM data. Pure and client-safe:
 // the request builders below are what the sheet sends. Tested in tests/templates.test.ts.
-import { isModelId, isRoleId, type ModelId, type RoleId } from "./roles";
+import { isModelId, isRoleId, roleOf, type RoleId } from "./roles";
+import { effortsFor, isClaudeEffort, isThinking, SELECTOR_RE, type ModelChoice } from "./room-model";
 import { isOmpSessionName } from "./omp-workspace";
 
 export type BotEngine = "claude" | "omp";
+export const BOT_ENGINES: readonly BotEngine[] = ["claude", "omp"];
+export const isBotEngine = (v: unknown): v is BotEngine => v === "claude" || v === "omp";
 
 /** The accent a template card gets; the sheet maps each one to static Tailwind classes. */
 export const TEMPLATE_COLORS = ["slate", "sky", "amber", "lime", "violet", "indigo", "rose", "orange", "emerald", "cyan", "fuchsia", "teal"] as const;
@@ -20,9 +23,12 @@ export type BotTemplate = {
   /** One line, Vietnamese. */
   purpose: string;
   engine: BotEngine;
-  /** Claude Code only (lib/roles.ts ROLES): the session's role and model. */
+  /** Claude Code only (lib/roles.ts ROLES): the session's role. */
   role?: RoleId;
-  model?: ModelId;
+  /** Claude Code: a lib/roles.ts model id (else the role's); omp: `<provider>/<model>` (else omp's default). */
+  model?: string;
+  /** Claude Code: `--effort` level; omp: thinking level (needs `model`). Else the model's default. */
+  thinking?: string;
   /** ≤6 lines, put in front of the first message. */
   instructions: string;
   /** Skill names the bot is reminded to load; never a skill's content. */
@@ -35,7 +41,7 @@ export type BotTemplate = {
 };
 
 /** Caps on a template file's fields (custom templates are typed by hand). */
-export const TEMPLATE_LIMITS = { name: 40, emoji: 16, purpose: 140, instructions: 1200, instructionLines: 6, skills: 12, skill: 64, folderHint: 200, firstMessage: 600 } as const;
+export const TEMPLATE_LIMITS = { name: 40, emoji: 16, purpose: 140, instructions: 1200, instructionLines: 6, skills: 12, skill: 64, folderHint: 200, firstMessage: 600, model: 128 } as const;
 /** A template id: the same shape as a session name, so `<id>-<project>` stays a valid one. */
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const SKILL_RE = /^[a-z0-9][a-z0-9:._-]*$/;
@@ -56,9 +62,9 @@ export function parseTemplate(raw: unknown): BotTemplate | null {
   if (!ok(t.name, L.name) || !clean(t.name) || !ok(t.emoji, L.emoji) || !clean(t.emoji) || !ok(t.purpose, L.purpose) || !clean(t.purpose)) return null;
   if (!(TEMPLATE_COLORS as readonly unknown[]).includes(t.color)) return null;
   if (t.engine !== "claude" && t.engine !== "omp") return null;
-  if (t.role !== undefined && !isRoleId(t.role)) return null;
-  if (t.model !== undefined && !isModelId(t.model)) return null;
-  if (t.engine === "omp" && (t.role !== undefined || t.model !== undefined)) return null;
+  if (t.role !== undefined && (t.engine === "omp" || !isRoleId(t.role))) return null;
+  if (t.model !== undefined && (t.engine === "claude" ? !isModelId(t.model) : typeof t.model !== "string" || t.model.length > L.model || !SELECTOR_RE.test(t.model))) return null;
+  if (t.thinking !== undefined && (t.engine === "claude" ? !isClaudeEffort(t.thinking) : !isThinking(t.thinking) || t.model === undefined)) return null;
   const instructions = t.instructions ?? "";
   if (typeof instructions !== "string" || instructions.length > L.instructions || !clean(instructions, true)) return null;
   if (instructions.split("\n").length > L.instructionLines) return null;
@@ -74,7 +80,8 @@ export function parseTemplate(raw: unknown): BotTemplate | null {
     purpose: t.purpose.trim(),
     engine: t.engine,
     ...(t.role !== undefined ? { role: t.role as RoleId } : {}),
-    ...(t.model !== undefined ? { model: t.model as ModelId } : {}),
+    ...(t.model !== undefined ? { model: t.model as string } : {}),
+    ...(t.thinking !== undefined ? { thinking: t.thinking as string } : {}),
     instructions: instructions.trim(),
     skills: [...new Set(skills as string[])],
     ...(typeof t.folderHint === "string" && t.folderHint ? { folderHint: t.folderHint.trim() } : {}),
@@ -308,8 +315,39 @@ export function firstPrompt(t: Pick<BotTemplate, "instructions" | "skills">, mes
   return text || null;
 }
 
+/** How a bot runs: its engine, model (null = the engine's default) and thinking/effort level (null = the model's). */
+export type BotRun = { engine: BotEngine; model: string | null; thinking: string | null };
+
+/** What the template starts a bot on: its engine; its model, else (Claude Code) its role's; its level. */
+export function templateRun(t: BotTemplate): BotRun {
+  return { engine: t.engine, model: t.model ?? (t.engine === "claude" ? (roleOf(t.role)?.model ?? null) : null), thinking: t.thinking ?? null };
+}
+
+/**
+ * The run after the owner switches the engine: the template's own run when it is that engine, else the
+ * engine's default (no model, no level).
+ */
+export function runForEngine(t: BotTemplate, engine: BotEngine): BotRun {
+  return t.engine === engine ? templateRun(t) : { engine, model: null, thinking: null };
+}
+
+/** Picking a level: the same one again clears it (the model's default). omp takes a level only with a model. */
+export function withThinking(run: BotRun, t: string): BotRun {
+  if (run.engine === "omp" && run.model === null) return run;
+  return { ...run, thinking: t === run.thinking ? null : t };
+}
+
+/** Picking a model (null = the engine's default): the level stays when the new model takes it, else it clears. */
+export function withModel(run: BotRun, model: string | null, choices: readonly ModelChoice[]): BotRun {
+  if (run.engine === "claude" || run.thinking === null) return { ...run, model };
+  const choice = choices.find((c) => c.selector === model);
+  return { ...run, model, thinking: model !== null && effortsFor("omp", choice).includes(run.thinking) ? run.thinking : null };
+}
+
 export type CreateInput = {
   template: BotTemplate;
+  /** Engine/model/level the owner picked; the template's (templateRun) when absent. */
+  run?: BotRun;
   name: string;
   /** The folder; `id` is its registered project (Claude Code needs one). */
   project: { id: number | null; path: string };
@@ -320,27 +358,33 @@ export type CreateInput = {
   worktree?: boolean;
 };
 
-export type CreateRequest =
-  | { url: "/api/sessions"; body: { name: string; project: number; role?: RoleId; model?: ModelId; prompt?: string } }
-  | { url: "/api/omp/sessions"; body: { cwd: string; name: string; worktree?: true; prompt?: string } };
+type RunFields = { model?: string; thinking?: string };
+export type CreateRequest = {
+  url: "/api/sessions";
+  body:
+    | ({ engine: "claude"; name: string; project: number; role?: RoleId; prompt?: string } & RunFields)
+    | ({ engine: "omp"; cwd: string; name: string; worktree?: true; prompt?: string } & RunFields);
+};
 
 /**
- * The POST that creates the bot. Claude Code: `POST /api/sessions` (a registered project, role/model from the
- * template, the prompt passed to `claude` at start). omp: `POST /api/omp/sessions` (the folder; the prompt queued
- * in its inbox). Throws when Claude Code has no project id.
+ * The POST that creates the bot: `POST /api/sessions` with the engine. Claude Code: a registered project, the
+ * template's role, `--model`/`--effort`, the prompt passed to `claude` at start. omp: the folder, `--model
+ * <selector>:<level>`, the prompt queued in its inbox. Throws when Claude Code has no project id.
  */
 export function createRequest(i: CreateInput): CreateRequest {
   const name = i.name.trim();
   const prompt = firstPrompt(i.template, i.send ? i.message : "");
-  if (i.template.engine === "omp") {
-    return { url: "/api/omp/sessions", body: { cwd: i.project.path, name, ...(i.worktree ? { worktree: true as const } : {}), ...(prompt ? { prompt } : {}) } };
+  const run = i.run ?? templateRun(i.template);
+  const fields: RunFields = { ...(run.model ? { model: run.model } : {}), ...(run.thinking ? { thinking: run.thinking } : {}) };
+  if (run.engine === "omp") {
+    return { url: "/api/sessions", body: { engine: "omp", cwd: i.project.path, name, ...fields, ...(i.worktree ? { worktree: true as const } : {}), ...(prompt ? { prompt } : {}) } };
   }
   if (i.project.id == null) throw new Error("Claude Code cần một dự án đã đăng ký");
-  const t = i.template;
-  return { url: "/api/sessions", body: { name, project: i.project.id, ...(t.role ? { role: t.role } : {}), ...(t.model ? { model: t.model } : {}), ...(prompt ? { prompt } : {}) } };
+  const role = i.template.engine === "claude" ? i.template.role : undefined;
+  return { url: "/api/sessions", body: { engine: "claude", name, project: i.project.id, ...(role ? { role } : {}), ...fields, ...(prompt ? { prompt } : {}) } };
 }
 
 /** The new bot's key in the Bots list (lib/server/office.ts: a room's key is its session name). */
 export function botKeyOf(req: CreateRequest, res: { id?: string; session?: { name?: string } }): string | null {
-  return req.url === "/api/omp/sessions" ? (res.id ?? null) : (res.session?.name ?? `hq-${req.body.name}`);
+  return req.body.engine === "omp" ? (res.id ?? null) : (res.session?.name ?? `hq-${req.body.name}`);
 }

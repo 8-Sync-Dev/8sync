@@ -4,6 +4,7 @@ import os from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { roomLabel } from "@/lib/room-label";
 import { isModelId, isRoleId } from "@/lib/roles";
+import { isClaudeEffort } from "@/lib/room-model";
 import { projectIdFor } from "./db";
 import fs from "node:fs";
 import path from "node:path";
@@ -272,7 +273,7 @@ export function channelArgs(env: Record<string, string | undefined> = process.en
 export function tmuxStartArgs(
   name: string,
   cwd: string,
-  opts: { channel?: ChannelMode; port?: string; model?: string; role?: string; prompt?: string } = {},
+  opts: { channel?: ChannelMode; port?: string; model?: string; effort?: string; role?: string; prompt?: string } = {},
 ): string[] {
   if (!isTmuxName(name)) throw new Error("invalid tmux name");
   const ch = opts.channel ?? channelArgs();
@@ -288,6 +289,10 @@ export function tmuxStartArgs(
   if (opts.model) {
     if (!isModelId(opts.model)) throw new Error("invalid model");
     model.push("--model", opts.model);
+  }
+  if (opts.effort) {
+    if (!isClaudeEffort(opts.effort)) throw new Error("invalid effort");
+    model.push("--effort", opts.effort);
   }
   // A first prompt (a task assigned at start) goes after `--`, so it is never read as a flag and waits behind any boot dialog.
   const prompt = opts.prompt?.trim() ? ["--", opts.prompt] : [];

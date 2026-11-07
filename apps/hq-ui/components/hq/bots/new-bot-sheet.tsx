@@ -1,32 +1,44 @@
 "use client";
 
-// "Bot mới" (su-code/research/hq-bots-groups.md §1): one sheet, top to bottom — template → folder → name →
-// first message — then "Tạo và gửi" or "Chỉ tạo". A Claude Code template starts an hq-* session
-// (POST /api/sessions, role from the template); an omp one creates an omp session (POST /api/omp/sessions)
-// and opens its terminal once on the server so it runs. Rules and request bodies: lib/templates.ts.
-import { CheckIcon, FolderGit2Icon, FolderOpenIcon, Loader2Icon, SparklesIcon } from "lucide-react";
+// "Bot mới" (su-code/research/hq-bots-groups.md §1): one sheet, top to bottom — template (+ engine and model,
+// the template's by default) → folder → name → first message — then "Tạo và gửi" or "Chỉ tạo". Both engines
+// go through POST /api/sessions: Claude Code starts an hq-* session (role from the template); omp creates an
+// omp session and opens its terminal once on the server so it runs. Rules and request bodies: lib/templates.ts.
+import { BrainIcon, CheckIcon, ChevronDownIcon, FolderGit2Icon, FolderOpenIcon, Loader2Icon, SparklesIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { folderName, pathKey, shortPath, type WsProject } from "@/lib/omp-workspace";
+import { CLAUDE_START_MODELS, type ModelChoice, type ModelsReply } from "@/lib/room-model";
 import { roleOf } from "@/lib/roles";
 import {
   BLANK_TEMPLATE_ID,
+  BOT_ENGINES,
   BUILT_IN_TEMPLATES,
   botKeyOf,
   createRequest,
   nameProblem,
   orderFolders,
+  runForEngine,
   suggestName,
+  templateRun,
+  withModel,
+  withThinking,
+  type BotEngine,
+  type BotRun,
   type BotTemplate,
   type TemplateColor,
 } from "@/lib/templates";
 import { cn } from "@/lib/utils";
+import { EFFORT_LABEL, modelChipLabel, ModelMenu } from "../model-picker";
 import type { Hq } from "../use-hq";
 import { ProjectPicker } from "../workspace-launcher";
+
+const ENGINE_LABEL: Record<BotEngine, string> = { claude: "Claude Code", omp: "omp" };
 
 /** Static classes per template color (Tailwind only ships what it sees written out). */
 export const TEMPLATE_TINT: Record<TemplateColor, string> = {
@@ -132,6 +144,32 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
   const shownTemplates = tab === "mine" ? mine : templates.filter((t) => t.builtIn);
 
+  // Engine + model + level: the template's until the owner picks another (a pick holds for that template only).
+  const [pickedRun, setPickedRun] = useState<{ tpl: string; run: BotRun } | null>(null);
+  const run: BotRun | null = template ? (pickedRun?.tpl === template.id ? pickedRun.run : templateRun(template)) : null;
+  const setRun = (r: BotRun) => {
+    if (template) setPickedRun({ tpl: template.id, run: r });
+  };
+  const engine: BotEngine = run?.engine ?? "claude";
+  // omp's list (providers with a key or login) is fetched the first time omp is chosen.
+  const [ompList, setOmpList] = useState<ModelChoice[] | null>(null);
+  const needOmp = engine === "omp" && ompList === null;
+  useEffect(() => {
+    if (!needOmp) return;
+    let live = true;
+    api<ModelsReply>("/api/models?engine=omp")
+      .then((r) => live && setOmpList(r.models))
+      .catch((e: Error) => {
+        if (!live) return;
+        setOmpList([]);
+        toast.error(`Chưa tải được danh sách model omp: ${e.message}`);
+      });
+    return () => {
+      live = false;
+    };
+  }, [needOmp, api]);
+  const models = engine === "omp" ? ompList : CLAUDE_START_MODELS;
+
   // Registered projects (most recently used first), the known repos that match the hint, and a folder picked by hand.
   const sessions = hq.sessions.data;
   const folders = useMemo(() => {
@@ -156,7 +194,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
   const taken = useMemo(() => sessions.filter((s) => s.status !== "ended").flatMap((s) => [s.name.replace(/^hq-/, ""), s.label]), [sessions]);
   const suggested = template && chosen ? suggestName(template.id, chosen.name, taken) : "";
   const botName = nameTouched ? name : suggested;
-  const problem = template ? nameProblem(botName, template.engine, taken) : null;
+  const problem = template ? nameProblem(botName, engine, taken) : null;
   const pickerList: WsProject[] = useMemo(
     () => [...hq.projects.data.map((p) => ({ path: p.path, name: p.name })), ...hq.knownProjects.map((k) => ({ path: k.path, name: k.name }))],
     [hq.projects.data, hq.knownProjects],
@@ -177,16 +215,16 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
     try {
       let id = chosen.id;
       // Claude Code runs only in a registered project: a folder picked by hand is registered first.
-      if (template.engine === "claude" && id == null) {
+      if (engine === "claude" && id == null) {
         const r = await hq.api<{ project: { id: number } }>("/api/projects", { method: "POST", body: { path: chosen.path } });
         id = r.project.id;
         void hq.reload.projects();
       }
-      const req = createRequest({ template, name: botName, project: { id, path: chosen.path }, message, send, worktree });
+      const req = createRequest({ template, run: run ?? undefined, name: botName, project: { id, path: chosen.path }, message, send, worktree });
       const res = await hq.api<{ id?: string; session?: { name?: string } }>(req.url, { method: "POST", body: req.body });
       const key = botKeyOf(req, res);
       // An omp session runs once its terminal opens: open it once here (it keeps running after this poll).
-      if (req.url === "/api/omp/sessions" && key) {
+      if (req.body.engine === "omp" && key) {
         await hq.api(`/api/sessions/${encodeURIComponent(key)}/term?cols=120&rows=32&gen=-1&since=0`).catch((x: Error) => {
           toast.error(`Đã tạo ${req.body.name} nhưng chưa mở được: ${x.message}. Mở nó trong Không gian.`);
         });
@@ -201,7 +239,10 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
     }
   }
 
-  const engineLabel = template?.engine === "omp" ? "omp" : `Claude Code${template?.role ? ` · ${roleOf(template.role)?.labelVi ?? template.role}` : ""}`;
+  const role = engine === "claude" && template?.engine === "claude" && template.role ? (roleOf(template.role)?.labelVi ?? template.role) : null;
+  const engineLabel = [ENGINE_LABEL[engine], role, modelChipLabel(engine, run?.model, "model mặc định"), run?.thinking ? `suy nghĩ ${EFFORT_LABEL[run.thinking] ?? run.thinking}` : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <>
@@ -279,11 +320,14 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
               })}
             </div>
           )}
-          {template && (
-            <p className="text-xs text-muted-foreground">
-              Chạy bằng <span className="font-medium text-foreground">{engineLabel}</span>
-              {template.skills.length > 0 && <> · nhắc nạp {template.skills.join(", ")}</>}
-            </p>
+          {template && run && (
+            <>
+              <RunRow run={run} models={models} onChange={setRun} onEngine={(e) => setRun(runForEngine(template, e))} />
+              <p className="text-xs text-pretty text-muted-foreground" aria-live="polite">
+                Chạy bằng <span className="font-medium text-foreground">{engineLabel}</span>
+                {template.skills.length > 0 && <> · nhắc nạp {template.skills.join(", ")}</>}
+              </p>
+            </>
           )}
         </section>
 
@@ -354,7 +398,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
               </div>
             </>
           )}
-          {template?.engine === "omp" && (
+          {engine === "omp" && (
             <label className="flex w-fit cursor-pointer items-center gap-2 text-sm max-md:min-h-11">
               <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} className="size-4 accent-foreground" />
               Worktree riêng <span className="text-xs text-muted-foreground">(nhánh git riêng cho bot)</span>
@@ -451,5 +495,72 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * Engine (Claude Code | omp) and the model + level it starts on: a segmented control and the composer's
+ * model menu (lib/room-model.ts lists) in a popover. "Mặc định" = no `--model`: the engine's own default.
+ */
+function RunRow({ run, models, onChange, onEngine }: { run: BotRun; models: ModelChoice[] | null; onChange: (r: BotRun) => void; onEngine: (e: BotEngine) => void }) {
+  const [open, setOpen] = useState(false);
+  const search = useRef<HTMLInputElement>(null);
+  const label = modelChipLabel(run.engine, run.model, "Model mặc định");
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div role="radiogroup" aria-label="Chạy bằng" onKeyDown={radioKeys} className="inline-flex rounded-lg bg-muted p-0.5">
+        {BOT_ENGINES.map((e) => {
+          const on = run.engine === e;
+          return (
+            <button
+              key={e}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              tabIndex={on ? 0 : -1}
+              onClick={() => !on && onEngine(e)}
+              className="h-8 rounded-md px-3 text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 aria-checked:bg-background aria-checked:text-foreground aria-checked:shadow-sm motion-reduce:transition-none max-md:h-11"
+            >
+              {ENGINE_LABEL[e]}
+            </button>
+          );
+        })}
+      </div>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          type="button"
+          aria-label={`Model và mức suy nghĩ: ${label}${run.thinking ? `, ${EFFORT_LABEL[run.thinking] ?? run.thinking}` : ""}`}
+          className="inline-flex h-9 min-w-0 max-w-full items-center gap-1.5 rounded-lg border bg-background px-3 text-xs outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none max-md:h-11"
+        >
+          <BrainIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="truncate font-medium">{label}</span>
+          {run.thinking && <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] text-muted-foreground">{EFFORT_LABEL[run.thinking] ?? run.thinking}</span>}
+          <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[min(22rem,calc(100vw-2rem))] p-0"
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            search.current?.focus({ preventScroll: true });
+          }}
+        >
+          <ModelMenu
+            engine={run.engine}
+            models={models}
+            model={run.model}
+            thinking={run.thinking}
+            searchRef={search}
+            defaultLabel={run.engine === "omp" ? "omp mặc định (model trong config omp)" : "Mặc định của tài khoản Claude"}
+            effortsLocked={run.engine === "omp" && run.model === null ? "Chọn một model để đặt mức suy nghĩ." : undefined}
+            onThinking={(t) => onChange(withThinking(run, t))}
+            onModel={(m) => {
+              onChange(withModel(run, m, models ?? []));
+              setOpen(false);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }
