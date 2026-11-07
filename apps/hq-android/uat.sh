@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Emulator UAT for the 8 Sync HQ APK, run by .github/workflows/hq-android.yml
-# inside reactivecircus/android-emulator-runner:
+# inside reactivecircus/android-emulator-runner (pixel_6 profile, 1080x2400):
 #   install → launch (connect.png) → type a stand-in HQ address + Enter, which
-#   goes through the Rust `open_hq` navigation (hq.png) → Android Back returns
-#   to the connect screen with the address under "Gần đây" (back.png) →
+#   goes through the Rust `hq_origin`/`open_hq` commands (hq.png) → Android Back
+#   returns to the connect screen, address now under "Gần đây" (back.png) →
 #   relaunch in dark mode (connect-dark.png).
-# Fails when the app is not running after a step or logcat has a crash for it.
+# Fails when the app is not running after a step, logcat has a crash for it, or
+# a step leaves the screen unchanged (navigation / Back did nothing).
 #
 #   bash apps/hq-android/uat.sh <apk> <out-dir> [stand-in-address]
 set -euo pipefail
@@ -14,107 +15,105 @@ apk=$1
 out=$2
 address=${3:-get.8syncdev.com}
 pkg=com.eightsyncdev.hq
-# Plain-ASCII text that only the connect screen shows (its Tailscale hint).
-marker="hq ui --tailnet"
+# Centre of the address field on the pixel_6 profile (WebView DOM is not in the
+# accessibility tree, so it cannot be looked up; layout = apps/hq-android/ui).
+field_x=540
+field_y=612
 
 mkdir -p "$out"
 
+# Every adb call is bounded: a dropped emulator connection must fail the job,
+# not hang it.
+a() {
+  local i
+  for i in 1 2 3; do
+    if timeout 60 adb "$@"; then return 0; fi
+    echo "adb $* failed ($i/3); reconnecting"
+    adb reconnect offline > /dev/null 2>&1 || true
+    timeout 120 adb wait-for-device || true
+  done
+  return 1
+}
+
 fail() {
   echo "::error::$*"
-  adb logcat -d -b all > "$out/logcat.txt" 2>&1 || true
+  timeout 30 adb logcat -d -b all > "$out/logcat.txt" 2>&1 || true
   exit 1
 }
 
+# PNG for the artifact plus a raw RGBA copy for the pixel comparisons below.
 shot() {
-  adb exec-out screencap -p > "$out/$1.png"
+  a exec-out screencap -p > "$out/$1.png"
+  a exec-out screencap > "$out/$1.raw"
   echo "screenshot $1.png ($(wc -c < "$out/$1.png") B)"
 }
 
-# Accessibility tree as XML (the WebView exposes its DOM text to it). uiautomator
-# needs an idle UI, so retry a few times; empty output when it never settles.
-dump() {
-  for _ in 1 2 3 4 5; do
-    if adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1; then
-      adb exec-out cat /sdcard/ui.xml
-      return
-    fi
-    sleep 2
-  done
+# Share of pixels that differ between two raw screencaps, below the status bar
+# (its clock changes between shots). Prints a percentage.
+diff_pct() {
+  python3 - "$out/$1.raw" "$out/$2.raw" <<'PY'
+import struct, sys
+a, b = (open(p, "rb").read() for p in sys.argv[1:3])
+w, h = struct.unpack_from("<II", a)
+head = len(a) - w * h * 4            # 12- or 16-byte header, by Android version
+start, stride = head + w * 4 * 200, 4 * 8   # skip 200 status-bar rows; sample every 8th pixel
+pa, pb = a[start:], b[start:]
+n = len(pa) // stride
+diff = sum(1 for i in range(0, n * stride, stride) if pa[i:i + 3] != pb[i:i + 3])
+print(round(100 * diff / n, 1))
+PY
 }
 
 alive() {
   local pid crash
-  pid=$(adb shell pidof "$pkg" | tr -d '\r' || true)
-  crash=$(adb logcat -d -b crash | grep -F "$pkg" || true)
+  pid=$(timeout 30 adb shell pidof "$pkg" | tr -d '\r' || true)
+  crash=$(timeout 30 adb logcat -d -b crash | grep -F "$pkg" || true)
   [ -z "$crash" ] || fail "crash after $1: $crash"
   [ -n "$pid" ] || fail "$pkg is not running after $1"
   echo "alive after $1 (pid $pid)"
 }
 
-adb install -r "$apk"
-adb logcat -b all -c
+a install -r "$apk"
+a logcat -b all -c
 
-adb shell am start -W -n "$pkg/.MainActivity"
+a shell am start -W -n "$pkg/.MainActivity"
 sleep 8
 alive launch
 shot connect
 
-ui=$(dump)
-echo "$ui" > "$out/connect.xml"
-if grep -qF "$marker" <<< "$ui"; then a11y=1; else a11y=0; echo "::warning::connect screen text not in the accessibility dump; navigation checks rely on screenshots only"; fi
-
-# Focus the address field: tap the EditText the dump reports, else Tab into it
-# (it is the first focusable element of the page).
-bounds=$(python3 - "$out/connect.xml" <<'PY'
-import re, sys
-xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-for node in re.findall(r"<node [^>]*>", xml):
-    if 'class="android.widget.EditText"' in node:
-        m = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', node)
-        if m:
-            x1, y1, x2, y2 = map(int, m.groups())
-            print((x1 + x2) // 2, (y1 + y2) // 2)
-            break
-PY
-)
-if [ -n "$bounds" ]; then
-  echo "tapping the address field at $bounds"
-  adb shell input tap $bounds
-else
-  echo "no EditText in the dump; focusing with Tab"
-  adb shell input keyevent 61
-fi
+a shell input tap "$field_x" "$field_y"
+sleep 2
+a shell input text "$address"
 sleep 1
-adb shell input text "$address"
-sleep 1
-adb shell input keyevent 66 # Enter submits the form → hq_origin + open_hq (Rust)
-sleep 15
+shot typed
+a shell input keyevent 66 # Enter submits the form → hq_origin + open_hq (Rust)
+sleep 20
 alive "open $address"
 shot hq
-ui=$(dump)
-echo "$ui" > "$out/hq.xml"
-if [ "$a11y" = 1 ] && grep -qF "$marker" <<< "$ui"; then
-  fail "still on the connect screen after submitting $address"
-fi
+pct=$(diff_pct typed hq)
+echo "connect → HQ: $pct% of pixels changed"
+python3 -c "import sys; sys.exit(0 if float('$pct') >= 20 else 1)" \
+  || fail "screen barely changed after submitting $address ($pct%): navigation did not happen"
 
-adb shell input keyevent 4 # Back at the HQ root → connect screen
-sleep 5
+a shell input keyevent 4 # Back at the HQ root → connect screen
+sleep 6
 alive back
 shot back
-ui=$(dump)
-echo "$ui" > "$out/back.xml"
-if [ "$a11y" = 1 ]; then
-  grep -qF "$marker" <<< "$ui" || fail "Back did not return to the connect screen"
-  grep -qF "$address" <<< "$ui" || fail "$address missing from the recent list"
-fi
+pct=$(diff_pct hq back)
+echo "HQ → Back: $pct% of pixels changed"
+python3 -c "import sys; sys.exit(0 if float('$pct') >= 20 else 1)" \
+  || fail "Back did not leave HQ ($pct% changed)"
+pct=$(diff_pct connect back)
+echo "connect vs back: $pct% differ (recent list added)"
 
-adb shell cmd uimode night yes
-adb shell am force-stop "$pkg"
-adb shell am start -W -n "$pkg/.MainActivity"
-sleep 6
+a shell cmd uimode night yes
+a shell am force-stop "$pkg"
+a shell am start -W -n "$pkg/.MainActivity"
+sleep 8
 alive "dark relaunch"
 shot connect-dark
-adb shell cmd uimode night no
+a shell cmd uimode night no
 
-adb logcat -d -b all > "$out/logcat.txt" 2>&1 || true
+rm -f "$out"/*.raw
+timeout 30 adb logcat -d -b all > "$out/logcat.txt" 2>&1 || true
 echo "UAT passed"
