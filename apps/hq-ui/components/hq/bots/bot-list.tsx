@@ -30,6 +30,7 @@ export function BotList({
   error,
   onRetry,
   onNew,
+  chief = null,
 }: {
   /** Every live bot (the counts); `bots` is what the search and filter leave. */
   all: Bot[];
@@ -45,6 +46,8 @@ export function BotList({
   error: string | null;
   onRetry: () => void;
   onNew: () => void;
+  /** The Chief of Staff's bot key (pinned first by the caller), shown with a "Chief" badge. */
+  chief?: string | null;
 }) {
   const list = useRef<HTMLUListElement>(null);
   const counts = botCounts(all);
@@ -156,7 +159,7 @@ export function BotList({
           <ul ref={list} onKeyDown={onKey} aria-label="Bot" className="py-1">
             {bots.map((b) => (
               <li key={b.key}>
-                <BotRow b={b} now={now} current={b.key === selected} onOpen={onOpen} />
+                <BotRow b={b} now={now} current={b.key === selected} chief={b.key === chief} onOpen={onOpen} />
               </li>
             ))}
           </ul>
@@ -166,7 +169,7 @@ export function BotList({
   );
 }
 
-function BotRow({ b, now, current, onOpen }: { b: Bot; now: number; current: boolean; onOpen: (key: string) => void }) {
+function BotRow({ b, now, current, chief, onOpen }: { b: Bot; now: number; current: boolean; chief: boolean; onOpen: (key: string) => void }) {
   const sub = [b.qualifier ?? b.project, b.branch].filter(Boolean).join(" · ");
   const ago = agoShort(b.at, now);
   return (
@@ -184,6 +187,7 @@ function BotRow({ b, now, current, onOpen }: { b: Bot; now: number; current: boo
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="shrink-0 text-[15px] font-semibold tracking-tight">{b.name}</span>
+          {chief && <ChiefBadge />}
           {sub && (
             <span className="min-w-0 truncate text-xs text-muted-foreground" title={sub}>
               {sub}
@@ -198,6 +202,11 @@ function BotRow({ b, now, current, onOpen }: { b: Bot; now: number; current: boo
       </span>
     </button>
   );
+}
+
+/** Marks the Chief of Staff's row and thread. */
+export function ChiefBadge() {
+  return <span className="shrink-0 self-center rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-semibold tracking-wide text-primary uppercase">Chief</span>;
 }
 
 function ListSkeleton() {

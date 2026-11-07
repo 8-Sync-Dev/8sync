@@ -9,6 +9,7 @@ import {
   botSummary,
   filterBots,
   hashId,
+  messageSender,
   promptSender,
   recentFiles,
   stepKey,
@@ -170,6 +171,24 @@ describe("bot thread", () => {
     expect(t.kind === "turn" && { prompt: t.prompt, from: t.from }).toEqual({ prompt: "API cho trang login", from: { kind: "room", name: "web" } });
   });
 
+  it("puts a room's HQ message on the left: sender from its first line, both frame lines dropped", () => {
+    const text = "[phòng post]\n[từ phòng core · su-code · đang: sửa nav]\nĐăng bài lúc 9h nhé";
+    expect(messageSender(text)).toEqual({ from: { kind: "room", name: "post" }, body: "Đăng bài lúc 9h nhé" });
+    expect(messageSender("[phòng post]\nchỉ một dòng nguồn")).toEqual({ from: { kind: "room", name: "post" }, body: "chỉ một dòng nguồn" });
+    // The source line only counts first: an owner's text quoting it further down stays the owner's.
+    expect(messageSender("xem giúp\n[phòng post]\nabc").from).toEqual({ kind: "owner" });
+
+    const queued = msg(7, 3_000_000, { session: "core", to_: "core", from_: "post", text });
+    const [q] = threadItems([queued], [], []);
+    expect(q.kind === "message" && { from: q.from, body: q.body }).toEqual({ from: { kind: "room", name: "post" }, body: "Đăng bài lúc 9h nhé" });
+    expect(botPreview(room({ key: "core" }), [queued]).text).toBe("Đăng bài lúc 9h nhé");
+
+    // Picked up: the turn is the room's, not the owner's (no `sent`), its prompt the bare words.
+    const events = [ev("prompt", 3_000_500, text), ev("text", 3_001_000, "ok")];
+    const [t] = threadItems([queued], turnsFrom(events), events);
+    expect(t.kind === "turn" && { sent: t.sent, prompt: t.prompt, from: t.from }).toEqual({ sent: null, prompt: "Đăng bài lúc 9h nhé", from: { kind: "room", name: "post" } });
+  });
+
   it("lists the files a room wrote lately, newest first, once each", () => {
     const events = [
       ev("tool", 1, "apps/a.ts", { tool: "Edit", status: "ok" }),
@@ -180,5 +199,40 @@ describe("bot thread", () => {
       ev("tool", 6, "Fix the header", { tool: "Edit", status: "ok" }),
     ];
     expect(recentFiles(events)).toEqual(["apps/a.ts", "C:\\repo\\b.md"]);
+  });
+});
+
+describe("markdown tildes", () => {
+  it("strikes only ~~double~~ tildes; a single one (~0 tokens) reads as written", async () => {
+    const { hqRemarkPlugins } = await import("@/lib/markdown");
+    const gfm = hqRemarkPlugins.find((p) => Array.isArray(p) && (p[1] as { singleTilde?: boolean } | undefined)?.singleTilde === false);
+    expect(gfm).toBeTruthy();
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { MessageResponse } = await import("@/components/ai-elements/message");
+    const { pathMarkdown } = await import("@/components/hq/path-open");
+    for (const props of [{}, pathMarkdown]) {
+      const html = renderToStaticMarkup(createElement(MessageResponse, props, "~0 tokens (~$0.00) và ~~cũ~~"));
+      expect(html).toContain("~0 tokens (~$0.00)");
+      expect(html.match(/<del/g)?.length).toBe(1);
+    }
+  });
+});
+
+describe("Chief of Staff in Bots", () => {
+  it("pins the chief room first by its address, session id or key; off leaves the order", async () => {
+    const { pinChief } = await import("@/lib/bots");
+    const bots = ["a", "b", "c"].map((k) => ({ key: k, room: room({ key: k, name: `hq-${k}`, session_id: `sid-${k}` }) }));
+    expect(pinChief(bots, "sid-c")).toMatchObject({ chief: "c", bots: [{ key: "c" }, { key: "a" }, { key: "b" }] });
+    expect(pinChief(bots, "hq-b").bots.map((b) => b.key)).toEqual(["b", "a", "c"]);
+    expect(pinChief(bots, null)).toMatchObject({ chief: null, bots: [{ key: "a" }, { key: "b" }, { key: "c" }] });
+    expect(pinChief(bots, "gone").chief).toBeNull();
+  });
+
+  it("shows a 409 from /api/chief/ask in Vietnamese", async () => {
+    const { chiefError } = await import("@/components/hq/bots/chief-composer");
+    const { ApiError } = await import("@/components/hq/use-hq");
+    expect(chiefError(new ApiError("Chief of Staff đang tắt: chọn phòng và bật ở tab Máy", 409))).toContain("đang tắt");
+    expect(chiefError(new ApiError("session-waiting", 409))).toContain("Chief đang chờ anh trả lời");
   });
 });

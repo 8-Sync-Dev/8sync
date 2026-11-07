@@ -26,6 +26,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import { hqRemarkPlugins } from "@/lib/markdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -328,6 +329,7 @@ export const MessageResponse = memo(
         className
       )}
       plugins={streamdownPlugins}
+      remarkPlugins={hqRemarkPlugins}
       {...props}
     />
   ),

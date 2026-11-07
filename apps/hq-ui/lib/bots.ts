@@ -6,6 +6,7 @@ import { parseAttachments } from "./attachments";
 import type { Ask } from "./ask";
 import type { ProjectInfo } from "./office";
 import { promptBody, type Turn } from "./room-turns";
+import { stripContextLine } from "./room-context";
 import type { ActivityEvent } from "./server/activity";
 
 export const BOT_STATUSES = ["needs", "error", "working", "idle"] as const;
@@ -150,7 +151,7 @@ export function messageLine(m: Pick<BotMessage, "kind" | "text">): string | null
   if (!CHAT[m.kind] || !m.text) return null;
   const body = oneLine(promptBody(parseAttachments(m.text).body));
   if (!body) return null;
-  return m.kind === "owner_message" ? `Anh: ${body}` : body;
+  return m.kind === "owner_message" && messageSender(m.text).from.kind === "owner" ? `Anh: ${body}` : body;
 }
 
 /**
@@ -195,6 +196,16 @@ export function botList<R extends BotRoom>(rooms: readonly R[], sessions: readon
       return { key: r.key, room: r, name: n.name, qualifier: n.qualifier, status: botStatus(r), project: botProject(r), branch: r.project?.branch ?? null, preview: p.text, at: p.at };
     })
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.at ?? 0) - (a.at ?? 0) || a.name.localeCompare(b.name));
+}
+
+/**
+ * The Chief of Staff (GET /api/chief `cfg.room`, only while `cfg.on && live`) as the first row; the
+ * rest keep their order. `chief` is its bot key, null when the chief is off or its room is not a bot.
+ */
+export function pinChief<B extends Pick<Bot, "key" | "room">>(bots: readonly B[], room: string | null): { bots: B[]; chief: string | null } {
+  const i = room == null ? -1 : bots.findIndex((b) => b.key === room || b.room.name === room || b.room.session_id === room);
+  if (i < 0) return { bots: [...bots], chief: null };
+  return { bots: [bots[i], ...bots.slice(0, i), ...bots.slice(i + 1)], chief: bots[i].key };
 }
 
 const fold = (s: string) =>
@@ -284,7 +295,29 @@ export type ThreadItem<M extends BotMessage = BotMessage> =
       from: PromptSender | null;
       steps: ActivityEvent[];
     }
-  | { kind: "message"; key: string; at: number; m: M };
+  | {
+      kind: "message";
+      key: string;
+      at: number;
+      m: M;
+      /** Who wrote an HQ `owner_message` row (its source line): a room's lands on the left, never as the owner's. */
+      from: PromptSender | null;
+      /** That row's words without its source and context lines, when it is not the owner's. */
+      body: string | null;
+    };
+
+/**
+ * Who an `owner_message` row is from, read from its FIRST line only (the source line HQ puts there:
+ * lib/sender.ts `[phòng web]`, the same line the ship grant and `[owner]` detection read), and its words
+ * below it with a room's `[từ phòng …]` context line dropped. The owner's own rows carry no source line.
+ */
+export function messageSender(text: string | null): { from: PromptSender; body: string | null } {
+  const t = text ?? "";
+  const nl = t.indexOf("\n");
+  const from = promptSender(nl < 0 ? t : t.slice(0, nl));
+  if (from.kind === "owner") return { from, body: null };
+  return { from, body: stripContextLine(nl < 0 ? "" : t.slice(nl + 1)).trim() };
+}
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 const SLACK_MS = 60_000;
@@ -310,14 +343,17 @@ export function threadItems<M extends BotMessage>(messages: readonly M[], turns:
   const steps = stepsByTurn(events);
   const taken = new Set<string>();
   const sentBy = new Map<string, M>();
+  const byOther = new Map<string, { from: PromptSender; body: string | null }>();
   const out: ThreadItem<M>[] = [];
   const outputs = turns.map((t) => (t.output ? norm(t.output) : "")).filter(Boolean);
   for (const m of messages) {
+    const who = m.kind === "owner_message" ? messageSender(m.text) : null;
     if (m.kind === "owner_message") {
       const t = turnOf(turns, m, taken);
       if (t) {
         taken.add(t.key);
-        sentBy.set(t.key, m);
+        if (who?.from.kind === "owner") sentBy.set(t.key, m);
+        else if (who) byOther.set(t.key, who);
         continue;
       }
     }
@@ -325,18 +361,19 @@ export function threadItems<M extends BotMessage>(messages: readonly M[], turns:
       const head = norm(m.text).slice(0, 60);
       if (head && outputs.some((o) => o.startsWith(head) || head.startsWith(o.slice(0, 60)))) continue;
     }
-    out.push({ kind: "message", key: `m${m.id}`, at: m.ts, m });
+    out.push({ kind: "message", key: `m${m.id}`, at: m.ts, m, from: who?.from ?? null, body: who?.body ?? null });
   }
   for (const t of turns) {
     const sent = sentBy.get(t.key) ?? null;
+    const other = byOther.get(t.key);
     out.push({
       kind: "turn",
       key: `t${t.key}`,
       at: t.at ?? sent?.ts ?? t.outputAt ?? 0,
       turn: t,
       sent,
-      prompt: sent || t.prompt == null ? null : promptBody(t.prompt),
-      from: t.prompt == null ? null : promptSender(t.prompt),
+      prompt: sent ? null : (other?.body ?? (t.prompt == null ? null : promptBody(t.prompt))),
+      from: other?.from ?? (t.prompt == null ? null : promptSender(t.prompt)),
       steps: steps.get(t.key) ?? [],
     });
   }
