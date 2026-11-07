@@ -48,6 +48,7 @@ mod pressure;
 pub(crate) mod reap;
 mod room;
 mod statusline;
+mod watch;
 mod urgent;
 mod goal;
 mod trail_hint;

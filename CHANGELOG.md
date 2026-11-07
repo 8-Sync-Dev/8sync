@@ -5,6 +5,24 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.134.0] — 2026-11-07
+
+### Added
+- HQ › Máy: khung **Canh máy**. Anh chọn một phòng (Claude Code hoặc omp đang mở) canh RAM/CPU/GPU cho mọi dự án, chọn chu kỳ 15 phút–4 giờ (mặc định 30 phút) và ngưỡng khẩn CPU/RAM/GPU (mặc định 85/90/95%):
+  - Mỗi chu kỳ, HQ quét tiến trình và chỉ gửi cho phòng khi có thứ kill được mà lần trước chưa báo. Máy ổn thì không gửi gì, để không làm đầy context của phòng.
+  - Chỉ số vượt ngưỡng liên tục 2 phút thì gửi khẩn ngay, mỗi chỉ số tối đa 1 lần mỗi 15 phút.
+  - Nút "Gửi urgent ngay" gửi lúc nào cũng được.
+  - Tin gửi dặn phòng không kill ngay: xem process thuộc phòng/dự án nào và có đang được dùng không, rác thật mới chạy `8sync ccc eco kill <pid:start>`, tìm nguồn gây ra rồi báo lại một dòng.
+  - Danh sách "Nghi vấn" (mở trùng · spam mở · mồ côi · ngốn) có nút Kill. Bấm Kill hiện hộp xác nhận (tuỳ chọn kill cả cây); mục được bảo vệ chỉ hiện để xem.
+  - API: `GET/PUT /api/machine/watch`, `POST /api/machine/watch/urgent`, `GET /api/machine/scan`, `POST /api/machine/kill`. Kill chỉ chạy trên máy hoặc qua link VPS, không chạy qua link `--public`. Cấu hình lưu ở `~/.config/8sync/hq/machine-watch.json`.
+- `8sync ccc eco scan [--json]` (= `8sync eco scan`): đọc danh sách process hai lần cách nhau 1,5 s (Toolhelp native, không dùng WMI) để tính CPU% từng process, kèm RAM/CPU/GPU máy và các chương trình nặng nhất. Không đụng vào gì. Nghi vấn gồm:
+  - mở trùng: cùng dòng lệnh, cùng process cha, giữ bản cũ nhất;
+  - spam: từ 5 bản mở trong 10 phút;
+  - mồ côi: helper không còn phiên nào phía trên;
+  - ngốn: một chương trình (gộp các process con cùng image) dùng ≥25% CPU máy hoặc ≥3 GB RAM.
+  - Mỗi process có id `pid:start`.
+- `8sync ccc eco kill <pid:start>… [--tree] [--json]`: đọc lại danh sách process và chỉ kill khi khớp đúng pid + giờ mở, nên pid đã đổi chủ không bị kill nhầm. Lệnh từ chối phiên claude/omp, Claude Desktop, 8sync/HQ, process hệ thống và chính các process cha của nó. Mỗi lần kill ghi vào `~/.config/8sync/eco-reap.log`.
+
 ## [0.133.1] — 2026-11-07
 
 ### Fixed
