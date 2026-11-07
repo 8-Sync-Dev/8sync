@@ -54,23 +54,115 @@ const BUNDLED_SKILLS: [(&str, &str); 34] = [
     ("skills/ai-microservice-design",  "ai-microservice-design"),
 ];
 
-/// Deploy every bundled skill tree under `assets/skills/<name>/` into
-/// `~/.omp/skills/<name>/`. Each tree is deployed verbatim including any
-/// `references/` or `scripts/` subdirs. Shell scripts get mode 0755. Then the
-/// unedited copies of skills this binary no longer ships (or ships renamed) go,
-/// before any caller (the Claude Code kit) links `~/.omp/skills` into place.
+/// Bring every bundled skill tree under `assets/skills/<name>/` into
+/// `~/.omp/skills/<name>/` (`refresh_bundled`: verbatim with any `references/`
+/// or `scripts/`; a copy the owner edited is kept and named). Then the unedited
+/// copies of skills this binary no longer ships (or ships renamed) go, before
+/// any caller (the Claude Code kit) links `~/.omp/skills` into place. Machine-wide
+/// only: no project is touched.
 pub(crate) fn install_bundled_global(env: &env_detect::Env) -> Result<()> {
     let skills_dir = env.home.join(".omp/skills");
-    for (asset_prefix, name) in BUNDLED_SKILLS {
-        let target_dir = skills_dir.join(name);
-        std::fs::create_dir_all(&target_dir)?;
-        let (written, _unchanged) = assets::install_tree(asset_prefix, &target_dir)?;
-        if written > 0 {
-            ui::ok(&format!("synced {} ({} file(s) written) → {}", name, written, target_dir.display()));
-        }
+    let r = refresh_bundled(&skills_dir)?;
+    for (name, n) in &r.written {
+        ui::ok(&format!("synced {} ({} file(s) written) → {}", name, n, skills_dir.join(name).display()));
+    }
+    for name in &r.kept {
+        ui::info(&format!("kept your edited {} (this release's copy not written; delete the folder to get it)", skills_dir.join(name).display()));
     }
     crate::verbs::harness::legacy::retire_skills(&env.home, None);
     Ok(())
+}
+
+/// Hashes of the bundled files 8sync last wrote, per skill: `{skill: {rel path: fnv1a64}}`.
+const BUNDLED_MANIFEST: &str = ".8sync-bundled.json";
+
+/// What one `refresh_bundled` pass did.
+#[derive(Default, Debug)]
+pub(crate) struct Refreshed {
+    /// Skills brought to this binary, with the files written.
+    pub written: Vec<(String, usize)>,
+    /// Skills left as they are: a file differs from both this release's copy and what 8sync wrote.
+    pub kept: Vec<String>,
+}
+
+/// What a refresh does with one bundled skill.
+#[derive(Debug, PartialEq, Eq)]
+enum Refresh {
+    Same,
+    Write,
+    Keep,
+}
+
+/// One skill's fate from each shipped file's (new hash, hash on disk, hash 8sync last wrote). A file
+/// that differs from both the new copy and the recorded one is the owner's: the whole skill is kept
+/// (never half new, half edited). A missing file is written again. `legacy`: no manifest yet; every
+/// release before it overwrote the bundled skills wholesale, so a differing copy is a stale one of
+/// ours. With a manifest, an unrecorded file already there (a skill folder of the owner's own that a
+/// later release ships under the same name) is the owner's.
+fn refresh_decision(files: &[(u64, Option<u64>, Option<u64>)], legacy: bool) -> Refresh {
+    let mut stale = false;
+    for &(new, disk, recorded) in files {
+        match disk {
+            Some(h) if h == new => {}
+            Some(h) if !legacy && recorded != Some(h) => return Refresh::Keep,
+            _ => stale = true,
+        }
+    }
+    if stale { Refresh::Write } else { Refresh::Same }
+}
+
+/// fnv1a64 of a text file with CRLF read as LF (an editor's line endings are not an edit).
+fn text_hash(b: &[u8]) -> u64 {
+    fnv1a64(String::from_utf8_lossy(b).replace("\r\n", "\n").as_bytes())
+}
+
+/// Bring the bundled skills in `skills_dir` to this binary (`refresh_decision` per skill): writes only
+/// files that differ, records what it wrote in `BUNDLED_MANIFEST`, and rewrites nothing (manifest
+/// included) when all is current. Idempotent; no network.
+pub(crate) fn refresh_bundled(skills_dir: &Path) -> Result<Refreshed> {
+    use std::collections::BTreeMap;
+    let mpath = skills_dir.join(BUNDLED_MANIFEST);
+    let old: Option<BTreeMap<String, BTreeMap<String, u64>>> = std::fs::read_to_string(&mpath).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let legacy = old.is_none();
+    let old = old.unwrap_or_default();
+    let mut rec = BTreeMap::new();
+    let mut r = Refreshed::default();
+    for (prefix, name) in BUNDLED_SKILLS {
+        let dir = skills_dir.join(name);
+        let was = old.get(name);
+        let files: Vec<(String, String, u64, Option<u64>)> = assets::tree(prefix)
+            .into_iter()
+            .map(|(rel, body)| {
+                let disk = std::fs::read(dir.join(&rel)).ok().map(|b| text_hash(&b));
+                let h = text_hash(body.as_bytes());
+                (rel, body, h, disk)
+            })
+            .collect();
+        let hashes: Vec<_> = files.iter().map(|(rel, _, h, disk)| (*h, *disk, was.and_then(|m| m.get(rel).copied()))).collect();
+        match refresh_decision(&hashes, legacy) {
+            Refresh::Same => {}
+            Refresh::Keep => {
+                r.kept.push(name.to_string());
+                if let Some(m) = was {
+                    rec.insert(name.to_string(), m.clone());
+                }
+                continue;
+            }
+            Refresh::Write => {
+                let stale: Vec<_> = files.iter().filter(|(_, _, h, disk)| *disk != Some(*h)).collect();
+                for (rel, body, _, _) in &stale {
+                    assets::write_text(&dir.join(rel), body)?;
+                }
+                r.written.push((name.to_string(), stale.len()));
+            }
+        }
+        rec.insert(name.to_string(), files.into_iter().map(|(rel, _, h, _)| (rel, h)).collect());
+    }
+    if legacy || rec != old {
+        std::fs::create_dir_all(skills_dir)?;
+        std::fs::write(&mpath, serde_json::to_string_pretty(&rec)? + "\n")?;
+    }
+    Ok(r)
 }
 
 /// Clean cutover for machines that installed an earlier 8sync: remove the retired
@@ -2026,5 +2118,102 @@ mod skill_library_tests {
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(tmp("team-empty"));
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    type Manifest = BTreeMap<String, BTreeMap<String, u64>>;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("8sync-refresh-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn manifest(dir: &Path) -> Manifest {
+        serde_json::from_str(&std::fs::read_to_string(dir.join(BUNDLED_MANIFEST)).unwrap()).unwrap()
+    }
+
+    fn set_manifest(dir: &Path, m: &Manifest) {
+        std::fs::write(dir.join(BUNDLED_MANIFEST), serde_json::to_string(m).unwrap()).unwrap();
+    }
+
+    fn shipped(rel: &str) -> String {
+        assets::tree("skills/hq-control").into_iter().find(|(r, _)| r == rel).unwrap().1
+    }
+
+    #[test]
+    fn decision_writes_ours_keeps_the_owners_and_leaves_current_alone() {
+        assert_eq!(refresh_decision(&[(1, Some(1), Some(1)), (2, Some(2), None)], false), Refresh::Same, "unchanged: no write");
+        assert_eq!(refresh_decision(&[(2, Some(1), Some(1))], false), Refresh::Write, "managed + changed");
+        assert_eq!(refresh_decision(&[(2, None, Some(1))], false), Refresh::Write, "a missing file comes back");
+        assert_eq!(refresh_decision(&[(2, Some(1), Some(1)), (3, Some(9), Some(3))], false), Refresh::Keep, "one edited file keeps the whole skill");
+        assert_eq!(refresh_decision(&[(2, Some(9), None)], false), Refresh::Keep, "unrecorded file of the owner's");
+        assert_eq!(refresh_decision(&[(2, Some(9), None)], true), Refresh::Write, "before the manifest: a stale copy of ours");
+    }
+
+    #[test]
+    fn refresh_bundled_writes_stale_keeps_edited_and_is_idempotent() {
+        let dir = tmp("skills");
+        let hq = dir.join("hq-control");
+        // An owner's own skill folder is never looked at.
+        std::fs::create_dir_all(dir.join("mine")).unwrap();
+        std::fs::write(dir.join("mine/SKILL.md"), "mine").unwrap();
+
+        let first = refresh_bundled(&dir).unwrap();
+        assert_eq!(first.written.len(), BUNDLED_SKILLS.len(), "fresh dir: every bundled skill");
+        assert_eq!(std::fs::read_to_string(hq.join("scripts/hq.mjs")).unwrap(), shipped("scripts/hq.mjs"));
+        let m = manifest(&dir);
+        assert!(m.contains_key("hq-control") && !m.contains_key("mine"));
+
+        let again = refresh_bundled(&dir).unwrap();
+        assert!(again.written.is_empty() && again.kept.is_empty(), "unchanged: {again:?}");
+        assert_eq!(manifest(&dir), m, "manifest untouched");
+
+        // A CRLF copy is the same copy.
+        std::fs::write(hq.join("SKILL.md"), shipped("SKILL.md").replace('\n', "\r\n")).unwrap();
+        assert!(refresh_bundled(&dir).unwrap().written.is_empty());
+
+        // Managed + changed: what an older release wrote (and recorded) is brought up to date.
+        let mut older = m.clone();
+        older.get_mut("hq-control").unwrap().insert("scripts/hq.mjs".into(), text_hash(b"old script"));
+        set_manifest(&dir, &older);
+        std::fs::write(hq.join("scripts/hq.mjs"), "old script").unwrap();
+        let r = refresh_bundled(&dir).unwrap();
+        assert_eq!(r.written, [("hq-control".to_string(), 1)]);
+        assert_eq!(std::fs::read_to_string(hq.join("scripts/hq.mjs")).unwrap(), shipped("scripts/hq.mjs"));
+        assert_eq!(manifest(&dir), m);
+
+        // User-modified: the edit stays, and so does the rest of that skill (never half new).
+        set_manifest(&dir, &older);
+        std::fs::write(hq.join("scripts/hq.mjs"), "old script").unwrap();
+        std::fs::write(hq.join("SKILL.md"), "my own notes").unwrap();
+        let r = refresh_bundled(&dir).unwrap();
+        assert_eq!(r.kept, ["hq-control"]);
+        assert!(r.written.is_empty());
+        assert_eq!(std::fs::read_to_string(hq.join("SKILL.md")).unwrap(), "my own notes");
+        assert_eq!(std::fs::read_to_string(hq.join("scripts/hq.mjs")).unwrap(), "old script");
+        assert_eq!(manifest(&dir)["hq-control"], older["hq-control"], "the record of what 8sync wrote stays");
+
+        // A folder already there when a release first ships that name is the owner's.
+        let mut no_trail = manifest(&dir);
+        no_trail.remove("trail");
+        set_manifest(&dir, &no_trail);
+        std::fs::write(dir.join("trail/SKILL.md"), "my trail").unwrap();
+        assert!(refresh_bundled(&dir).unwrap().kept.contains(&"trail".to_string()));
+        assert_eq!(std::fs::read_to_string(dir.join("trail/SKILL.md")).unwrap(), "my trail");
+
+        // Before the manifest existed every refresh overwrote: the first one adopts the copies.
+        std::fs::remove_file(dir.join(BUNDLED_MANIFEST)).unwrap();
+        let r = refresh_bundled(&dir).unwrap();
+        assert!(r.kept.is_empty(), "{r:?}");
+        assert_eq!(std::fs::read_to_string(hq.join("SKILL.md")).unwrap(), shipped("SKILL.md"));
+        assert_eq!(manifest(&dir), m);
+        assert_eq!(std::fs::read_to_string(dir.join("mine/SKILL.md")).unwrap(), "mine");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

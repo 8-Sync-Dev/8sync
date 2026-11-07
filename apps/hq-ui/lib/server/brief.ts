@@ -9,7 +9,7 @@ import type { ProjectInfo } from "../office";
 import { promptBody, type Turn } from "../room-turns";
 import { readActivity, readOmpActivity, type ActivityEvent, type RoomLog } from "./activity";
 import { getDb } from "./db";
-import { ompTranscript } from "./floor";
+import { ompRoomOfSessionFile, ompTranscript } from "./floor";
 import { loadOffice, type Room } from "./office";
 
 export type Brief = {
@@ -178,19 +178,33 @@ export async function liveRooms(db: DatabaseSync = getDb()): Promise<Room[]> {
 }
 
 /**
- * The live room a room-to-room message comes from: hq.mjs names its session (`CLAUDE_CODE_SESSION_ID`,
- * a Claude Code room) and its folder. The session wins; else the one room working in that folder (never
- * `to`, the recipient). Context only: the source line the room gets still says `[phòng …]`.
+ * The live room hq.mjs runs in, from what it names (`callerIds`): ids first, each a room's address or
+ * session id. Named ids decide alone: exactly one live room among them, else null (an id no live room
+ * has, or ids naming two rooms, is never settled by folder). No id: the one room other than `to` (the
+ * recipient) working in `cwd`; several there → null, never the first. Never `to` itself.
  */
-export function senderRoomOf<T extends Pick<Room, "name" | "session_id" | "cwd">>(rooms: readonly T[], from: { session?: unknown; cwd?: unknown }, to: string): T | null {
-  const sid = typeof from.session === "string" && from.session ? from.session : null;
-  if (sid) {
-    const r = rooms.find((x) => x.session_id === sid || x.name === sid);
-    if (r) return r.name === to || r.session_id === to ? null : r;
+export function senderRoomOf<T extends Pick<Room, "name" | "session_id" | "cwd">>(rooms: readonly T[], from: { ids?: readonly unknown[]; cwd?: unknown }, to: string): T | null {
+  const ids = (from.ids ?? []).filter((x): x is string => typeof x === "string" && x !== "");
+  if (ids.length) {
+    const hit = [...new Set(rooms.filter((x) => ids.includes(x.name) || (x.session_id !== null && ids.includes(x.session_id))))];
+    return hit.length === 1 && hit[0].name !== to && hit[0].session_id !== to ? hit[0] : null;
   }
   if (typeof from.cwd !== "string" || !from.cwd) return null;
   const key = (p: string) => path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
   const want = key(from.cwd);
   const here = rooms.filter((x) => x.cwd && key(x.cwd) === want && x.name !== to && x.session_id !== to);
   return here.length === 1 ? here[0] : null;
+}
+
+/**
+ * The ids hq.mjs sends for the room it runs in: `from_session` (Claude Code's `CLAUDE_CODE_SESSION_ID`),
+ * `from_room` (an omp room's id, `EIGHTSYNC_ROOM_ID`: every omp launch 8sync makes exports it and its
+ * subagents inherit it) and, without that, `from_session_file` (omp's `PI_SESSION_FILE`, mapped to the
+ * room whose session dir holds it; kept as an id that names no room when none does, so the folder
+ * never stands in for an omp session HQ cannot place).
+ */
+export async function callerIds(db: DatabaseSync, body: Record<string, unknown>): Promise<unknown[]> {
+  const file = typeof body.from_session_file === "string" && body.from_session_file.length <= 1000 ? body.from_session_file : "";
+  const fromFile = file && !body.from_room ? ((await ompRoomOfSessionFile(db, file)) ?? file) : null;
+  return [body.from_session, body.from_room, fromFile];
 }

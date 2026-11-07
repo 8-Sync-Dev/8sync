@@ -1252,28 +1252,12 @@ fn ensure_kitty_include(kitty_dir: &std::path::Path) -> Result<()> {
 fn install_skills(env: &env_detect::Env) -> Result<()> {
     ui::step("Skills (~/.omp/skills/)");
     let skills_dir = env.home.join(".omp/skills");
-    std::fs::create_dir_all(&skills_dir)?;
-    // Bundled skills: deploy entire tree (SKILL.md + scripts/ + references/).
-    let bundled: [(&str, &str); 4] = [
-        ("skills/karpathy-guidelines",      "karpathy-guidelines"),
-        ("skills/image-routing", "image-routing"),
-        ("skills/8sync-cli",     "8sync-cli"),
-        ("skills/trail",         "trail"),
-    ];
-    for (prefix, name) in &bundled {
-        let target = skills_dir.join(name);
-        std::fs::create_dir_all(&target)?;
-        let (written, _unchanged) = assets::install_tree(prefix, &target)?;
-        if written > 0 {
-            ui::ok(&format!("synced {} ({} file(s)) → {}", name, written, target.display()));
-        } else {
-            ui::skip(&target.display().to_string(), "unchanged");
-        }
-        // Ensure 3-folder layout even if the bundled tree didn't ship a
-        // `scripts/` or `references/` subdir (karpathy/image-routing/8sync-cli).
-        for sub in ["scripts", "references"] {
-            let _ = std::fs::create_dir_all(target.join(sub));
-        }
+    // Every bundled skill tree (SKILL.md + scripts/ + references/), the same managed copy
+    // `8sync up` / `8sync harness` refresh: one an owner edited is kept.
+    crate::verbs::skill::deploy::install_bundled_global(env)?;
+    // Ensure the 3-folder layout even where a bundled tree ships no `scripts/` or `references/`.
+    for name in ["karpathy-guidelines", "image-routing", "8sync-cli", "trail"] {
+        crate::verbs::skill::deploy::ensure_skill_layout(&skills_dir.join(name));
     }
     let master = skills_dir.join("00-force-load.md");
     if let Some(c) = assets::read("skills/00-force-load.md") {

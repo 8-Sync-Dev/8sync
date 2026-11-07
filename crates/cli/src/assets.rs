@@ -70,53 +70,53 @@ pub fn iter_under(prefix: &str) -> Vec<String> {
         .collect()
 }
 
-/// Deploy every asset under `asset_prefix` into `target_dir`, preserving the
-/// relative subtree. Returns (written, unchanged) counts. Files ending in `.sh`
-/// get mode 0755 on unix. Backups are NOT created (this is intended for skill
-/// trees that are managed entirely by 8sync; users edit local copies, not
-/// global ones).
-pub fn install_tree(asset_prefix: &str, target_dir: &Path) -> anyhow::Result<(usize, usize)> {
+/// Every text asset under `asset_prefix` as (path relative to it, body as deployed): command refs in
+/// `.md`/`.txt` prose rebranded (identity on the default build), other text verbatim; binary assets
+/// (PNGs, …) left out.
+pub fn tree(asset_prefix: &str) -> Vec<(String, String)> {
+    let prefix = if asset_prefix.ends_with('/') { asset_prefix.to_string() } else { format!("{asset_prefix}/") };
+    iter_under(&prefix)
+        .into_iter()
+        .filter_map(|asset_path| {
+            let rel = asset_path[prefix.len()..].to_string();
+            let body = read(&asset_path).filter(|_| !rel.is_empty())?;
+            let body = if rel.ends_with(".md") || rel.ends_with(".txt") { crate::brand::render(&body).into_owned() } else { body };
+            Some((rel, body))
+        })
+        .collect()
+}
+
+/// Write one deployed file, its folders first; `.sh` gets mode 0755 on unix.
+pub fn write_text(target: &Path, body: &str) -> anyhow::Result<()> {
     use std::fs;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(target, body)?;
+    #[cfg(unix)]
+    if target.extension().and_then(|s| s.to_str()) == Some("sh") {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(target)?.permissions();
+        perms.set_mode(0o755);
+        let _ = fs::set_permissions(target, perms);
+    }
+    Ok(())
+}
+
+/// Deploy every asset under `asset_prefix` into `target_dir`, preserving the
+/// relative subtree. Returns (written, unchanged) counts. Backups are NOT
+/// created and edits are not looked at: for explicit installs (`skill add`,
+/// `skill update`). The bundled skills go through `skill::deploy::refresh_bundled`.
+pub fn install_tree(asset_prefix: &str, target_dir: &Path) -> anyhow::Result<(usize, usize)> {
     let mut written = 0usize;
     let mut unchanged = 0usize;
-    let prefix = if asset_prefix.ends_with('/') {
-        asset_prefix.to_string()
-    } else {
-        format!("{}/", asset_prefix)
-    };
-    for asset_path in iter_under(&prefix) {
-        let rel = &asset_path[prefix.len()..];
-        if rel.is_empty() {
-            continue;
-        }
-        let body = match read(&asset_path) {
-            Some(b) => b,
-            None => continue,
-        };
-        // Rebrand command refs in deployed skill prose (identity on the default
-        // build). Text only — never touch binary assets (PNGs, etc.).
-        let body = if rel.ends_with(".md") || rel.ends_with(".txt") {
-            crate::brand::render(&body).into_owned()
-        } else {
-            body
-        };
-        let target = target_dir.join(rel);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let prev = fs::read_to_string(&target).unwrap_or_default();
-        if prev == body && target.exists() {
+    for (rel, body) in tree(asset_prefix) {
+        let target = target_dir.join(&rel);
+        if target.exists() && std::fs::read_to_string(&target).is_ok_and(|prev| prev == body) {
             unchanged += 1;
         } else {
-            fs::write(&target, &body)?;
+            write_text(&target, &body)?;
             written += 1;
-        }
-        #[cfg(unix)]
-        if target.extension().and_then(|s| s.to_str()) == Some("sh") {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&target)?.permissions();
-            perms.set_mode(0o755);
-            let _ = fs::set_permissions(&target, perms);
         }
     }
     Ok((written, unchanged))

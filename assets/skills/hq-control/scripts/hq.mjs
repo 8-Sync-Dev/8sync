@@ -64,6 +64,16 @@ function hint(status, data) {
   return "";
 }
 
+// Where this runs, for HQ to find the calling room (lib/server/brief.ts senderRoomOf): a Claude Code
+// room's session id; an omp room's id (8sync's omp launches export it, subagents inherit it); omp's
+// session file for an omp 8sync did not launch (a subagent's PI_SESSION_ID is its own, the file sits
+// in the room's session dir). Named ids that match no room, or two rooms, are refused, never guessed.
+function caller() {
+  const e = process.env;
+  const ids = { from_session: e.CLAUDE_CODE_SESSION_ID, from_room: e.EIGHTSYNC_ROOM_ID, from_session_file: e.PI_SESSION_FILE };
+  return { from_cwd: process.cwd(), ...Object.fromEntries(Object.entries(ids).filter(([, v]) => v)) };
+}
+
 async function fetchHq(method, route, body) {
   try {
     return await fetch(base + route, {
@@ -163,8 +173,7 @@ switch (cmd) {
   }
   case "digest": {
     // The same text HQ puts under the owner's next message when it changed; pulling it counts as got.
-    const sid = process.env.CLAUDE_CODE_SESSION_ID;
-    const r = await call("POST", "/api/digest", { ...(id ? { room: id } : {}), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
+    const r = await call("POST", "/api/digest", { ...(id ? { room: id } : {}), ...caller() });
     console.log(r.text ?? "no other bot live, no shared fact");
     break;
   }
@@ -179,8 +188,7 @@ switch (cmd) {
   case "fact": {
     // Never applied by itself: the owner approves or drops it in HQ (Bot này đang biết gì).
     const text = need([id, ...rest].filter(Boolean).join(" ").trim(), "fact text");
-    const sid = process.env.CLAUDE_CODE_SESSION_ID;
-    const r = await call("POST", "/api/facts", { text, from: path.basename(process.cwd()), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
+    const r = await call("POST", "/api/facts", { text, from: path.basename(process.cwd()), ...caller() });
     console.log(r.created ? `proposed ${r.pending.id}: waits for the owner's approval in HQ` : `already waiting as ${r.pending.id}`);
     break;
   }
@@ -201,11 +209,10 @@ switch (cmd) {
   }
   case "send": {
     // HQ delivers it under `[phòng <from> → …]`, never the owner's header (`[owner …]`): a room's
-    // message is not the owner's prompt (no `/solo`, `/autopilot`… ship grant from it). `from_session`
-    // and `from_cwd` let HQ find this room and add `[từ phòng <label> · <project> · đang: <step>]` under it.
+    // message is not the owner's prompt (no `/solo`, `/autopilot`… ship grant from it). caller() lets
+    // HQ find this room and add `[từ phòng <label> · <project> · đang: <step>]` under it.
     const text = need(rest.join(" ").trim(), "message text");
-    const sid = process.env.CLAUDE_CODE_SESSION_ID;
-    const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
+    const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()), ...caller() });
     // `dropped`: the same text already went to this room under a minute ago (HQ's dedupe): not resent.
     console.log(JSON.stringify({ delivery: r.delivery, live: r.live ?? null, error: r.error ?? null, id: r.message?.id ?? null }));
     break;

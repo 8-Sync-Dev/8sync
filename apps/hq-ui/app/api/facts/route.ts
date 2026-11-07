@@ -1,4 +1,4 @@
-import { liveRooms, senderRoomOf } from "@/lib/server/brief";
+import { callerIds, liveRooms, senderRoomOf } from "@/lib/server/brief";
 import { decideFact, proposeFact, readFacts, replaceFacts, writeFacts } from "@/lib/server/facts";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { senderOf } from "@/lib/server/sender";
@@ -39,7 +39,7 @@ export async function PUT(req: Request) {
 }
 
 /**
- * A proposal (`hq.mjs fact "…"`): `{text, from?, from_session?, from_cwd?}` waits in `pending` until the
+ * A proposal (`hq.mjs fact "…"`): `{text, from?, from_session?, from_room?, from_session_file?, from_cwd?}` waits in `pending` until the
  * owner approves it in HQ; never a fact by itself, from anyone. 201 `{pending, created}` (false: the same
  * line already waits); 422 a bad line, a secret-looking one, one already a fact, or too many waiting.
  */
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   let from = sender.by === "owner" ? "owner" : sender.by === "room" ? sender.room : null;
   if (sender.by === "room") {
     const rooms = await liveRooms(o.db).catch(() => []);
-    from = senderRoomOf(rooms, { session: body.from_session, cwd: body.from_cwd }, "")?.label ?? from;
+    from = senderRoomOf(rooms, { ids: await callerIds(o.db, body), cwd: body.from_cwd }, "")?.label ?? from;
   }
   const cur = readFacts();
   // A broken file is the owner's to overwrite (PUT keeps a .bad copy), not a bot's proposal.

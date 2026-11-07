@@ -159,7 +159,9 @@ fn launch(cwd: &Path, session_dir: &Path, fresh: bool, room: (&Path, &str), mode
 pub(crate) fn omp_command(cwd: &Path, session_dir: &Path, room: (&Path, &str), model: Option<&str>) -> Command {
     let cfg = crate::models::ModelConfig::load();
     let mut cmd = Command::new("omp");
+    // A Claude Code id inherited from the shell would name another room to hq.mjs (HQ refuses two).
     cmd.current_dir(cwd)
+        .env_remove("CLAUDE_CODE_SESSION_ID")
         .env("EIGHTSYNC_ROOM", room.1)
         .env("EIGHTSYNC_ROOM_ID", ccc_core::room_id(room.0, room.1));
     if let Ok(exe) = std::env::current_exe() {

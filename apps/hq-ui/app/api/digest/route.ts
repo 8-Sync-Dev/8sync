@@ -1,4 +1,4 @@
-import { liveRooms, senderRoomOf } from "@/lib/server/brief";
+import { callerIds, liveRooms, senderRoomOf } from "@/lib/server/brief";
 import { currentDigest, digestEntry, digestHash, recordDigest, setDigestOptOut } from "@/lib/server/digest";
 import { bad, json, open, readBody } from "@/lib/server/http";
 import { senderOf } from "@/lib/server/sender";
@@ -23,8 +23,8 @@ export async function GET(req: Request) {
 }
 
 /**
- * A bot pulls its digest (`hq.mjs digest`): `{room?}` or, by default, the room hq.mjs runs in (`from_session`
- * / `from_cwd`). Always the whole current text (even with the push switched off: the bot asked), remembered
+ * A bot pulls its digest (`hq.mjs digest`): `{room?}` or, by default, the room hq.mjs runs in (its ids
+ * `from_session` / `from_room` / `from_session_file`, else `from_cwd`; lib/server/brief.ts senderRoomOf). Always the whole current text (even with the push switched off: the bot asked), remembered
  * as what it got so the owner's next message does not carry it again. 200 `{room, text, changed}`.
  */
 export async function POST(req: Request) {
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   let id = roomParam(body.room);
   if (!id) {
     const rooms = await liveRooms(o.db).catch(() => []);
-    id = senderRoomOf(rooms, { session: body.from_session, cwd: body.from_cwd }, "")?.name ?? null;
+    id = senderRoomOf(rooms, { ids: await callerIds(o.db, body), cwd: body.from_cwd }, "")?.name ?? null;
   }
   if (!id) return bad("room: không nhận ra phòng đang gọi; ghi rõ id (hq.mjs digest <id>)", 422);
   const d = await currentDigest(o.db, id);
