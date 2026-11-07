@@ -1,13 +1,15 @@
 import { afterParam, bad, limitParam, json, open, readBody } from "@/lib/server/http";
-import { openDialog, SessionWaiting } from "@/lib/server/channel";
-import { deliverText } from "@/lib/server/deliver";
+import { openDialog } from "@/lib/server/channel";
+import { deliverOrWaiting } from "@/lib/server/deliver";
+import { appendGroupLog, groupGuard, readGroups } from "@/lib/server/groups";
+import { roomSend } from "@/lib/server/group-send";
 import { capturePlain, mergedSessions } from "@/lib/server/proc";
 import { isInboxId } from "@/lib/server/inbox";
 import { messagesAfter } from "@/lib/server/queries";
 import { clampText, isTmuxName } from "@/lib/server/validate";
 import { expandMentions } from "@/lib/server/fs-list";
 import { loadFloor, ompSessions } from "@/lib/server/floor";
-import { projectOf } from "@/lib/server/office";
+import { projectOf, type Room } from "@/lib/server/office";
 import { FILES_PER_TASK, isUploadId, placeUploads, withFiles } from "@/lib/server/uploads";
 import { senderOf } from "@/lib/server/sender";
 import { liveRooms, senderRoomOf } from "@/lib/server/brief";
@@ -71,13 +73,33 @@ export async function POST(req: Request) {
   // An omp room or a Claude session started elsewhere: its inbox; an hq-* tmux room: typed in (`deliverText`).
   // The owner's page sends as the owner; anything else (hq.mjs: `from` names its room) as a room.
   const sender = senderOf(req, o.access, body.from);
-  if (sender.by === "room") text = { ok: true, value: await withSenderContext(o.db, text.value, body, session) };
-  try {
-    return json(await deliverText(o.db, session, text.value, sender), 201);
-  } catch (e) {
-    if (e instanceof SessionWaiting) return json({ error: "session-waiting", dialog: e.dialog }, 409);
-    throw e;
+  if (sender.by === "owner") {
+    // The owner writing to this room directly: it no longer answers a group turn (lib/server/groups.ts).
+    groupGuard().leave(session);
+    return deliverReply(await deliverOrWaiting(o.db, session, text.value, sender));
   }
+  if (sender.by !== "room") return deliverReply(await deliverOrWaiting(o.db, session, text.value, sender));
+  const rooms = await liveRooms(o.db).catch(() => []);
+  const ctx = senderContext(rooms, text.value, body, session);
+  const to = rooms.find((r) => r.name === session || r.session_id === session)?.name ?? session;
+  // A room answering a group turn (or carrying a hop line past its max) is counted per turn; any other
+  // room message, the Chief of Staff's routing included, goes as before under the per-pair guard
+  // (roomSend: same text within 60 s dropped, 409 pair-limit past 12 per pair in 10 min).
+  const r = await roomSend(ctx.from, to, ctx.text, {
+    guard: groupGuard(),
+    groups: readGroups(),
+    deliver: (t) => deliverOrWaiting(o.db, session, t, sender),
+    log: (group, e) => appendGroupLog(group, e),
+    max: TEXT_MAX,
+  });
+  return r.status === 201 ? deliverReply(r.body) : json(r.body, r.status);
+}
+
+/** A delivery as the route answers it: 201, or 409 session-waiting while the pane shows a dialog. */
+function deliverReply(r: { waiting?: boolean; dialog?: unknown }): Response {
+  if (r.waiting) return json({ error: "session-waiting", dialog: r.dialog }, 409);
+  // `waiting` is the route's own flag: left out of the body (JSON drops undefined).
+  return json({ ...r, waiting: undefined }, 201);
 }
 
 /**
@@ -96,11 +118,12 @@ async function roomRoot(db: DatabaseSync, session: string): Promise<string | nul
  * A room's message with its context line on top (lib/room-context.ts: label, project, current step) when
  * hq.mjs named where it runs (`from_session`: its CLAUDE_CODE_SESSION_ID, `from_cwd`: its folder) and
  * that is one live room; as sent otherwise, or when the line would push it past the message limit.
+ * `from`: that room's address (the group loop guard counts by it), null when HQ cannot tell.
  */
-async function withSenderContext(db: DatabaseSync, text: string, body: Record<string, unknown>, to: string): Promise<string> {
-  if (body.from_session == null && body.from_cwd == null) return text;
-  const from = senderRoomOf(await liveRooms(db).catch(() => []), { session: body.from_session, cwd: body.from_cwd }, to);
-  if (!from) return text;
+function senderContext(rooms: Room[], text: string, body: Record<string, unknown>, to: string): { text: string; from: string | null } {
+  if (body.from_session == null && body.from_cwd == null) return { text, from: null };
+  const from = senderRoomOf(rooms, { session: body.from_session, cwd: body.from_cwd }, to);
+  if (!from) return { text, from: null };
   const out = withContext(text, { label: from.label, project: roomProject(from.project?.root ?? from.cwd), doing: from.doing });
-  return [...out].length <= TEXT_MAX ? out : text;
+  return { text: [...out].length <= TEXT_MAX ? out : text, from: from.name };
 }

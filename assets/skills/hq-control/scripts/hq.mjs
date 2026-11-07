@@ -56,6 +56,8 @@ function uiToken() {
 function hint(status, data) {
   if (status === 401) return `the token in ${tokenFile} is not the one the HQ on ${base} uses (another HQ on this port, or HQ restarted): ask the owner to restart \`8sync hq ui\`, or set HQ_UI_PORT`;
   if (status === 404 && !data.error) return "this HQ has no such route: it is older than this skill, ask the owner to run `8sync up`";
+  // Loop guard (lib/server/group-send.ts roomSend): rooms talked to each other enough; resending only repeats it.
+  if (status === 409 && (data.error === "hop-limit" || data.error === "pair-limit")) return "stop: do not resend, tell the owner and wait for them";
   return "";
 }
 
@@ -78,7 +80,7 @@ async function call(method, route, body) {
   const res = await fetchHq(method, route, body);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const why = [data.error, data.dialog ? `dialog: ${JSON.stringify(data.dialog)}` : "", hint(res.status, data)].filter(Boolean).join(" · ");
+    const why = [data.error, data.detail, data.dialog ? `dialog: ${JSON.stringify(data.dialog)}` : "", hint(res.status, data)].filter(Boolean).join(" · ");
     die(`${method} ${route} → ${res.status} ${why || res.statusText}`, 2);
   }
   return data;
@@ -176,6 +178,7 @@ switch (cmd) {
     const text = need(rest.join(" ").trim(), "message text");
     const sid = process.env.CLAUDE_CODE_SESSION_ID;
     const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
+    // `dropped`: the same text already went to this room under a minute ago (HQ's dedupe): not resent.
     console.log(JSON.stringify({ delivery: r.delivery, live: r.live ?? null, error: r.error ?? null, id: r.message?.id ?? null }));
     break;
   }

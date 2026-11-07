@@ -3,8 +3,10 @@
 import { FileIcon, FolderIcon, FolderUpIcon, SlashIcon } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent } from "react";
 import { Textarea } from "@/components/ui/textarea";
+import { applyBotMention, botMentionAt, filterMentionBots, type BotMentionToken } from "@/lib/bot-mention";
 import { applyCommand, applyPick, filterCommands, filterEntries, mentionAt, slashAt, type Entry, type Mention, type Slash, type SlashCommand } from "@/lib/mention";
 import { cn } from "@/lib/utils";
+import { BotOptions, type ComboBot } from "./bots/mention-combobox";
 import type { Api } from "./use-hq";
 
 type Props = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & {
@@ -15,21 +17,25 @@ type Props = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & {
   api: Api;
   /** The "/command" picker (omp and Claude commands); off for a shell, where "/" starts a path. */
   commands?: boolean;
+  /** "@bot" options (the live bots this box can name); shown before files while a bot's handle matches. */
+  bots?: ComboBot[];
 };
 
 /**
  * A Textarea with an "@path" picker: it lists the folder ("@src/" one level down, "@../" one level
- * up, out of the project too; a folder keeps the list open), and a "/command" picker at the start
- * or after a space (omp and Claude commands, GET /api/commands). ↑/↓ choose, Enter or Tab picks, Esc
- * closes; a tap picks on a phone.
+ * up, out of the project too; a folder keeps the list open), a "/command" picker at the start or
+ * after a space (omp and Claude commands, GET /api/commands), and with `bots` an "@bot" picker that
+ * wins while a bot's handle matches what is typed. ↑/↓ choose, Enter or Tab picks, Esc closes; a tap
+ * picks on a phone.
  */
-export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea({ value, onValueChange, base, api, commands = true, onKeyDown, className, ...rest }, ref) {
+export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea({ value, onValueChange, base, api, commands = true, bots, onKeyDown, className, ...rest }, ref) {
   const inner = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => inner.current!, []);
   const [m, setM] = useState<Mention | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [active, setActive] = useState(0);
   const [sl, setSl] = useState<Slash | null>(null);
+  const [bm, setBm] = useState<BotMentionToken | null>(null);
   // Loaded on the first "/" typed, then kept (the server caches the list 30 s).
   const [cmds, setCmds] = useState<SlashCommand[] | null>(null);
   const listId = useRef(`mention-${Math.random().toString(36).slice(2)}`).current;
@@ -70,13 +76,16 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
 
   const cmdShown = sl && cmds ? filterCommands(cmds, sl.prefix) : [];
   const slash = cmdShown.length > 0;
-  const shown = m && !slash ? filterEntries(entries, m.prefix) : [];
-  const count = slash ? cmdShown.length : shown.length;
+  const botShown = bm && bots && !slash ? filterMentionBots(bots, bm.prefix) : [];
+  const botList = botShown.length > 0;
+  const shown = m && !slash && !botList ? filterEntries(entries, m.prefix) : [];
+  const count = slash ? cmdShown.length : botList ? botShown.length : shown.length;
   const open = count > 0;
 
   const sync = (text: string, caret: number) => {
     setM(base ? mentionAt(text, caret) : null);
     setSl(commands ? slashAt(text, caret) : null);
+    setBm(bots?.length ? botMentionAt(text, caret) : null);
     setActive(0);
   };
 
@@ -105,6 +114,13 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
     setSl(null);
   };
 
+  const pickBot = (b: ComboBot) => {
+    if (!bm) return;
+    const r = applyBotMention(value, bm, b);
+    place(r.text, r.caret);
+    setBm(null);
+  };
+
   function keys(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (open) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -116,6 +132,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
         e.preventDefault();
         const i = Math.min(active, count - 1);
         if (slash) pickCmd(cmdShown[i]);
+        else if (botList) pickBot(botShown[i]);
         else pick(shown[i]);
         return;
       }
@@ -123,6 +140,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
         e.preventDefault();
         setM(null);
         setSl(null);
+        setBm(null);
         return;
       }
     }
@@ -164,7 +182,8 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
           ))}
         </ul>
       )}
-      {open && !slash && m && (
+      {open && botList && bm && <BotOptions listId={listId} className={listClass} prefix={bm.prefix} bots={botShown} active={active} onActive={setActive} onPick={pickBot} />}
+      {open && !slash && !botList && m && (
         <ul id={listId} role="listbox" aria-label={`Tệp và thư mục trong ${m.dir || "./"}`} className={listClass}>
           <li aria-hidden className="px-2 py-1 font-mono text-[11px] text-muted-foreground">
             @{m.dir || "./"} · ↑↓ chọn · Enter/Tab · ../ lên một cấp
@@ -211,6 +230,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
           setTimeout(() => {
             setM(null);
             setSl(null);
+            setBm(null);
           }, 120)
         }
       />
