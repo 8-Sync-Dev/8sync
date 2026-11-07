@@ -1,7 +1,7 @@
 //! `8sync ccc grade`: the external grader the `/solo` Router runs on a Worker's branch before a
 //! merge. It never trusts what the Worker's worktree says: the Worker's diff (`base...head`) is
 //! applied to a fresh detached worktree of `base` under the OS temp dir, and the checks run there.
-//! A diff that edits the referee itself (tests, test config/setup, CI workflows, git hooks) is
+//! A diff that edits the referee itself (existing tests, test config/setup, CI workflows, git hooks; new tests are fine) is
 //! REJECTED before anything runs, unless the goal named that path (`--allow`): reward hacking by
 //! rewriting the test is the failure this gate exists for. Held-out checks are written by the
 //! Router at planning time and never shown to the Worker.
@@ -19,9 +19,10 @@ usage: 8sync ccc grade [--base <ref>] [--head <ref>] [--check <cmd>]... [--held-
                        [--allow <glob>]... [--keep] [--json]
 
 Applies `git diff <base>...<head>` to a clean detached worktree of <base> (OS temp dir), then:
-  REJECTED (exit 3)  the diff touches tests (tests/ test/ __tests__/, *.test.*, *.spec.*, *_test.*,
-                     test_*.py), conftest.py, pytest/vitest/jest config or setup, .github/workflows/
-                     or git hooks, and no --allow glob covers it; nothing is run
+  REJECTED (exit 3)  the diff changes, deletes or renames an EXISTING test (tests/ test/ __tests__/,
+                     *.test.*, *.spec.*, *_test.*, test_*.py; adding a new test is fine), or touches
+                     conftest.py, pytest/vitest/jest config or setup, .github/workflows/ or git hooks
+                     (even new ones), and no --allow glob covers it; nothing is run
   FAIL     (exit 1)  a --check or --held-out command failed or ran over 20 min (stops at the first)
   PASS     (exit 0)  every --check, then every --held-out, exited 0
   ERROR    (exit 2)  bad ref, empty diff, the diff does not apply on <base>, git failed
@@ -73,8 +74,8 @@ impl Verdict {
     }
 }
 
-/// Why a changed path is the referee rather than the work, or None for an ordinary path.
-pub(super) fn offense(path: &str) -> Option<&'static str> {
+/// Why a path is the referee itself (off-limits whatever the change, even when added), or None.
+fn referee(path: &str) -> Option<&'static str> {
     let lower = path.replace('\\', "/").to_lowercase();
     let segs: Vec<&str> = lower.split('/').filter(|s| !s.is_empty()).collect();
     let (&name, dirs) = segs.split_last()?;
@@ -91,16 +92,64 @@ pub(super) fn offense(path: &str) -> Option<&'static str> {
     if matches!(name, "pytest.ini" | ".pytest.ini" | "tox.ini") || name.starts_with("jest.") || name.starts_with("vitest.") || matches!(stem, "setuptests" | "setup-tests" | "test-setup" | "testsetup") {
         return Some("test config/setup");
     }
+    None
+}
+
+/// A test file: adding one is normal work, changing an existing one is not.
+fn is_test(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_lowercase();
+    let segs: Vec<&str> = lower.split('/').filter(|s| !s.is_empty()).collect();
+    let Some((&name, dirs)) = segs.split_last() else { return false };
     let ext_cut = name.rsplit_once('.').map_or(name, |(s, _)| s);
-    if dirs.iter().any(|d| matches!(*d, "tests" | "test" | "__tests__"))
+    dirs.iter().any(|d| matches!(*d, "tests" | "test" | "__tests__"))
         || name.contains(".test.")
         || name.contains(".spec.")
         || (name.contains('.') && ext_cut.ends_with("_test"))
         || (name.starts_with("test_") && name.ends_with(".py"))
-    {
-        return Some("test file");
+}
+
+/// One `git diff --name-status` entry; `old` is the source path of a rename/copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Change {
+    status: u8,
+    old: Option<String>,
+    path: String,
+}
+
+/// Parses `git diff --name-status -z` (`R`/`C` entries carry two paths: old, then new).
+pub(super) fn parse_name_status(z: &str) -> Vec<Change> {
+    let mut out = Vec::new();
+    let mut it = z.split('\0').filter(|s| !s.is_empty());
+    while let (Some(st), Some(first)) = (it.next(), it.next()) {
+        let status = st.as_bytes()[0];
+        let (old, path) = if matches!(status, b'R' | b'C') { (Some(first.to_string()), it.next().unwrap_or(first).to_string()) } else { (None, first.to_string()) };
+        out.push(Change { status, old, path });
     }
-    None
+    out
+}
+
+/// The path that makes a change touch the referee, and why; None for ordinary work. The referee
+/// (CI, hooks, conftest, test config) is off-limits for any status; a test file only when an
+/// existing one is changed (M, D, T, a rename away from it, a copy into one); adding is fine.
+pub(super) fn offense(c: &Change) -> Option<(&str, &'static str)> {
+    for p in c.old.iter().chain([&c.path]) {
+        if let Some(why) = referee(p) {
+            return Some((p, why));
+        }
+    }
+    if c.status == b'R' {
+        return c.old.as_deref().filter(|p| is_test(p)).map(|p| (p, "đổi tên/chuyển test có sẵn"));
+    }
+    if c.status == b'A' || !is_test(&c.path) {
+        return None;
+    }
+    let why = match c.status {
+        b'D' => "xoá test",
+        b'C' => "chép test có sẵn",
+        b'T' => "đổi kiểu file test",
+        _ => "sửa test có sẵn",
+    };
+    Some((&c.path, why))
 }
 
 /// `*` = any run inside one segment, `**` = any run across segments (`**/` may match none),
@@ -132,9 +181,16 @@ pub(super) fn allowed(path: &str, allow: &[String]) -> bool {
     })
 }
 
-/// The offending paths of a diff with their reason, after `--allow`.
-pub(super) fn offenders(paths: &[String], allow: &[String]) -> Vec<(String, &'static str)> {
-    paths.iter().filter_map(|p| offense(p).filter(|_| !allowed(p, allow)).map(|why| (p.clone(), why))).collect()
+/// The offending changes of a diff (`old → new` for a rename/copy) with their reason, after
+/// `--allow` (matched against the path that offends).
+pub(super) fn offenders(changes: &[Change], allow: &[String]) -> Vec<(String, &'static str)> {
+    changes
+        .iter()
+        .filter_map(|c| {
+            let (p, why) = offense(c).filter(|(p, _)| !allowed(p, allow))?;
+            Some((c.old.as_ref().map_or_else(|| p.to_string(), |o| format!("{o} → {}", c.path)), why))
+        })
+        .collect()
 }
 
 #[derive(Debug, Default)]
@@ -259,14 +315,15 @@ fn grade_into(o: &Opts, cwd: &Path, r: &mut Report) -> Result<()> {
     let sha = |rf: &str| git(&top, &["rev-parse", "--verify", "-q", &format!("{rf}^{{commit}}")]).with_context(|| format!("no such commit: {rf}"));
     let (base, head) = (sha(&o.base)?, sha(&o.head)?);
     let range = format!("{base}...{head}");
-    let names = git(&top, &["diff", "--name-only", "--no-renames", "-z", &range, "--"])?;
-    let files: Vec<String> = names.split('\0').filter(|l| !l.is_empty()).map(str::to_owned).collect();
-    r.files = files.len();
-    if files.is_empty() {
+    // Renames kept (`-M`): a moved test must read as a change to an existing test, not an add.
+    let names = git(&top, &["diff", "--name-status", "-M", "-z", &range, "--"])?;
+    let changes = parse_name_status(&names);
+    r.files = changes.len();
+    if changes.is_empty() {
         bail!("empty diff: {}...{} changes nothing", o.base, o.head);
     }
     // The referee check needs no worktree: nothing runs when the diff edits tests/CI/hooks.
-    r.offenders = offenders(&files, &o.allow);
+    r.offenders = offenders(&changes, &o.allow);
     if !r.offenders.is_empty() {
         r.verdict = Verdict::Rejected;
         return Ok(());
@@ -422,10 +479,10 @@ impl Report {
     fn text(&self, o: &Opts) -> String {
         let mut out = format!("grade: {} — {} file đổi, {}...{}\n", self.verdict.key(), self.files, o.base, o.head);
         for (p, why) in &self.offenders {
-            out.push_str(&format!("  ✗ {why:<18}{p}\n"));
+            out.push_str(&format!("  ✗ {why}: {p}\n"));
         }
         if !self.offenders.is_empty() {
-            out.push_str("  diff sửa bộ chấm (test/CI/hook): không chạy check; chuyển Critic/owner duyệt, hoặc chạy lại với --allow <glob> khi mục tiêu nói tới path đó\n");
+            out.push_str("  diff sửa bộ chấm (test có sẵn/CI/hook/config test): không chạy check; chuyển Critic/owner duyệt, hoặc chạy lại với --allow <glob> khi mục tiêu nói tới path đó\n");
         }
         for s in &self.steps {
             let mark = if s.ok() { '✓' } else { '✗' };
@@ -476,16 +533,17 @@ pub(super) fn run(rest: &[String], cwd: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn ch(status: u8, path: &str) -> Change {
+        Change { status, old: None, path: path.into() }
+    }
+
+    fn why(c: &Change) -> Option<&'static str> {
+        offense(c).map(|(_, w)| w)
+    }
+
     #[test]
-    fn rejects_each_referee_category_with_its_reason() {
-        for (p, why) in [
-            ("apps/hq-ui/tests/x.test.ts", "test file"),
-            ("crates/cli/tests/cli.rs", "test file"),
-            ("src/__tests__/a.js", "test file"),
-            ("src/button.test.tsx", "test file"),
-            ("src/api.spec.ts", "test file"),
-            ("pkg/server_test.go", "test file"),
-            ("app/test_models.py", "test file"),
+    fn the_referee_is_rejected_for_any_status_even_when_added() {
+        for (p, w) in [
             ("conftest.py", "pytest conftest"),
             ("backend/conftest.py", "pytest conftest"),
             ("pytest.ini", "test config/setup"),
@@ -498,42 +556,68 @@ mod tests {
             (".githooks/pre-push", "git hook"),
             (".pre-commit-config.yaml", "git hook"),
             ("lefthook.yml", "git hook"),
-            ("APPS\\HQ-UI\\Tests\\X.TS", "test file"),
         ] {
-            assert_eq!(offense(p), Some(why), "{p}");
+            for s in *b"AMD" {
+                assert_eq!(why(&ch(s, p)), Some(w), "{} {p}", s as char);
+            }
+        }
+        // Renaming a workflow away is deleting it.
+        let r = Change { status: b'R', old: Some(".github/workflows/ci.yml".into()), path: "docs/ci.yml".into() };
+        assert_eq!(offense(&r), Some((".github/workflows/ci.yml", "CI workflow")));
+    }
+
+    #[test]
+    fn adding_a_test_is_work_changing_an_existing_one_is_rejected() {
+        let tests = ["apps/hq-ui/tests/x.test.ts", "crates/cli/tests/cli.rs", "src/__tests__/a.js", "src/button.test.tsx", "src/api.spec.ts", "pkg/server_test.go", "app/test_models.py", "APPS\\HQ-UI\\Tests\\X.TS"];
+        for p in tests {
+            assert_eq!(why(&ch(b'A', p)), None, "A {p}");
+            assert_eq!(why(&ch(b'M', p)), Some("sửa test có sẵn"), "M {p}");
+            assert_eq!(why(&ch(b'D', p)), Some("xoá test"), "D {p}");
+            assert_eq!(why(&ch(b'T', p)), Some("đổi kiểu file test"), "T {p}");
+        }
+        let r = |old: &str, new: &str| Change { status: b'R', old: Some(old.into()), path: new.into() };
+        assert_eq!(offense(&r("tests/a.rs", "tests/b.rs")), Some(("tests/a.rs", "đổi tên/chuyển test có sẵn")));
+        assert_eq!(offense(&r("tests/a.test.ts", "src/a.ts")), Some(("tests/a.test.ts", "đổi tên/chuyển test có sẵn")));
+        // Moving ordinary code into a test file adds a test.
+        assert_eq!(offense(&r("src/helper.ts", "tests/helper.ts")), None);
+        let c = Change { status: b'C', old: Some("tests/a.rs".into()), path: "tests/b.rs".into() };
+        assert_eq!(why(&c), Some("chép test có sẵn"));
+    }
+
+    #[test]
+    fn ordinary_source_and_look_alikes_pass_for_any_status() {
+        for p in ["crates/cli/src/verbs/ccc/grade.rs", "apps/hq-ui/lib/server/office.ts", "src/latest.ts", "src/contest.py", "docs/testing.md", "src/attest_test", "src/hooks/useThing.ts", ".github/dependabot.yml", "CHANGELOG.md", "src/testimony.rs"] {
+            for s in *b"AMD" {
+                assert_eq!(offense(&ch(s, p)), None, "{} {p}", s as char);
+            }
         }
     }
 
     #[test]
-    fn ordinary_source_and_look_alikes_pass() {
-        for p in [
-            "crates/cli/src/verbs/ccc/grade.rs",
-            "apps/hq-ui/lib/server/office.ts",
-            "src/latest.ts",
-            "src/contest.py",
-            "docs/testing.md",
-            "src/attest_test",
-            "src/hooks/useThing.ts",
-            ".github/dependabot.yml",
-            "CHANGELOG.md",
-            "src/testimony.rs",
-        ] {
-            assert_eq!(offense(p), None, "{p}");
-        }
+    fn name_status_parses_two_path_renames_and_copies() {
+        let z = "M\0src/a.rs\0R087\0tests/old.rs\0tests/new.rs\0A\0tests/n.test.ts\0C100\0x.py\0y.py\0D\0gone.rs\0";
+        let got = parse_name_status(z);
+        assert_eq!(got.len(), 5);
+        assert_eq!(got[1], Change { status: b'R', old: Some("tests/old.rs".into()), path: "tests/new.rs".into() });
+        assert_eq!((got[2].status, got[2].path.as_str()), (b'A', "tests/n.test.ts"));
+        assert_eq!((got[3].status, got[3].old.as_deref(), got[4].path.as_str()), (b'C', Some("x.py"), "gone.rs"));
     }
 
     #[test]
     fn allow_globs_override_only_what_they_cover() {
-        let paths: Vec<String> = ["apps/hq-ui/tests/x.test.ts", "apps/hq-ui/tests/deep/y.test.ts", ".github/workflows/ci.yml", "src/a.rs"].map(String::from).to_vec();
-        let all = offenders(&paths, &[]);
-        assert_eq!(all.len(), 3);
-        let left = offenders(&paths, &["apps/hq-ui/tests/**".into()]);
+        let changes = vec![ch(b'M', "apps/hq-ui/tests/x.test.ts"), ch(b'M', "apps/hq-ui/tests/deep/y.test.ts"), ch(b'A', ".github/workflows/ci.yml"), ch(b'M', "src/a.rs"), ch(b'A', "apps/hq-ui/tests/new.test.ts")];
+        assert_eq!(offenders(&changes, &[]).len(), 3);
+        let left = offenders(&changes, &["apps/hq-ui/tests/**".into()]);
         assert_eq!(left, vec![(".github/workflows/ci.yml".to_string(), "CI workflow")]);
         // `*` stays in one segment: deep/ is not covered.
-        let left = offenders(&paths, &["apps/hq-ui/tests/*".into(), ".github/workflows/ci.yml".into()]);
-        assert_eq!(left, vec![("apps/hq-ui/tests/deep/y.test.ts".to_string(), "test file")]);
+        let left = offenders(&changes, &["apps/hq-ui/tests/*".into(), ".github/workflows/ci.yml".into()]);
+        assert_eq!(left, vec![("apps/hq-ui/tests/deep/y.test.ts".to_string(), "sửa test có sẵn")]);
         // No `/` → matches the file name anywhere.
-        assert!(offenders(&paths, &["*.test.ts".into(), "ci.yml".into()]).is_empty());
+        assert!(offenders(&changes, &["*.test.ts".into(), "ci.yml".into()]).is_empty());
+        // A rename is shown as `old → new` and allowed by the path that offends.
+        let r = [Change { status: b'R', old: Some("tests/a.rs".into()), path: "tests/b.rs".into() }];
+        assert_eq!(offenders(&r, &[]), vec![("tests/a.rs → tests/b.rs".to_string(), "đổi tên/chuyển test có sẵn")]);
+        assert!(offenders(&r, &["tests/a.rs".into()]).is_empty());
         assert!(allowed("a/b/c.ts", &["**/c.ts".into()]) && allowed("c.ts", &["**/c.ts".into()]) && !allowed("a/b/c.ts", &["a/*.ts".into()]));
     }
 
