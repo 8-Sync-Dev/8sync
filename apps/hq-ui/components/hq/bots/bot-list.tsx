@@ -13,7 +13,7 @@ import { BUILT_IN_TEMPLATES, SUGGESTED_TEMPLATE_IDS } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 import type { Room } from "../use-office";
 import { BotAvatar } from "./bot-avatar";
-import { TEMPLATE_TINT } from "./new-bot-sheet";
+import { TEMPLATE_TINT } from "./template-bits";
 import type { Roster } from "./use-roster";
 
 /** The state as a dot beside its word: the word carries it, the colour only reinforces. */

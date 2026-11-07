@@ -5,7 +5,11 @@ import * as templatesRoute from "@/app/api/templates/route";
 import { getToken } from "@/lib/server/auth";
 import { allTemplates, readCustomTemplates, templatesDir } from "@/lib/server/templates";
 import {
+  BLANK_DRAFT,
   BUILT_IN_TEMPLATES,
+  checkTemplate,
+  copyDraft,
+  draftOf,
   SUGGESTED_TEMPLATE_IDS,
   botKeyOf,
   createRequest,
@@ -18,6 +22,7 @@ import {
   runForEngine,
   slugify,
   suggestName,
+  templateOfDraft,
   templateRun,
   withModel,
   withThinking,
@@ -262,5 +267,35 @@ describe("engine + model: the template's by default, the owner's pick when given
     expect(withModel({ ...run, thinking: "high" }, "zai/glm-5.3", [omp(["low", "high"])])).toEqual({ ...run, thinking: "high" });
     expect(withModel({ ...run, thinking: "high" }, null, [])).toEqual({ ...run, model: null });
     expect(withModel({ engine: "claude", model: "claude-opus-5-5", thinking: "max" }, null, [])).toEqual({ engine: "claude", model: null, thinking: "max" });
+  });
+});
+
+describe("the editor's draft", () => {
+  it("round-trips every built-in through the form unchanged", () => {
+    for (const t of BUILT_IN_TEMPLATES) expect(checkTemplate(templateOfDraft(draftOf(t), t.id))).toEqual({ ok: true, template: { ...t, builtIn: false } });
+  });
+
+  it("ids a new one from its name, splits skills, drops empty and claude-only fields", () => {
+    const d = { ...BLANK_DRAFT, name: "Viết tài liệu", purpose: "Viết README", instructions: "Viết ngắn.", skills: " tdd-workflow,  e2e-testing ", run: { engine: "omp" as const, model: null, thinking: null }, role: "quick" as const };
+    const raw = templateOfDraft(d);
+    expect(raw).toMatchObject({ id: "viet-tai-lieu", engine: "omp", skills: ["tdd-workflow", "e2e-testing"] });
+    expect(raw).not.toHaveProperty("role");
+    expect(raw).not.toHaveProperty("folderHint");
+    expect(checkTemplate(raw).ok).toBe(true);
+    expect(templateOfDraft({ ...d, name: "!!!" }).id).toBe("mau-moi");
+  });
+
+  it("says which field is wrong", () => {
+    const r = checkTemplate(templateOfDraft({ ...BLANK_DRAFT, name: "A", purpose: "B", instructions: "1\n2\n3\n4\n5\n6\n7" }));
+    expect(r).toEqual({ ok: false, error: expect.stringContaining("Lời dặn") });
+    expect(checkTemplate(templateOfDraft(BLANK_DRAFT)).ok).toBe(false);
+  });
+
+  it("copies under a name that still fits", () => {
+    const t = { ...BUILT_IN_TEMPLATES[1]!, name: "x".repeat(40) };
+    const c = copyDraft(t);
+    expect(c.name.length).toBeLessThanOrEqual(40);
+    expect(c.name.endsWith(" (bản sao)")).toBe(true);
+    expect(checkTemplate(templateOfDraft(c)).ok).toBe(true);
   });
 });

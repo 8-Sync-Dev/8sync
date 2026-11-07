@@ -189,6 +189,70 @@ export const BUILT_IN_TEMPLATES: readonly BotTemplate[] = (
 /** The three cards the empty Bots list suggests. */
 export const SUGGESTED_TEMPLATE_IDS = ["fullstack", "researcher", "reviewer"] as const;
 
+// ── the editor ("Của tôi") ───────────────────────────────────────────────────
+
+/** What the template editor edits: every field as typed (skills as "a, b"), engine + model + level as a run. */
+export type TemplateDraft = {
+  name: string;
+  emoji: string;
+  color: TemplateColor;
+  purpose: string;
+  run: BotRun;
+  /** Claude Code only; "" = none. */
+  role: RoleId | "";
+  instructions: string;
+  skills: string;
+  folderHint: string;
+  firstMessage: string;
+};
+
+export const BLANK_DRAFT: TemplateDraft = { name: "", emoji: "🤖", color: "sky", purpose: "", run: { engine: "claude", model: null, thinking: null }, role: "quick", instructions: "", skills: "", folderHint: "", firstMessage: "" };
+
+/** A template as an editor draft. */
+export function draftOf(t: BotTemplate): TemplateDraft {
+  return {
+    name: t.name,
+    emoji: t.emoji,
+    color: t.color,
+    purpose: t.purpose,
+    run: { engine: t.engine, model: t.model ?? null, thinking: t.thinking ?? null },
+    role: t.role ?? "",
+    instructions: t.instructions,
+    skills: t.skills.join(", "),
+    folderHint: t.folderHint ?? "",
+    firstMessage: t.firstMessage ?? "",
+  };
+}
+
+/** "Nhân bản": the same template under "<tên> (bản sao)", ≤40 chars; saving gives it a free id of its own. */
+export function copyDraft(t: BotTemplate): TemplateDraft {
+  const tail = " (bản sao)";
+  return { ...draftOf(t), name: `${t.name.slice(0, TEMPLATE_LIMITS.name - tail.length).trimEnd()}${tail}` };
+}
+
+/** The raw template a draft makes (checkTemplate says if it is valid). `id`: the edited one's, else from the name. */
+export function templateOfDraft(d: TemplateDraft, id?: string): Omit<BotTemplate, "builtIn"> {
+  const claude = d.run.engine === "claude";
+  return {
+    id: id ?? (slugify(d.name).slice(0, 32).replace(/-+$/, "") || "mau-moi"),
+    name: d.name,
+    emoji: d.emoji,
+    color: d.color,
+    purpose: d.purpose,
+    engine: d.run.engine,
+    ...(claude && d.role ? { role: d.role } : {}),
+    ...(d.run.model ? { model: d.run.model } : {}),
+    ...(d.run.thinking ? { thinking: d.run.thinking } : {}),
+    instructions: d.instructions,
+    skills: d.skills
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+    ...(d.folderHint.trim() ? { folderHint: d.folderHint.trim() } : {}),
+    ...(d.firstMessage.trim() ? { firstMessage: d.firstMessage.trim() } : {}),
+  };
+}
+
 // ── folders ──────────────────────────────────────────────────────────────────
 
 const key = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();

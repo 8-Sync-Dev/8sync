@@ -4,75 +4,41 @@
 // the template's by default) → folder → name → first message — then "Tạo và gửi" or "Chỉ tạo". Both engines
 // go through POST /api/sessions: Claude Code starts an hq-* session (role from the template); omp creates an
 // omp session and opens its terminal once on the server so it runs. Rules and request bodies: lib/templates.ts.
-import { BrainIcon, CheckIcon, ChevronDownIcon, FolderGit2Icon, FolderOpenIcon, Loader2Icon, SparklesIcon } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { CheckIcon, CopyIcon, FolderGit2Icon, FolderOpenIcon, Loader2Icon, PencilIcon, PlusIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { folderName, pathKey, shortPath, type WsProject } from "@/lib/omp-workspace";
-import { CLAUDE_START_MODELS, type ModelChoice, type ModelsReply } from "@/lib/room-model";
 import { roleOf } from "@/lib/roles";
 import {
   BLANK_TEMPLATE_ID,
-  BOT_ENGINES,
   BUILT_IN_TEMPLATES,
   botKeyOf,
+  copyDraft,
   createRequest,
   nameProblem,
   orderFolders,
   runForEngine,
   suggestName,
   templateRun,
-  withModel,
-  withThinking,
   type BotEngine,
   type BotRun,
   type BotTemplate,
-  type TemplateColor,
 } from "@/lib/templates";
 import { cn } from "@/lib/utils";
-import { EFFORT_LABEL, modelChipLabel, ModelMenu } from "../model-picker";
+import { EFFORT_LABEL, modelChipLabel } from "../model-picker";
 import type { Hq } from "../use-hq";
 import { ProjectPicker } from "../workspace-launcher";
-
-const ENGINE_LABEL: Record<BotEngine, string> = { claude: "Claude Code", omp: "omp" };
-
-/** Static classes per template color (Tailwind only ships what it sees written out). */
-export const TEMPLATE_TINT: Record<TemplateColor, string> = {
-  slate: "bg-slate-500/12 ring-slate-500/25",
-  sky: "bg-sky-500/12 ring-sky-500/25",
-  amber: "bg-amber-500/12 ring-amber-500/25",
-  lime: "bg-lime-500/12 ring-lime-500/25",
-  violet: "bg-violet-500/12 ring-violet-500/25",
-  indigo: "bg-indigo-500/12 ring-indigo-500/25",
-  rose: "bg-rose-500/12 ring-rose-500/25",
-  orange: "bg-orange-500/12 ring-orange-500/25",
-  emerald: "bg-emerald-500/12 ring-emerald-500/25",
-  cyan: "bg-cyan-500/12 ring-cyan-500/25",
-  fuchsia: "bg-fuchsia-500/12 ring-fuchsia-500/25",
-  teal: "bg-teal-500/12 ring-teal-500/25",
-};
+import { ENGINE_LABEL, RunRow, TemplateFace, radioKeys, useStartModels } from "./template-bits";
+import { TemplateEditor, type EditorTarget } from "./template-editor";
 
 /** Folders shown before "Xem tất cả". */
 const FOLDERS_SHOWN = 6;
 
 type Folder = { path: string; name: string; id: number | null; lastUsed: number | null };
-
-/** Arrow keys move between the radios of a group (one tab stop per group), as a native radio group does. */
-function radioKeys(e: KeyboardEvent<HTMLElement>) {
-  const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
-  if (!step) return;
-  const radios = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')];
-  const i = radios.indexOf(document.activeElement as HTMLElement);
-  const next = radios[(i + step + radios.length) % radios.length];
-  if (!next) return;
-  e.preventDefault();
-  next.focus();
-  next.click();
-}
 
 export function NewBotSheet({
   hq,
@@ -128,6 +94,8 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
   }, []);
 
   const api = hq.api;
+  // Bumped after a save or a delete: the list is read again (a deleted copy may uncover a built-in).
+  const [loaded, setLoaded] = useState(0);
   useEffect(() => {
     let live = true;
     api<{ templates: BotTemplate[] }>("/api/templates")
@@ -138,7 +106,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
     return () => {
       live = false;
     };
-  }, [api]);
+  }, [api, loaded]);
 
   const mine = templates.filter((t) => !t.builtIn);
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
@@ -146,29 +114,38 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
 
   // Engine + model + level: the template's until the owner picks another (a pick holds for that template only).
   const [pickedRun, setPickedRun] = useState<{ tpl: string; run: BotRun } | null>(null);
+  // "Của tôi": the editor (new, AI, copy, edit) and the delete confirmation.
+  const [editor, setEditor] = useState<EditorTarget | null>(null);
+  const [deleting, setDeleting] = useState<null | "ask" | "busy">(null);
+  function saved(t: BotTemplate) {
+    setEditor(null);
+    setTemplates((list) => [...list.filter((x) => x.id !== t.id), t]);
+    setLoaded((n) => n + 1);
+    setTab("mine");
+    setTemplateId(t.id);
+    setPickedRun(null);
+  }
+  async function remove(t: BotTemplate) {
+    setDeleting("busy");
+    try {
+      await api(`/api/templates?id=${encodeURIComponent(t.id)}`, { method: "DELETE" });
+      toast.success(`Đã xoá mẫu ${t.name}`);
+      setTemplates((list) => list.filter((x) => x.id !== t.id));
+      setLoaded((n) => n + 1);
+      setTemplateId(BLANK_TEMPLATE_ID);
+    } catch (x) {
+      toast.error(`Chưa xoá được: ${(x as Error).message}`);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   const run: BotRun | null = template ? (pickedRun?.tpl === template.id ? pickedRun.run : templateRun(template)) : null;
   const setRun = (r: BotRun) => {
     if (template) setPickedRun({ tpl: template.id, run: r });
   };
   const engine: BotEngine = run?.engine ?? "claude";
-  // omp's list (providers with a key or login) is fetched the first time omp is chosen.
-  const [ompList, setOmpList] = useState<ModelChoice[] | null>(null);
-  const needOmp = engine === "omp" && ompList === null;
-  useEffect(() => {
-    if (!needOmp) return;
-    let live = true;
-    api<ModelsReply>("/api/models?engine=omp")
-      .then((r) => live && setOmpList(r.models))
-      .catch((e: Error) => {
-        if (!live) return;
-        setOmpList([]);
-        toast.error(`Chưa tải được danh sách model omp: ${e.message}`);
-      });
-    return () => {
-      live = false;
-    };
-  }, [needOmp, api]);
-  const models = engine === "omp" ? ompList : CLAUDE_START_MODELS;
+  const models = useStartModels(api, engine);
 
   // Registered projects (most recently used first), the known repos that match the hint, and a folder picked by hand.
   const sessions = hq.sessions.data;
@@ -271,16 +248,28 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
                   type="button"
                   aria-pressed={tab === v}
                   onClick={() => setTab(v)}
-                  className="h-7 rounded-md px-3 text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm motion-reduce:transition-none max-md:h-9"
+                  className="h-7 rounded-md px-3 text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm motion-reduce:transition-none max-md:h-11"
                 >
                   {label}
                 </button>
               ))}
             </div>
           </div>
+          {tab === "mine" && (
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" className="max-md:h-11" onClick={() => setEditor({ kind: "new" })}>
+                <PlusIcon aria-hidden />
+                Tạo mới
+              </Button>
+              <Button type="button" size="sm" variant="outline" className="max-md:h-11" onClick={() => setEditor({ kind: "new", ai: true })}>
+                <SparklesIcon aria-hidden />
+                Tạo bằng AI
+              </Button>
+            </div>
+          )}
           {shownTemplates.length === 0 ? (
             <p className="rounded-lg border border-dashed px-4 py-5 text-sm text-pretty text-muted-foreground">
-              Chưa có mẫu riêng. Thêm file JSON vào <code className="font-mono text-xs">~/.config/8sync/hq/templates/</code>, mỗi file một mẫu.
+              Chưa có mẫu riêng. Tạo mới, nhờ AI viết từ một câu, hoặc chọn một mẫu có sẵn rồi bấm Nhân bản.
             </p>
           ) : (
             // A card gallery (owner 2026-11-07, Grok Bot style): two columns on a phone, three from 640 px.
@@ -303,21 +292,49 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
                     onClick={() => {
                       setTemplateId(t.id);
                       setFolder(null);
+                      setDeleting(null);
                     }}
                     className={cn(
                       "group relative flex min-h-[5.5rem] flex-col items-start gap-1.5 rounded-xl border bg-card p-3 text-left outline-none transition-[border-color,box-shadow] duration-150 hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
                       on && "border-foreground/70 ring-1 ring-foreground/70",
                     )}
                   >
-                    <span aria-hidden className={cn("grid size-8 place-items-center rounded-lg text-base ring-1", TEMPLATE_TINT[t.color])}>
-                      {t.emoji}
-                    </span>
-                    <span className="text-sm leading-tight font-medium">{t.name}</span>
-                    <span className="line-clamp-2 text-xs leading-snug text-pretty text-muted-foreground">{t.purpose}</span>
+                    <TemplateFace t={t} />
                     {on && <CheckIcon aria-hidden className="absolute top-2.5 right-2.5 size-4" />}
                   </button>
                 );
               })}
+            </div>
+          )}
+          {template && (
+            <div className="flex flex-wrap items-center gap-2" aria-label={`Mẫu ${template.name}`} role="group">
+              {!template.builtIn && (
+                <Button type="button" size="sm" variant="ghost" className="max-md:h-11" onClick={() => setEditor({ kind: "edit", template })}>
+                  <PencilIcon aria-hidden />
+                  Sửa
+                </Button>
+              )}
+              <Button type="button" size="sm" variant="ghost" className="max-md:h-11" onClick={() => setEditor({ kind: "new", draft: copyDraft(template) })}>
+                <CopyIcon aria-hidden />
+                {template.builtIn ? "Nhân bản thành mẫu của tôi" : "Nhân bản"}
+              </Button>
+              {!template.builtIn &&
+                (deleting ? (
+                  <span className="inline-flex flex-wrap items-center gap-2 text-xs" role="alert">
+                    Xoá mẫu “{template.name}”?
+                    <Button type="button" size="sm" variant="destructive" className="max-md:h-11" disabled={deleting === "busy"} onClick={() => void remove(template)}>
+                      Xoá
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="max-md:h-11" disabled={deleting === "busy"} onClick={() => setDeleting(null)}>
+                      Không
+                    </Button>
+                  </span>
+                ) : (
+                  <Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive max-md:h-11" onClick={() => setDeleting("ask")}>
+                    <Trash2Icon aria-hidden />
+                    Xoá
+                  </Button>
+                ))}
             </div>
           )}
           {template && run && (
@@ -494,73 +511,8 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
           />
         </DialogContent>
       </Dialog>
+      {/* Outside the form too: the editor is its own form. */}
+      <TemplateEditor hq={hq} target={editor} onClose={() => setEditor(null)} onSaved={saved} />
     </>
-  );
-}
-
-/**
- * Engine (Claude Code | omp) and the model + level it starts on: a segmented control and the composer's
- * model menu (lib/room-model.ts lists) in a popover. "Mặc định" = no `--model`: the engine's own default.
- */
-function RunRow({ run, models, onChange, onEngine }: { run: BotRun; models: ModelChoice[] | null; onChange: (r: BotRun) => void; onEngine: (e: BotEngine) => void }) {
-  const [open, setOpen] = useState(false);
-  const search = useRef<HTMLInputElement>(null);
-  const label = modelChipLabel(run.engine, run.model, "Model mặc định");
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <div role="radiogroup" aria-label="Chạy bằng" onKeyDown={radioKeys} className="inline-flex rounded-lg bg-muted p-0.5">
-        {BOT_ENGINES.map((e) => {
-          const on = run.engine === e;
-          return (
-            <button
-              key={e}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              tabIndex={on ? 0 : -1}
-              onClick={() => !on && onEngine(e)}
-              className="h-8 rounded-md px-3 text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 aria-checked:bg-background aria-checked:text-foreground aria-checked:shadow-sm motion-reduce:transition-none max-md:h-11"
-            >
-              {ENGINE_LABEL[e]}
-            </button>
-          );
-        })}
-      </div>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
-          type="button"
-          aria-label={`Model và mức suy nghĩ: ${label}${run.thinking ? `, ${EFFORT_LABEL[run.thinking] ?? run.thinking}` : ""}`}
-          className="inline-flex h-9 min-w-0 max-w-full items-center gap-1.5 rounded-lg border bg-background px-3 text-xs outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none max-md:h-11"
-        >
-          <BrainIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="truncate font-medium">{label}</span>
-          {run.thinking && <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] text-muted-foreground">{EFFORT_LABEL[run.thinking] ?? run.thinking}</span>}
-          <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-[min(22rem,calc(100vw-2rem))] p-0"
-          onOpenAutoFocus={(e) => {
-            e.preventDefault();
-            search.current?.focus({ preventScroll: true });
-          }}
-        >
-          <ModelMenu
-            engine={run.engine}
-            models={models}
-            model={run.model}
-            thinking={run.thinking}
-            searchRef={search}
-            defaultLabel={run.engine === "omp" ? "omp mặc định (model trong config omp)" : "Mặc định của tài khoản Claude"}
-            effortsLocked={run.engine === "omp" && run.model === null ? "Chọn một model để đặt mức suy nghĩ." : undefined}
-            onThinking={(t) => onChange(withThinking(run, t))}
-            onModel={(m) => {
-              onChange(withModel(run, m, models ?? []));
-              setOpen(false);
-            }}
-          />
-        </PopoverContent>
-      </Popover>
-    </div>
   );
 }
