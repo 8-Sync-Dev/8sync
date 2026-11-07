@@ -108,8 +108,14 @@ python3 -c "import sys; sys.exit(0 if float('$pct') >= 20 else 1)" \
 pct=$(diff_pct connect back)
 echo "connect vs back: $pct% differ (recent list added)"
 
-a shell cmd uimode night yes
+# Switching uimode restarts Google Play services on the google_apis image, and
+# the system kills every app using its FontsProvider (the WebView does) with
+# "depends on provider … in dying proc" (run 42327173537). Let it settle first.
 a shell am force-stop "$pkg"
+a shell cmd uimode night yes
+sleep 20
+timeout 30 adb logcat -d -b all > "$out/logcat-light.txt" 2>&1 || true
+a logcat -b all -c
 a shell am start -W -n "$pkg/.MainActivity"
 sleep 8
 alive "dark relaunch"
