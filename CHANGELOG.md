@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- Các phòng hiểu việc của nhau: `GET /api/brief` (và `hq.mjs brief`/`roster`) cho tóm tắt ngắn từng phòng (đang làm gì, chờ gì, lượt hỏi/đáp gần nhất, file vừa sửa). Tin phòng gửi phòng giờ kèm dòng `[từ phòng <tên> · <dự án> · đang: <việc>]`. Thêm Chief of Staff trong tab Máy: chọn một phòng làm trưởng nhóm, tin anh gửi qua `/api/chief/ask` kèm danh sách phòng để nó tự chia việc và chỉ báo lại khi cần anh quyết.
+
 ## [0.135.4] — 2026-11-07
 
 ### Fixed
