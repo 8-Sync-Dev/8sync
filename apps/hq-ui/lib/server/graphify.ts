@@ -140,12 +140,13 @@ export async function excludeGraphifyOut(root: string): Promise<boolean> {
   let text = "";
   try {
     text = fs.readFileSync(file, "utf8");
-  } catch {
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; // locked/denied: never clobber the user's exclude
     fs.mkdirSync(path.dirname(file), { recursive: true });
   }
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
   const sep = text && !text.endsWith("\n") ? eol : "";
-  fs.writeFileSync(file, `${text}${sep}graphify-out/${eol}`);
+  fs.appendFileSync(file, `${sep}graphify-out/${eol}`);
   return true;
 }
 
