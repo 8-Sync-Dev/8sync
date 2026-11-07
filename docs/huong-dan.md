@@ -16,7 +16,7 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 | 2 | Thêm thư mục repo. Lần đầu: mở `claude` trong thư mục đó một lần, chấp nhận câu hỏi trust | **Projects** → dán đường dẫn | — |
 | 3 | Mở một session Claude Code có tên trong repo (tạo mới hoặc mở lại) | — | `cd du-an && 8sync ccc . api` |
 | 4 | Giao việc trong session: một việc, hoặc một mục tiêu có lệnh kiểm, lặp tới khi xanh | tab **Sessions** → chat | `/ship <việc>` · `/ship-loop <mục tiêu>` |
-| 5 | Xem session nào đang làm gì, việc nào chờ anh; merge/release/secret/ngoài repo luôn chờ anh | tab **Sessions** | `8sync ccc . ls` |
+| 5 | Xem session nào đang làm gì, việc nào chờ anh; secret/ngoài repo luôn chờ anh, merge/release chờ anh trừ khi chính anh gõ lệnh mức 3–6 | tab **Sessions** | `8sync ccc . ls` |
 | 6 | Bài học dùng được ở mọi dự án (công cụ, hook, cách làm) ghi vào cây tri thức của máy; đầu phiên mỗi session đọc dự án mình trước rồi 3 dòng cuối của từng dự án khác dưới root của nó; chuyện riêng của khách KHÔNG vào đây | tab **Tri thức** | `8sync ccc know add "<bài học>"` · `know ls [--all]` |
 
 8sync không tự mở session, không tự gửi prompt vào session: mọi session là do anh mở. Phanh khẩn: `8sync ccc cancel --all`.
@@ -25,19 +25,22 @@ Nhanh trong terminal: `8sync guide`. File này là bản đầy đủ.
 - **Chip "Máy" trên HQ** (cả trên điện thoại): RAM, CPU, GPU; điện đang dùng (CPU và GPU đo thật, phần còn lại ước tính 60 W, chỉnh được), ₫/giờ, kWh và ₫ hôm nay và tháng này (giá mặc định 3.500 ₫/kWh, chỉnh được); mục "Thức & màn hình"; tab **Máy** có đồ thị RAM/CPU 30 phút (server lấy mẫu 30 s một lần, nét đứt là ngưỡng RAM của guard, từ 0.110.34).
 - **Link internet** (`--public`): cần `cloudflared` (thiếu thì lệnh in cách cài). Mỗi lần bật là host + khoá mới, tắt HQ là link chết. Ai có link là điều khiển được các session — không chia sẻ.
 
-**Giao việc theo mức**, gõ trong Claude Code (session mở bằng `8sync ccc . <tên>`; từ v0.98.4 session luôn mở ở auto mode: cờ `--dangerously-skip-permissions` của launcher (Orca…) bị Claude Code từ chối):
+**Giao việc theo mức**, gõ trong Claude Code (session mở bằng `8sync ccc . <tên>`; từ v0.98.4 session luôn mở ở auto mode: cờ `--dangerously-skip-permissions` của launcher (Orca…) bị Claude Code từ chối). Từ v0.131.0 mức 3–6 và `/ship-tick` gõ được cả trong omp:
 
 | Mức | Gõ | Chạy tới đâu | Còn cần anh |
 |---|---|---|---|
 | 1 | `/do <việc>` | sửa ≤ 3 file, không plan, không commit | xem diff, commit |
 | 2 | `/ship <việc>` | plan → R&D → code → test → UAT → review → CHANGELOG + memory → commit | push (nó không push) |
-| 3 | `/ship-auto <việc>` | như `/ship`, rồi PR → CI xanh 3 OS → merge → tag → release | trả lời một câu `Ship` |
-| 4 | `/ship-loop <mục tiêu>` | lặp tới khi mọi lệnh kiểm exit 0 (trần 12 vòng, 90 phút, hoặc kẹt cùng lỗi 2 lần) | khi chạm trần, hoặc lúc release |
-| 5 | `/autopilot` | tối đa 5 item hoặc 8 giờ từ backlog (issue có label `ccc`/`8sync`, mục Next trong `su-code/STATE.md`, failure chưa có guard), mỗi item một loop + một nhánh | một câu `Ship` cho cả batch |
+| 3 | `/ship-auto <việc>` | như `/ship`, rồi PR → CI xanh 3 OS → merge → tag → release | chỉ khi gặp lựa chọn không đảo ngược được, production hay billing |
+| 4 | `/ship-loop <mục tiêu>` | lặp tới khi mọi lệnh kiểm exit 0 (trần 12 vòng, 90 phút, hoặc kẹt cùng lỗi 2 lần), rồi merge + release | khi chạm trần |
+| 5 | `/autopilot` | tối đa 5 item hoặc 8 giờ từ backlog (issue có label `ccc`/`8sync`, mục Next trong `su-code/STATE.md`, failure chưa có guard), mỗi item một loop + một nhánh | đọc brief nó ghi vào `su-code/STATE.md` |
+| 6 | `/solo` | chạy liên tục tới khi anh dừng (mặc định 12 giờ): Router chọn item, mỗi item một Worker trong worktree + nhánh `solo/<slug>` riêng | khi chạm hard rail, hoặc khi anh nói "dừng" |
 
-Mức 3–5 chỉ anh khởi động; agent không tự gõ được. Dừng: nói "dừng" trong session, hoặc `8sync ccc cancel`.
+Mức 3–6 chỉ anh khởi động; agent không tự gõ được. Chính lệnh anh gõ là giấy phép merge + release cho session + repo đó (24 giờ hoặc `--hours`, không bao giờ deploy production), nên không còn câu hỏi `Ship` cuối vòng; `--no-release` chỉ merge. Dừng: nói "dừng" trong session, hoặc `8sync ccc cancel`.
 
-Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Chạy headless không trả lời được câu `Ship`, nên dừng trước merge và để lại brief. Chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
+**`/solo`** (thiết kế Super-Agent của DeepSeek, `deepseek-ai/dsh-superagent-prototype`, MIT): Worker chạy `graphify explain`/`path` trước khi sửa và ghi `Impact:` vào `PLAN.md` của item, chỉ chạy song song khi Impact không chồng nhau; kẹt cùng lỗi 2 lần thì research (code, web cho lựa chọn lớn) rồi ghi `research.md`. Review, `8sync ccc risk`, `/sec`, CI xanh 3 OS; diff ≤ 200 dòng (`--merge-lines`) thì squash-merge + release, lớn hơn thì hỏi anh. Câu hỏi không chặn: mỗi lần một câu, ghi vào `su-code/ship/solo/SOLO.md`, HQ ghim lên với một nút mỗi lựa chọn (hoặc trả lời `solo: <nhãn>`); anh vắng quá 15 phút (`--answer-after`) thì Critic khó tính chọn thay, trừ việc phá huỷ, CI đỏ, secret, data production, billing. Item suy ra (issue của bot, dòng `failure:`) chỉ ghi `would accept:` cho tới khi anh gửi `/solo --accept auto`. Trên omp không có cron: lệnh chạy bằng vòng `engine_plan` (tự tiếp tối đa 8 lần liền), gõ lại `/solo` là đi tiếp từ `SOLO.md`.
+
+Không mở terminal: `claude -p "/autopilot --max-items 5 --hours 8" --permission-mode auto --permission-prompts none --max-budget-usd 20`. Headless không trả lời được câu hỏi, nên item cần anh quyết (huỷ/không đảo ngược được, data prod, billing, security policy) bị bỏ qua và ghi vào brief. Chạy nhiều ngày không người trông thì dùng Routines (`/schedule`) hoặc Console API key. Chi tiết ở mục 4 và 6.
 
 **Auto-compact:** kit đặt nén ở 80% × window 250000, tức khoảng 200K token: model 1M nén ở 200K, model 200K ở 160K. Status line tính % trên window của model, nên model 1M hiện `ctx 12%→nén 20%` (đúng, không phải lỗi). Cặp kit cũ (65% × 1M, 60% × 400K) tự chuyển ở lần `ccc kit` sau; mốc anh tự đặt thì giữ nguyên. `8sync ccc compact` liệt kê window đo được theo từng model; đổi mốc bằng `--at <N>` / `--window <N>`. Hook của plugin ECC tắt thật khi `ECC_HOOKS_ENABLED=false` (hooks.json gốc giữ ở `hooks.json.8sync-off`).
 
@@ -157,7 +160,7 @@ Dữ liệu nằm ở `~/.local/state/8sync/hq/` (SQLite, quyền 0600), chỉ t
   - chặn xoá root/home/project, wipe đĩa, force-push, in hoặc upload credential, ghi file `.env`/key;
   - hỏi trước `reset --hard`, `curl | sh`, xoá ngoài project.
   - Guard **fail-closed**: nếu guard lỗi thì lệnh bị chặn chứ không chạy bừa.
-- **Hỏi trước khi ship**: push lên `main`/`master`, push tag, `gh pr merge`, `gh release create`, `vercel --prod`, `… publish`, `fly/wrangler/firebase deploy`, push tới remote `encore`. Việc thường (push nhánh, mở PR, build) không bị hỏi.
+- **Hỏi trước khi ship**: push lên `main`/`master`, push tag, `gh pr merge`, `gh release create`, `vercel --prod`, `… publish`, `fly/wrangler/firebase deploy`, push tới remote `encore`. Việc thường (push nhánh, mở PR, build) không bị hỏi. Lệnh mức 3–6 anh tự gõ (`/ship-auto`, `/ship-loop`, `/autopilot`, `/solo`, gõ thẳng hoặc qua HQ) là giấy phép merge + release cho session + repo đó; deploy production không bao giờ nằm trong giấy phép, "dừng" thu hồi.
 - **Nhớ qua /compact**: đầu phiên, sau `/clear`, `/compact` hoặc resume, Claude nhận lại STATE + bài học của repo; sau /compact và resume còn có thêm yêu cầu gần nhất và checklist task của chính session đó.
 - **Stop gate**: không cho kết thúc lượt khi còn việc dở hoặc build đang hỏng, nhưng nhường khi anh nói "dừng/stop/chờ".
   - Claude dừng lặng lẽ mà task list còn task chưa xong → bị chặn một lần, kèm danh sách task dở. Claude hỏi anh, hoặc đang chờ thứ chỉ anh cung cấp được, thì vẫn dừng bình thường.
