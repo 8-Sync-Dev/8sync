@@ -22,6 +22,9 @@ import * as brief from "@/app/api/brief/route";
 import * as chief from "@/app/api/chief/route";
 import * as chiefAsk from "@/app/api/chief/ask/route";
 import * as templates from "@/app/api/templates/route";
+import * as digest from "@/app/api/digest/route";
+import * as facts from "@/app/api/facts/route";
+import * as turns from "@/app/api/turns/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { sendKeysPlan } from "@/lib/server/proc";
@@ -45,6 +48,8 @@ const ROUTES: { path: string; mod: Record<string, unknown> }[] = [
   { path: "/api/brief", mod: brief },
   { path: "/api/chief", mod: chief },
   { path: "/api/chief/ask", mod: chiefAsk },
+  { path: "/api/digest?room=hq-x", mod: digest },
+  { path: "/api/facts", mod: facts },
   { path: "/api/projects", mod: projects },
   { path: "/api/sessions", mod: sessions },
   { path: "/api/sessions/hq-x/keys", mod: keys },
@@ -52,6 +57,7 @@ const ROUTES: { path: string; mod: Record<string, unknown> }[] = [
   { path: "/api/sessions/hq-x/stop", mod: stop },
   { path: "/api/stream", mod: stream },
   { path: "/api/templates", mod: templates },
+  { path: "/api/turns?room=hq-x", mod: turns },
 ];
 const METHODS = ["GET", "POST", "DELETE", "PUT", "PATCH"];
 const cases = ROUTES.flatMap((r) =>

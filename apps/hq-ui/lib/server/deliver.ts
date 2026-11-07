@@ -2,6 +2,7 @@
 // "Nội dung" approve+send (lib/server/content.ts `approveAndSend`) and the /solo controls.
 import type { DatabaseSync } from "node:sqlite";
 import { withSenderHeader, type Sender } from "../sender";
+import { withOwnerDigest } from "./digest";
 import { deliverWatched, SessionWaiting } from "./channel";
 import { inboxTarget } from "./floor";
 import { inboxLive, isInboxId, queueInbox } from "./inbox";
@@ -27,10 +28,18 @@ export async function deliverText(db: DatabaseSync, session: string, text: strin
   return { message: r.message, delivery: r.delivery, error: r.error };
 }
 
-/** `deliverText`, a dialog open in the pane reported (`waiting`, the routes answer 409 session-waiting) instead of thrown. */
+/**
+ * `deliverText`, a dialog open in the pane reported (`waiting`, the routes answer 409 session-waiting) instead
+ * of thrown. The owner's message (a direct one, an "@B" forward, a group turn) carries HQ's "ai đang làm gì"
+ * digest under it when that bot's picture changed (lib/server/digest.ts withOwnerDigest), remembered only
+ * once it reached the bot.
+ */
 export async function deliverOrWaiting(db: DatabaseSync, session: string, text: string, sender: Sender) {
+  const d = sender.by === "owner" ? await withOwnerDigest(db, session, text) : { text, commit: () => {} };
   try {
-    return { ...(await deliverText(db, session, text, sender)), waiting: false as const };
+    const r = await deliverText(db, session, d.text, sender);
+    if (r.delivery !== "failed") d.commit();
+    return { ...r, waiting: false as const };
   } catch (e) {
     if (e instanceof SessionWaiting) return { delivery: "waiting", error: "session-waiting", dialog: e.dialog, waiting: true as const };
     throw e;

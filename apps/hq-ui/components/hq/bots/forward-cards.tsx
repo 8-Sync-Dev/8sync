@@ -11,17 +11,20 @@ import type { Room } from "@/lib/server/office";
 import { clock } from "../bits";
 import type { Hq } from "../use-hq";
 import { BotAvatar } from "./bot-avatar";
+import { FullReply, useFullReply } from "./full-reply";
 import { useBotBrief } from "./use-bot-brief";
 
 /** A forward older than this has no card: the thread is about now. */
 const FRESH_MS = 24 * 60 * 60 * 1000;
 const SHOWN = 3;
+/** What one message to A may hold (POST /api/messages). */
+const SEND_MAX = 4000;
 
 /**
  * Under bot A's conversation: each "@B …" the owner sent from A's thread (POST /api/forward), then B's
- * answer once B has replied after it (B's brief: its last reply, a summary of up to 200 characters).
- * Nothing goes back to A by itself: [Gửi cho A] sends that answer to A, framed as a bot's information,
- * not an owner's order (lib/bot-mention.ts replyForA).
+ * answer once B has replied after it: its whole last reply (GET /api/turns, folded when long), the brief's
+ * 200-character summary only until that loads. Nothing goes back to A by itself: [Gửi cho A] sends that
+ * answer to A, framed as a bot's information, not an owner's order (lib/bot-mention.ts replyForA).
  */
 export function ForwardCards({ hq, bot, all, now, nonce }: { hq: Hq; bot: Bot<Room>; all: Bot<Room>[]; now: number; nonce: number }) {
   const [forwards, setForwards] = useState<Forward[]>([]);
@@ -69,13 +72,15 @@ function Reply({ f, to, a, hq }: { f: Forward; to: Bot<Room>; a: Bot<Room>; hq: 
   const brief = useBotBrief(hq.api, to.room);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const reply = brief?.lastReply && (brief.updatedAt ?? 0) > f.ts ? brief.lastReply : null;
+  const summary = brief?.lastReply && (brief.updatedAt ?? 0) > f.ts ? brief.lastReply : null;
+  const full = useFullReply(hq.api, to.room, f.ts, !!summary);
+  const reply = full ?? summary;
   if (!reply) return <p className="mt-2 text-xs text-muted-foreground">{to.status === "working" ? `${to.name} đang làm…` : `Chưa có trả lời từ ${to.name}.`}</p>;
 
   const send = async () => {
     setBusy(true);
     try {
-      await hq.api("/api/messages", { method: "POST", body: { session: a.room.name, text: replyForA(to.name, reply) } });
+      await hq.api("/api/messages", { method: "POST", body: { session: a.room.name, text: [...replyForA(to.name, reply)].slice(0, SEND_MAX).join("") } });
       setSent(true);
     } catch (e) {
       toast.error((e as Error).message);
@@ -83,10 +88,11 @@ function Reply({ f, to, a, hq }: { f: Forward; to: Bot<Room>; a: Bot<Room>; hq: 
       setBusy(false);
     }
   };
+
   return (
     <div className="mt-2 border-l-2 border-primary/40 pl-3">
       <p className="text-[11px] font-medium text-muted-foreground">Trả lời từ {to.name}</p>
-      <p className="mt-0.5 whitespace-pre-wrap break-words">{reply}</p>
+      {full ? <FullReply text={full} className="mt-0.5" /> : <p className="mt-0.5 whitespace-pre-wrap break-words">{reply}</p>}
       <Button type="button" size="sm" variant="outline" className="mt-2 max-md:h-11" onClick={send} disabled={busy || sent}>
         {sent ? <CheckIcon aria-hidden /> : <CornerDownLeftIcon aria-hidden />}
         {sent ? `Đã gửi cho ${a.name}` : `Gửi cho ${a.name}`}
