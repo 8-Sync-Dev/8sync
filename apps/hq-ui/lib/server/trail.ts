@@ -71,7 +71,7 @@ export function trailCommand(o: { env?: Record<string, string | undefined>; plat
  * One `trail` run. Stops it (and what it started) at `timeoutMs`, or as soon as stdout passes `cap`
  * (the first `cap` bytes are kept); stderr keeps its last 16 KB. `onData` sees both streams as they come.
  */
-export function runTrail(args: string[], o: { cwd: string; timeoutMs: number; cap: number; onData?: (text: string) => void; command?: TrailCommand | null }): Promise<TrailOut> {
+export function runTrail(args: string[], o: { cwd: string; timeoutMs: number; cap: number; onData?: (text: string) => void; command?: TrailCommand | null; env?: Record<string, string> }): Promise<TrailOut> {
   const command = o.command === undefined ? trailCommand() : o.command;
   const { promise, resolve } = Promise.withResolvers<TrailOut>();
   const done = (x: Partial<TrailOut>) => resolve({ ok: false, code: null, stdout: "", stderr: "", timedOut: false, capped: false, missing: false, ...x });
@@ -81,7 +81,7 @@ export function runTrail(args: string[], o: { cwd: string; timeoutMs: number; ca
   }
   const child = spawn(command.cmd, [...command.pre, ...args], {
     cwd: o.cwd,
-    env: { ...childEnv(), NO_COLOR: "1", FORCE_COLOR: "0" },
+    env: { ...childEnv(), NO_COLOR: "1", FORCE_COLOR: "0", ...o.env },
     shell: false,
     windowsHide: true,
     detached: process.platform !== "win32",

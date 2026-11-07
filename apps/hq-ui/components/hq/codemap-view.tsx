@@ -208,6 +208,7 @@ export function CodemapView({
                   <MapTree map={mapNow.data} onOpen={openFile} />
                 ))}
               {st?.graph.dir && <GraphNote st={st} now={status.at} onOpen={() => id != null && setSide({ kind: "graph", project: id })} />}
+              {id != null && <GraphifyPanel key={id} api={api} project={id} active={active} onUpdated={status.reload} />}
             </div>
           </div>
           {sideNow?.kind === "skeleton" && (
@@ -559,6 +560,103 @@ function GraphNote({ st, now, onOpen }: { st: CodemapStatus; now: number; onOpen
       ) : (
         <span className="text-xs text-muted-foreground">graphify-out/ có nhưng chưa có graph.html để xem.</span>
       )}
+    </section>
+  );
+}
+
+type GraphifyUpdate = { state: "running" | "done" | "failed"; startedAt: number; endedAt: number | null; tail: string; error: string | null };
+
+/** graphify on the server: "Cập nhật graph" (`graphify update . --no-cluster`), "Giải thích" (explain) and "Đường đi" (path). */
+function GraphifyPanel({ api, project, active, onUpdated }: { api: Api; project: number; active: boolean; onUpdated: () => void }) {
+  const [fast, setFast] = useState(false);
+  const st = usePoll<{ installed: boolean; update: GraphifyUpdate | null }>(api, `/api/codemap/graphify?project=${project}`, fast ? BUILD_POLL_MS : IDLE_POLL_MS, active);
+  const running = st.data?.update?.state === "running";
+  // Poll fast only while an update runs; when one ends, the status above re-reads graph.html.
+  if (st.data && running !== fast) setFast(running);
+  useEffect(() => {
+    if (!fast) onUpdated();
+  }, [fast, onUpdated]);
+  const [mode, setMode] = useState<"explain" | "path">("explain");
+  const [a, setA] = useState("");
+  const [b, setB] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ text: string | null; error: string | null } | null>(null);
+  const update = async () => {
+    try {
+      await api(`/api/codemap/graphify`, { method: "POST", body: { project, action: "update" } });
+      setFast(true);
+      st.reload();
+    } catch (e) {
+      toast.error(`graphify: ${(e as Error).message}`);
+    }
+  };
+  const ask = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !a.trim() || (mode === "path" && !b.trim())) return;
+    setBusy(true);
+    try {
+      const body = mode === "explain" ? { project, action: "explain", symbol: a } : { project, action: "path", a, b };
+      const r = await api<{ text: string }>(`/api/codemap/graphify`, { method: "POST", body });
+      setRes({ text: r.text, error: null });
+    } catch (err) {
+      setRes({ text: null, error: (err as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const u = st.data?.update;
+  return (
+    <section aria-label="graphify" className="space-y-2 rounded-lg border px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <NetworkIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <span className="text-sm font-medium">graphify</span>
+        <span className="text-xs text-muted-foreground">
+          {st.data && !st.data.installed
+            ? "chưa cài graphify — chạy `8sync setup`"
+            : running
+              ? "đang cập nhật graph…"
+              : u?.state === "done"
+                ? `cập nhật xong ${agoVi(u.endedAt ?? u.startedAt, st.at || (u.endedAt ?? u.startedAt))}`
+                : u?.state === "failed"
+                  ? "cập nhật lỗi"
+                  : "graph từ cấu trúc repo, không gọi model"}
+        </span>
+        <Button type="button" size="sm" variant="outline" className="ml-auto max-sm:h-10" disabled={running || st.data?.installed === false} onClick={() => void update()}>
+          {running ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <RefreshCwIcon />}
+          Cập nhật graph
+        </Button>
+      </div>
+      {u?.error && <Problem text={u.error} />}
+      {u?.tail && <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 px-2 py-1.5 font-mono text-[11px] text-muted-foreground">{u.tail}</pre>}
+      <form onSubmit={ask} className="flex flex-wrap items-center gap-2">
+        <div role="radiogroup" aria-label="Hỏi graphify" className="inline-flex rounded-lg border p-0.5">
+          {(
+            [
+              ["explain", "Giải thích"],
+              ["path", "Đường đi"],
+            ] as const
+          ).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              aria-checked={mode === m}
+              onClick={() => setMode(m)}
+              className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 aria-checked:bg-muted aria-checked:text-foreground motion-reduce:transition-none max-sm:py-2"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Input value={a} onChange={(e) => setA(e.target.value)} maxLength={200} placeholder={mode === "explain" ? "Ký hiệu: startBuild" : "Từ: A()"} aria-label={mode === "explain" ? "Ký hiệu cần giải thích" : "Điểm đầu"} className="h-8 min-w-36 flex-1 font-mono text-sm max-sm:h-10" />
+        {mode === "path" && <Input value={b} onChange={(e) => setB(e.target.value)} maxLength={200} placeholder="Đến: B()" aria-label="Điểm cuối" className="h-8 min-w-36 flex-1 font-mono text-sm max-sm:h-10" />}
+        <Button type="submit" size="sm" disabled={busy || !a.trim() || (mode === "path" && !b.trim())} className="max-sm:h-10">
+          {busy ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <SearchIcon />}
+          Hỏi
+        </Button>
+      </form>
+      {res?.error && <Problem text={res.error} />}
+      {res?.text && <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2 py-1.5 font-mono text-xs">{res.text}</pre>}
     </section>
   );
 }
