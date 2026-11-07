@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.135.3] — 2026-11-07
+
+### Fixed
+- Tự cập nhật: phần đuôi output `8sync up` lưu lại không còn mã màu ANSI. Bản này cũng dùng để kiểm thật việc giữ "lần tự cài" qua restart: code 0.135.2 chạy cập nhật và ghi file, bản 0.135.3 đọc lại.
+
 ## [0.135.2] — 2026-11-07
 
 ### Fixed

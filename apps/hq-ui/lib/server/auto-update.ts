@@ -139,7 +139,9 @@ export function blockedWhy(env: Record<string, string | undefined> = process.env
   return null;
 }
 
-const tail = (s: string) => s.trim().split(/\r?\n/).slice(-3).join("\n").slice(-400);
+/** The colours `8sync up` prints. */
+const ANSI = /\x1b\[[0-9;]*m/g;
+export const tail = (s: string) => s.replace(ANSI, "").trim().split(/\r?\n/).slice(-3).join("\n").slice(-400);
 
 /** One check: fetch the latest tag, run `8sync up` when it is newer than the installed binary. */
 async function check(d: UpdateDeps, now: () => number): Promise<void> {
