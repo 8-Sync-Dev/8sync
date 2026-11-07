@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Emulator UAT for the 8 Sync HQ APK, run by .github/workflows/hq-android.yml
 # inside reactivecircus/android-emulator-runner (pixel_6 profile, 1080x2400):
-#   install → launch (connect.png) → type a stand-in HQ address + Enter, which
-#   goes through the Rust `hq_origin`/`open_hq` commands (hq.png) → Android Back
+#   install → launch (connect.png) → type a stand-in HQ address, tap "Mở HQ",
+#   which goes through the Rust `hq_origin`/`open_hq` commands (hq.png) → Back
 #   returns to the connect screen, address now under "Gần đây" (back.png) →
 #   relaunch in dark mode (connect-dark.png).
 # Fails when the app is not running after a step, logcat has a crash for it, or
@@ -15,10 +15,12 @@ apk=$1
 out=$2
 address=${3:-get.8syncdev.com}
 pkg=com.eightsyncdev.hq
-# Centre of the address field on the pixel_6 profile (WebView DOM is not in the
-# accessibility tree, so it cannot be looked up; layout = apps/hq-android/ui).
+# Centres of the address field and the "Mở HQ" button on the pixel_6 profile,
+# measured on its screenshots (the WebView DOM is not in the accessibility tree,
+# so they cannot be looked up; layout = apps/hq-android/ui).
 field_x=540
 field_y=612
+button_y=765
 
 mkdir -p "$out"
 
@@ -86,7 +88,7 @@ sleep 2
 a shell input text "$address"
 sleep 1
 shot typed
-a shell input keyevent 66 # Enter submits the form → hq_origin + open_hq (Rust)
+a shell input tap "$field_x" "$button_y" # → hq_origin + open_hq (Rust)
 sleep 20
 alive "open $address"
 shot hq

@@ -171,8 +171,17 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics
+          # swangle: SwiftShader behind ANGLE. With swiftshader_indirect the
+          # emulator 37.2.13 process died silently right after the first input
+          # event into the WebView (runs 42323862831, 42326286568).
+          emulator-options: -no-window -gpu swangle_indirect -noaudio -no-boot-anim -camera-back none -no-metrics -no-snapshot
           script: bash apps/hq-android/uat.sh 8sync-hq.apk uat get.8syncdev.com
+
+      - name: Host diagnostics (emulator died?)
+        if: failure()
+        run: |
+          free -m
+          sudo dmesg | tail -40
 
       - uses: actions/upload-artifact@v4
         if: always()
