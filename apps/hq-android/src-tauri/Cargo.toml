@@ -1,0 +1,32 @@
+# 8 Sync HQ for Android — a Rust (Tauri 2) shell around the system WebView that
+# opens the owner's own HQ (`8sync hq ui --tailnet` / `--public`). Built only by
+# .github/workflows/hq-android.yml; see docs/hq-android.md.
+[package]
+name = "hq-android"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "PolyForm-Noncommercial-1.0.0"
+repository = "https://github.com/8-Sync-Dev/8sync"
+
+# Own workspace: this crate must never join the root `8sync` workspace (its deps,
+# lockfile, size gate and `cargo test` stay untouched).
+[workspace]
+
+[lib]
+# `_lib` suffix: on Windows a lib and a bin with the same name collide (cargo#8519).
+name = "hq_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

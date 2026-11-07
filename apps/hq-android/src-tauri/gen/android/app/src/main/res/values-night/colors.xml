@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- HQ --background (apps/hq-ui/app/globals.css): dark. -->
+    <color name="hq_background">#FF09090B</color>
+</resources>
