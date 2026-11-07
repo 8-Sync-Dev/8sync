@@ -56,7 +56,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { branchIndex, dirOf, folderNote, groupBranches, homeOf, shownOrder, spotOf, type WorktreeSpot } from "@/lib/branches";
 import { botStatus } from "@/lib/bots";
 import { agoShort } from "@/lib/now";
-import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, moveKey, orderGroups, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
+import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, leanSessions, moveKey, orderGroups, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
 import { groupKey, sidebarGroups, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
 import { MORE_LABEL, MORE_TABS, moreTabs } from "@/lib/tabs";
 import { cn } from "@/lib/utils";
@@ -427,6 +427,17 @@ export function Nav({
                   const b = branchesOf.get(g.key) ?? null;
                   // Folded by default: `w:<group>` in the prefs list means the owner opened it.
                   const idleOpen = prefs.collapsed.includes(`w:${g.key}`);
+                  // Lean by default (lib/session-tree leanSessions): what runs or waits, the one on screen,
+                  // the unseen and the newest few of the last day. "Xem thêm" (`m:<group>` in the prefs
+                  // list) lists every session plus the worktrees with none; a search lists every match.
+                  const idleN = b?.idle.length ?? 0;
+                  const all = q !== "" || prefs.collapsed.includes(`m:${g.key}`);
+                  const lean = leanSessions(g.sessions, now, (s) => active === s.key || (s.room != null && active === s.room) || isUnread(s, unread.keys));
+                  const shows = (s: TreeSession) => all || lean.shown.includes(s);
+                  // Nothing to show by default: the project is its heading alone, which opens the rest.
+                  const quiet = !q && lean.shown.length === 0 && (lean.hidden.length > 0 || idleN > 0);
+                  const closed = quiet ? !all : folded;
+                  const more = [lean.hidden.length > 0 && `${lean.hidden.length} phiên cũ`, idleN > 0 && `${idleN} worktree trống`].filter(Boolean).join(", ");
                   const sessionRow = (s: TreeSession) => (
                     <SessionRow
                       key={s.key}
@@ -460,14 +471,14 @@ export function Nav({
                         <button
                           type="button"
                           className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 text-left text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                          aria-expanded={!folded}
+                          aria-expanded={!closed}
                           aria-controls={listId}
-                          title={g.root ?? g.label}
-                          onClick={() => toggleCollapsed(`g:${g.key}`)}
+                          title={quiet ? `${g.root ?? g.label}\nKhông có phiên nào đang chạy hay mới dùng trong 24 giờ. Bấm để xem: ${more}` : (g.root ?? g.label)}
+                          onClick={() => toggleCollapsed(quiet ? `m:${g.key}` : `g:${g.key}`)}
                         >
                           <span className="truncate">{g.label}</span>
-                          <ChevronDownIcon className={cn("size-3 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", folded && "-rotate-90")} aria-hidden />
-                          {folded && g.sessions.length > 0 && <span className="text-[11px] font-normal text-muted-foreground tabular">{g.sessions.length}</span>}
+                          <ChevronDownIcon className={cn("size-3 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", closed && "-rotate-90")} aria-hidden />
+                          {closed && g.sessions.length > 0 && <span className="text-[11px] font-normal text-muted-foreground tabular">{g.sessions.length}</span>}
                         </button>
                         <span className={HOVER}>{sortMenu(g)}</span>
                         {g.root && (
@@ -476,10 +487,12 @@ export function Nav({
                           </button>
                         )}
                       </div>
-                      <ul id={listId} hidden={folded} className="space-y-px">
+                      <ul id={listId} hidden={closed} className="space-y-px">
                         {b
-                          ? b.sections.map((sec) =>
-                              sec.spot ? (
+                          ? b.sections.map((sec) => {
+                              const ss = sec.sessions.filter(shows);
+                              if (!ss.length) return null;
+                              return sec.spot ? (
                                 <li key={sec.key}>
                                   <BranchHeader
                                     spot={sec.spot}
@@ -492,15 +505,23 @@ export function Nav({
                                     }
                                   />
                                   <ul className="space-y-px" aria-label={`Phiên trên branch ${sec.spot.label}`}>
-                                    {sec.sessions.map(sessionRow)}
+                                    {ss.map(sessionRow)}
                                   </ul>
                                 </li>
                               ) : (
-                                <Fragment key={sec.key}>{sec.sessions.map(sessionRow)}</Fragment>
-                              ),
-                            )
-                          : g.sessions.map(sessionRow)}
-                        {b && b.idle.length > 0 && (
+                                <Fragment key={sec.key}>{ss.map(sessionRow)}</Fragment>
+                              );
+                            })
+                          : g.sessions.filter(shows).map(sessionRow)}
+                        {!q && more && (all || !quiet) && (
+                          <li>
+                            <button type="button" className={cn(row, "h-7 text-xs text-muted-foreground max-md:h-10")} aria-expanded={all} onClick={() => toggleCollapsed(`m:${g.key}`)}>
+                              <ChevronDownIcon className={cn("size-3 shrink-0 transition-transform motion-reduce:transition-none", !all && "-rotate-90")} aria-hidden />
+                              <span className="truncate">{all ? "Thu gọn" : `Xem thêm · ${more}`}</span>
+                            </button>
+                          </li>
+                        )}
+                        {b && idleN > 0 && all && (
                           <IdleWorktrees id={`${listId}-idle`} spots={b.idle} open={idleOpen} onToggle={() => toggleCollapsed(`w:${g.key}`)} onOpen={(sp) => onOpenRepo(sp.path, sp.name)} />
                         )}
                       </ul>
