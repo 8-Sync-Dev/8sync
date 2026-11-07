@@ -5,7 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- HQ › Bots: danh sách bot sắp lại kiểu Messenger: bot vừa bận trượt mượt lên vị trí mới (~300 ms, sáng nhẹ một nhịp), các dòng nó vượt qua dịch xuống, bot mới hiện dần vào. Anh đang cuộn xuống giữa danh sách thì dòng đang đọc đứng yên, không bị kéo lên đầu. Máy bật "giảm chuyển động" thì không có gì trượt.
+- HQ › sidebar "Phiên" gọn lại: mỗi dự án chỉ hiện phiên đang chạy, chờ anh hay lỗi, phiên đang mở, phiên xong chưa xem và tối đa 3 phiên mới dùng trong 24 giờ; phần còn lại (cùng các worktree không có phiên) nằm sau một dòng "Xem thêm · N phiên cũ, M worktree trống". Dự án không có gì gần đây thu thành một dòng tên, bấm vào để xem hết. Tìm kiếm vẫn hiện mọi phiên khớp.
+
 ### Fixed
+- HQ › Bots: cuộc trò chuyện đang mở không còn tự nhảy sang bot khác khi một phòng khác bận lên đầu danh sách. Trước đây màn hình rộng mở bot đầu danh sách theo vị trí, nên khi thứ tự đổi (một phòng "Chờ anh" hay vừa có việc) khung chat chuyển sang phòng kia giữa lúc anh đang gõ. Giờ bot đang mở giữ theo khóa phòng, chỉ đổi khi anh chọn bot khác hoặc phòng đó kết thúc; trên điện thoại, thread đang mở vẫn ở nguyên.
 - HQ › Bản đồ code: nút "Cập nhật graph" chạy `graphify update` trong dự án chưa từng `8sync harness init` từng để lại thư mục `graphify-out/` chưa track, và một lần `git add -A` sau đó có thể commit nó. Giờ cập nhật xong, nếu git chưa bỏ qua `graphify-out/` (qua `.gitignore` hay exclude sẵn có), HQ thêm một dòng `graphify-out/` vào `info/exclude` của git common dir (dùng chung cho mọi worktree, không đổi file nào được track). Thư mục không phải repo git thì bỏ qua; lỗi ở bước này không làm hỏng kết quả cập nhật.
 
 ## [0.137.0] — 2026-11-07

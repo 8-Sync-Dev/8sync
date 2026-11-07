@@ -253,6 +253,20 @@ export function threadHint(loading: boolean, failed: boolean, bots: number): str
   return failed ? "Chưa đọc được danh sách bot." : "Bot sẽ hiện ở đây khi có phiên đang chạy.";
 }
 
+/**
+ * The bot whose thread is open, by its room key (never a list position). The owner's pick holds while
+ * its room lives; with none, a wider screen opens one by itself (`auto`) and the bot already open
+ * (`held`) keeps the pane, so a room that turns busy and climbs the list never takes the conversation
+ * away (owner 2026-11-07: "không nên switching"). Only when that room ended does the top row
+ * (`first`) open. A phone opens nothing by itself: its list stays until the owner taps a bot.
+ */
+export function openBotKey(live: readonly string[], first: string | null, picked: string | null, held: string | null, auto: boolean): string | null {
+  if (picked != null && live.includes(picked)) return picked;
+  if (!auto) return null;
+  if (held != null && live.includes(held)) return held;
+  return first;
+}
+
 /** ↑/↓ in the list: the next key (clamped at the ends); the first one when nothing is selected. */
 export function stepKey(keys: readonly string[], current: string | null, dir: 1 | -1): string | null {
   if (!keys.length) return null;

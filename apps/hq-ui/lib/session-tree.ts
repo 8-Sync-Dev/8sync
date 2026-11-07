@@ -256,6 +256,41 @@ export function splitChildren(children: TreeChild[], now: number, recentMs = CHI
   return { shown, older };
 }
 
+// ── the lean sidebar ─────────────────────────────────────────────────────────
+
+/** A finished session stays in the default list while it was active this recently… */
+export const LEAN_RECENT_MS = 24 * 3600_000;
+/** …and only the newest few of those per project. */
+export const LEAN_CAP = 3;
+
+/**
+ * A project's sessions as the sidebar lists them by default (owner 2026-11-07: the list "bị nhiều"):
+ * every one that runs, waits on the owner or broke, every one `keep` names (the one on screen, one
+ * finished and not seen yet), then the newest `cap` others active within `recentMs`. The rest wait
+ * behind "Xem thêm". Both lists keep the group's own order, so a session that wakes up shows in its
+ * place instead of jumping. `now` 0 (no server clock yet): nothing counts as recent.
+ */
+export function leanSessions<S extends Pick<TreeSession, "key" | "state" | "at">>(
+  list: readonly S[],
+  now: number,
+  keep: (s: S) => boolean = () => false,
+  recentMs = LEAN_RECENT_MS,
+  cap = LEAN_CAP,
+): { shown: S[]; hidden: S[] } {
+  const pinned = (s: S) => s.state === "needs" || s.state === "working" || s.state === "error" || keep(s);
+  const recent = new Set(
+    list
+      .filter((s) => !pinned(s) && now > 0 && s.at != null && now - s.at <= recentMs)
+      .sort((a, b) => b.at! - a.at! || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .slice(0, cap)
+      .map((s) => s.key),
+  );
+  const shown: S[] = [];
+  const hidden: S[] = [];
+  for (const s of list) (pinned(s) || recent.has(s.key) ? shown : hidden).push(s);
+  return { shown, hidden };
+}
+
 // ── attention ────────────────────────────────────────────────────────────────
 
 /**

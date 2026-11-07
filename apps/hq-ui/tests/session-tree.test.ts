@@ -9,6 +9,9 @@ import {
   finishedSince,
   groupSessions,
   isUnread,
+  LEAN_CAP,
+  LEAN_RECENT_MS,
+  leanSessions,
   mergeSessions,
   moveKey,
   readArchive,
@@ -306,5 +309,48 @@ describe("omp sub-sessions on disk", () => {
     } finally {
       fs.rmSync(reg, { recursive: true, force: true });
     }
+  });
+});
+
+describe("leanSessions (owner 2026-11-07: the sidebar list \"bị nhiều\")", () => {
+  const now = 10 * LEAN_RECENT_MS;
+  const H = 3600_000;
+  const keys = (l: TreeSession[]) => l.map((s) => s.key);
+
+  it("shows what runs, waits or broke, then the newest few of the last day, in the group's own order", () => {
+    const list = [
+      S({ key: "old1", at: now - 3 * LEAN_RECENT_MS }),
+      S({ key: "r1", at: now - 1 * H }),
+      S({ key: "busy", state: "working", at: now - 5 * LEAN_RECENT_MS }),
+      S({ key: "r2", at: now - 2 * H }),
+      S({ key: "r3", at: now - 3 * H }),
+      S({ key: "r4", at: now - 4 * H }),
+      S({ key: "ask", state: "needs", at: null }),
+      S({ key: "err", state: "error", at: now - 9 * LEAN_RECENT_MS }),
+      S({ key: "never", at: null }),
+    ];
+    const { shown, hidden } = leanSessions(list, now);
+    expect(LEAN_CAP).toBe(3);
+    expect(keys(shown)).toEqual(["r1", "busy", "r2", "r3", "ask", "err"]);
+    expect(keys(hidden)).toEqual(["old1", "r4", "never"]);
+  });
+
+  it("always keeps what `keep` names (the session on screen, an unseen one) on top of the cap", () => {
+    const list = [S({ key: "a", at: now - H }), S({ key: "b", at: now - 2 * H }), S({ key: "c", at: now - 3 * H }), S({ key: "d", at: now - 4 * H }), S({ key: "open", at: now - 9 * LEAN_RECENT_MS })];
+    expect(keys(leanSessions(list, now, (s) => s.key === "open").shown)).toEqual(["a", "b", "c", "open"]);
+    // A kept recent one does not use a slot of the cap.
+    expect(keys(leanSessions(list, now, (s) => s.key === "a").shown)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("collapses a project with nothing live or recent to nothing shown", () => {
+    const { shown, hidden } = leanSessions([S({ key: "x", at: now - 2 * LEAN_RECENT_MS }), S({ key: "y", state: "done", at: now - 3 * LEAN_RECENT_MS })], now);
+    expect(shown).toEqual([]);
+    expect(keys(hidden)).toEqual(["x", "y"]);
+  });
+
+  it("has no recent ones before the server clock answers, and breaks ties by key", () => {
+    expect(keys(leanSessions([S({ key: "a", at: 5 }), S({ key: "b", state: "working" })], 0).shown)).toEqual(["b"]);
+    const tie = [S({ key: "d", at: now }), S({ key: "c", at: now }), S({ key: "b", at: now }), S({ key: "a", at: now })];
+    expect(keys(leanSessions(tie, now).hidden)).toEqual(["d"]);
   });
 });
