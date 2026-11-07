@@ -18,6 +18,9 @@ import * as keys from "@/app/api/sessions/[name]/keys/route";
 import * as screen from "@/app/api/sessions/[name]/screen/route";
 import * as stop from "@/app/api/sessions/[name]/stop/route";
 import * as stream from "@/app/api/stream/route";
+import * as brief from "@/app/api/brief/route";
+import * as chief from "@/app/api/chief/route";
+import * as chiefAsk from "@/app/api/chief/ask/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { sendKeysPlan } from "@/lib/server/proc";
@@ -38,6 +41,9 @@ const ROUTES: { path: string; mod: Record<string, unknown> }[] = [
   { path: "/api/channel/reply", mod: reply },
   { path: "/api/channel/heartbeat", mod: heartbeat },
   { path: "/api/messages", mod: messages },
+  { path: "/api/brief", mod: brief },
+  { path: "/api/chief", mod: chief },
+  { path: "/api/chief/ask", mod: chiefAsk },
   { path: "/api/projects", mod: projects },
   { path: "/api/sessions", mod: sessions },
   { path: "/api/sessions/hq-x/keys", mod: keys },

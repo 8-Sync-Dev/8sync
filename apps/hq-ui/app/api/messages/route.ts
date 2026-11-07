@@ -10,7 +10,13 @@ import { loadFloor, ompSessions } from "@/lib/server/floor";
 import { projectOf } from "@/lib/server/office";
 import { FILES_PER_TASK, isUploadId, placeUploads, withFiles } from "@/lib/server/uploads";
 import { senderOf } from "@/lib/server/sender";
+import { liveRooms, senderRoomOf } from "@/lib/server/brief";
+import { roomProject } from "@/lib/labels";
+import { withContext } from "@/lib/room-context";
 import type { DatabaseSync } from "node:sqlite";
+
+/** clampText's default: what one message may hold. */
+const TEXT_MAX = 4000;
 
 export const runtime = "nodejs";
 
@@ -64,8 +70,10 @@ export async function POST(req: Request) {
   }
   // An omp room or a Claude session started elsewhere: its inbox; an hq-* tmux room: typed in (`deliverText`).
   // The owner's page sends as the owner; anything else (hq.mjs: `from` names its room) as a room.
+  const sender = senderOf(req, o.access, body.from);
+  if (sender.by === "room") text = { ok: true, value: await withSenderContext(o.db, text.value, body, session) };
   try {
-    return json(await deliverText(o.db, session, text.value, senderOf(req, o.access, body.from)), 201);
+    return json(await deliverText(o.db, session, text.value, sender), 201);
   } catch (e) {
     if (e instanceof SessionWaiting) return json({ error: "session-waiting", dialog: e.dialog }, 409);
     throw e;
@@ -82,4 +90,17 @@ async function roomRoot(db: DatabaseSync, session: string): Promise<string | nul
   if (!room) room = ompSessions(db, await loadFloor(db)).find((s) => s.name === session);
   if (!room?.cwd) return null;
   return projectOf(room.cwd)?.root ?? room.cwd;
+}
+
+/**
+ * A room's message with its context line on top (lib/room-context.ts: label, project, current step) when
+ * hq.mjs named where it runs (`from_session`: its CLAUDE_CODE_SESSION_ID, `from_cwd`: its folder) and
+ * that is one live room; as sent otherwise, or when the line would push it past the message limit.
+ */
+async function withSenderContext(db: DatabaseSync, text: string, body: Record<string, unknown>, to: string): Promise<string> {
+  if (body.from_session == null && body.from_cwd == null) return text;
+  const from = senderRoomOf(await liveRooms(db).catch(() => []), { session: body.from_session, cwd: body.from_cwd }, to);
+  if (!from) return text;
+  const out = withContext(text, { label: from.label, project: roomProject(from.project?.root ?? from.cwd), doing: from.doing });
+  return [...out].length <= TEXT_MAX ? out : text;
 }

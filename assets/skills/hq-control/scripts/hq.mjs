@@ -15,6 +15,8 @@ const USAGE = `usage: node hq.mjs <command>
   msgs <id> [n] [--full]             n latest messages to/from a room (default 20, max 500)
   msg <id> <messageId>               one message in full (messageId = #id of msgs)
   send <id> <text...>                message a room (one whole message per send)
+  brief [id]                         what a room is on: project, branch, doing, waiting, last ask/reply, files (no id: every live room)
+  roster                             live rooms, one line each: id · label · status · engine · project · doing
   dialog <id> <permission|question>  read the dialog blocking a background Claude Code room
   answer <id> <1-9>                  pick an option of the question just read with dialog
   artifact add <file> [<file>...] [--title T] [--note N] [--session ID] [--content 38,16] [--link URL] [--for DIR]
@@ -169,10 +171,36 @@ switch (cmd) {
   }
   case "send": {
     // HQ delivers it under `[phòng <from> → …]`, never the owner's header (`[owner …]`): a room's
-    // message is not the owner's prompt (no `/solo`, `/autopilot`… ship grant from it).
+    // message is not the owner's prompt (no `/solo`, `/autopilot`… ship grant from it). `from_session`
+    // and `from_cwd` let HQ find this room and add `[từ phòng <label> · <project> · đang: <step>]` under it.
     const text = need(rest.join(" ").trim(), "message text");
-    const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()) });
+    const sid = process.env.CLAUDE_CODE_SESSION_ID;
+    const r = await call("POST", "/api/messages", { session: need(id, "session id"), text, from: path.basename(process.cwd()), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
     console.log(JSON.stringify({ delivery: r.delivery, live: r.live ?? null, error: r.error ?? null, id: r.message?.id ?? null }));
+    break;
+  }
+  case "brief": {
+    const show = (b) =>
+      [
+        `${b.id}\t${b.label}\t${b.status}\t${b.engine}`,
+        `  project: ${b.project ? `${b.project.name}${b.project.branch ? ` @ ${b.project.branch}` : ""}` : (b.cwd ?? "-")}`,
+        `  doing: ${b.doing ?? "-"}`,
+        ...(b.waiting ? [`  WAITING: ${b.waiting}`] : []),
+        `  last ask: ${b.lastAsk ?? "-"}`,
+        `  last reply: ${b.lastReply ?? "-"}`,
+        ...(b.files.length ? [`  files: ${b.files.join(", ")}`] : []),
+        `  updated: ${when(b.updatedAt)}  (full: turns ${b.id} 1 --full)`,
+      ].join("\n");
+    if (id) console.log(show((await call("GET", `/api/brief?room=${enc(id)}`)).brief));
+    else console.log((await call("GET", "/api/brief")).rooms.map(show).join("\n\n") || "no live rooms");
+    break;
+  }
+  case "roster": {
+    const { rooms } = await call("GET", "/api/brief");
+    for (const b of rooms) {
+      const project = b.project ? `${b.project.name}${b.project.branch ? `@${b.project.branch}` : ""}` : "-";
+      console.log(`${b.id}\t${b.label}\t${b.status}\t${b.engine}\t${project}\t${one(b.doing ?? "-", 100)}${b.waiting ? ` · WAITING ${one(b.waiting, 100)}` : ""}`);
+    }
     break;
   }
   case "dialog": {
