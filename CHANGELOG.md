@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.135.4] — 2026-11-07
+
 ### Fixed
 - HQ › Tri thức báo "HTTP 409" và Vòng lặp báo "Chưa có vòng lặp nào" với mọi dự án: hai API này chỉ đếm phòng Claude Code, bỏ sót phòng omp. Giờ dùng chung danh sách phòng với Văn phòng (`projectsInView`). Tìm ra khi UAT qua link Tailscale.
 - HQ › Sessions: phòng omp hiện "No project". Giờ hiện tên thư mục của phòng.
