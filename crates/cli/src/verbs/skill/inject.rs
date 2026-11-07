@@ -59,6 +59,7 @@ pub(crate) fn harness_block() -> String {
 \n\
 **Quy tắc bất biến:**\n\
 - Sau mỗi thay đổi: cập nhật `CHANGELOG.md` (mục `[Unreleased]`) + ghi bài học vào `su-code/KNOWLEDGE.md`.\n\
+- Bài học: `- validated|failure YYYY-MM-DD: …`; xong việc thêm dòng `used: k-12+ k-40-` (`+` giúp ích, `-` gây hại).\n\
 - Đọc `su-code/STATE.md` đầu phiên; rewrite nó ở mỗi phase-boundary (Goal · Checklist · Current · Next).\n\
 \n\
 **Skills / agents / commands:** plugin ECC `ecc@ecc` (global) + rule của repo trong `.claude/rules/ecc/`.\n\
@@ -301,7 +302,7 @@ mod tests {
         for verb in ["trail ask", "trail grep", "trail skeleton", "trail callers"] {
             assert!(b.contains(verb), "STEP 0 must teach `{verb}`");
         }
-        for rule in ["CHANGELOG.md", "[Unreleased]", "su-code/KNOWLEDGE.md", "su-code/STATE.md"] {
+        for rule in ["CHANGELOG.md", "[Unreleased]", "su-code/KNOWLEDGE.md", "su-code/STATE.md", "used: k-12+ k-40-"] {
             assert!(b.contains(rule), "invariant rule `{rule}` missing");
         }
         assert!(b.contains("`ecc@ecc`") && b.contains("`.claude/rules/ecc/`"));
@@ -433,7 +434,7 @@ mod tests {
         assert_eq!(ch, vec![up.join("CLAUDE.md")]);
         let out = std::fs::read_to_string(up.join("CLAUDE.md")).unwrap();
         assert!(out.starts_with("# Mine\nbefore\n\n") && out.ends_with("\n\nafter \u{e9}\n"));
-        assert!(!out.contains("OLD full block") && out.len() < old.len() + 1100);
+        assert!(!out.contains("OLD full block") && out.len() < old.len() + 1250);
         assert_eq!(out.matches(BEGIN).count(), 1);
         assert_eq!(std::fs::read_to_string(up.join("CLAUDE.md.bak-8sync")).unwrap(), old);
         assert_eq!(std::fs::read_to_string(up.join("app/CLAUDE.md")).unwrap(), "# plain\n");

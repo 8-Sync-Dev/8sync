@@ -22,6 +22,7 @@ pub(crate) mod global;
 pub(crate) mod ecc;
 mod ecc_omp;
 mod init;
+mod lessons;
 pub(crate) mod memory;
 mod model;
 mod local_model;
@@ -55,7 +56,8 @@ mod sessions;
       8sync harness global            apply omp rules MACHINE-WIDE (all projects) + Anthropic token-optimizer defaults
       8sync harness global --sweep    …and stamp the project layer (block · memory · ECC rules) into every omp project under ~/Projects
       8sync harness init              explicit full bootstrap with progress UI
-      8sync harness up                refresh AGENTS.md block/memory/ECC rules + rebuild the trail map to current state
+      8sync harness up                refresh AGENTS.md block/memory/ECC rules, curate KNOWLEDGE if opted in (has k-ids/`used:`) + rebuild the trail map
+      8sync harness up --curate      opt this repo into KNOWLEDGE v2: give `validated`/`failure` lessons `[k-N] (+0/-0)` ids
       8sync harness up --pull        refresh AND re-pull registered skills from their source repos
       8sync harness up --commit      refresh AND git-commit agent memory (portable; default off)
       8sync harness up --loop 10m     foreground: refresh every 10m (Ctrl-C to stop)
@@ -102,6 +104,10 @@ pub struct Args {
     /// su-code/ + AGENTS.md/CLAUDE.md/CHANGELOG.md/.gitignore; never your code)
     #[arg(long)]
     pub commit: bool,
+    /// `up --curate`: run the KNOWLEDGE v2 curator even though KNOWLEDGE.md has
+    /// no `[k-N]` id or `used:` line yet (assigns ids = opts the repo in)
+    #[arg(long)]
+    pub curate: bool,
     /// `eval --baseline`: save this run as outputs/eval-baseline.json (the
     /// reference future `eval` runs diff against).
     #[arg(long)]
@@ -163,7 +169,7 @@ pub fn run(a: Args) -> Result<()> {
         None => auto::harness_auto(&env),
         Some("init") => init::harness_init(&env),
         Some("create") => init::harness_create(&env, a.sweep.as_deref()),
-        Some("up") => up::harness_up(&env, a.loop_every.as_deref(), a.timer.as_deref(), a.pull, a.commit),
+        Some("up") => up::harness_up(&env, a.loop_every.as_deref(), a.timer.as_deref(), a.pull, a.commit, a.curate),
         Some("global") => global::harness_global(&env, a.sweep.as_deref(), a.pull),
         Some("bench") => bench::harness_bench(),
         Some("audit") => audit::harness_audit(&env),
@@ -213,7 +219,7 @@ pub fn run(a: Args) -> Result<()> {
         }
         Some(other) => {
             ui::warn(&format!("unknown subcommand: {}", other));
-            ui::info("try: 8sync harness create [--sweep] | init | up [--pull|--commit|--loop DUR|--timer DUR|off] | global [--sweep DIR] | gateway | audit | eval | bench | help");
+            ui::info("try: 8sync harness create [--sweep] | init | up [--pull|--commit|--curate|--loop DUR|--timer DUR|off] | global [--sweep DIR] | gateway | audit | eval | bench | help");
             Ok(())
         }
     }
@@ -248,6 +254,7 @@ fn print_help() {
     println!("{}", crate::brand::render("  8sync harness up                refresh: re-inject the block + KNOWLEDGE breadcrumb + ECC rules + trail build"));
     println!("{}", crate::brand::render("  8sync harness up --pull         …and re-pull registered skills from their source repos (network)"));
     println!("{}", crate::brand::render("  8sync harness up --commit       …and git-commit the refreshed agent memory (portable; default off)"));
+    println!("{}", crate::brand::render("  8sync harness up --curate       …and opt KNOWLEDGE.md into v2 (assign [k-N] ids; later runs curate on their own)"));
     println!("{}", crate::brand::render("  8sync harness up --loop <dur>   foreground refresh every <dur> (10m, 1h, 30s)"));
     println!("{}", crate::brand::render("  8sync harness up --timer <dur>  install a systemd USER timer (background); `--timer off` removes it"));
     println!("{}", crate::brand::render("  8sync harness help              this cheatsheet"));
@@ -302,7 +309,7 @@ fn print_help() {
 
     println!("\nOVERWRITE POLICY (default = NEVER overwrite — only add what's missing)");
     println!("  user-owned : su-code/*.md · CHANGELOG.md · AGENTS.md outside sentinels · .claude/rules/ecc/<pack> once present · hooks · your config keys");
-    println!("               → seed-if-missing or sentinel-block updates ONLY; your edits are never clobbered");
+    println!("               → seed-if-missing, sentinel blocks, KNOWLEDGE curator (ids/counters/dedupe) ONLY; your text is never rewritten");
     println!("  managed    : ~/.omp/skills (bundled) · 00-force-load.md · APPEND_SYSTEM.md · extensions/commands");
     println!("{}", crate::brand::render("               → 8sync-shipped copies, refreshed when the binary updates"));
 
