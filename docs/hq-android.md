@@ -72,7 +72,9 @@ Mỗi giai đoạn chỉ bắt đầu khi giai đoạn trước đạt tiêu ch�
 
 Tauri 2 + WebView hệ thống, màn hình kết nối, Back về màn hình kết nối, light/dark, APK ký sẵn có link tải cố định.
 
-Exit criteria: workflow `hq-android` xanh trên tag; `apksigner verify` ra `CN=8 Sync HQ`; UAT emulator có ảnh `connect.png`, `hq.png`, `back.png`, `connect-dark.png` và không crash; link `releases/latest/download/8sync-hq.apk` tải được.
+Exit criteria: workflow `hq-android` xanh trên tag; `apksigner verify` ra `CN=8 Sync HQ`; link `releases/latest/download/8sync-hq.apk` tải được.
+
+UAT emulator (job `emulator UAT`, `uat.sh`) **không chặn release** (`continue-on-error`, tối đa 15 phút): emulator trên GitHub Actions hay chập chờn (emulator 37.2.13 + `swiftshader_indirect` tự tắt sau lần nhập đầu vào WebView; đổi uimode làm Play services khởi động lại và kéo app chết theo). Lần chạy xanh đầu tiên: run 42327887627, ảnh `connect.png`, `typed.png`, `hq.png`, `back.png`, `connect-dark.png`. Việc tiếp theo (follow-up): UAT trên máy thật với HQ thật qua `--tailnet`, và giữ job emulator xanh ổn định trước khi bật lại chế độ chặn.
 
 ### P1 · Native touches
 

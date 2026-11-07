@@ -141,11 +141,14 @@ jobs:
             8sync-hq.apk.sha256
           if-no-files-found: error
 
+  # Non-blocking: emulator flakiness (see uat.sh) must never hold back the APK
+  # on a release. Screenshots are still uploaded for review.
   uat:
     name: emulator UAT
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -193,7 +196,7 @@ jobs:
   # one here: a release made by this job could become "latest" without binaries.
   publish:
     name: attach to release
-    if: github.ref_type == 'tag'
+    if: ${{ github.ref_type == 'tag' && !cancelled() && needs.test.result == 'success' && needs.build.result == 'success' }}
     needs: [test, build, uat]
     runs-on: ubuntu-latest
     permissions:
