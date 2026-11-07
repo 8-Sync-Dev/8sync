@@ -24,7 +24,8 @@ import {
   type TreeRoomIn,
   type TreeSession,
 } from "@/lib/session-tree";
-import { ompChildren, registryCreated } from "@/lib/server/omp-tree";
+import { ompChildren } from "@/lib/server/omp-children";
+import { registryCreated } from "@/lib/server/omp-tree";
 
 const S = (o: Partial<TreeSession> & { key: string }): TreeSession => ({
   kind: "omp",
@@ -245,7 +246,7 @@ describe("replacePane", () => {
 });
 
 describe("omp sub-sessions on disk", () => {
-  it("reads task subagents next to the transcript: result → Xong, empty → Lỗi, fresh → Đang làm, else Nghỉ", () => {
+  it("reads task subagents next to the transcript: result → Xong, empty → Lỗi, fresh or mid-tool → Đang làm, else Nghỉ", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hq-tree-"));
     try {
       const transcript = path.join(dir, "2026-11-02T00-00-00-000Z_abc.jsonl");
@@ -253,26 +254,40 @@ describe("omp sub-sessions on disk", () => {
       const sub = transcript.replace(/\.jsonl$/, "");
       fs.mkdirSync(sub);
       const now = Date.now();
-      const put = (name: string, ageMs: number, md?: string) => {
-        fs.writeFileSync(path.join(sub, `${name}.jsonl`), "{}\n");
+      const put = (name: string, ageMs: number, md?: string, body = "{}\n") => {
+        fs.writeFileSync(path.join(sub, `${name}.jsonl`), body);
         const t = new Date(now - ageMs);
         fs.utimesSync(path.join(sub, `${name}.jsonl`), t, t);
         if (md !== undefined) fs.writeFileSync(path.join(sub, `${name}.md`), md);
       };
+      const call = (args: string) =>
+        `{"type":"message","message":{"role":"assistant","stopReason":"toolUse"}}\n{"type":"custom","customType":"tool_execution_start","data":{"toolName":"bash","args":{"command":"${args}"}}}\n`;
       put("Done", 10 * 60_000, "## Kết quả\n\nĐã sửa xong");
       put("Failed", 20 * 60_000, "");
       put("Running", 5_000);
       put("Stopped", 30 * 60_000);
+      // Silent for 40 min inside one long tool call (a recording, `wait`): still running. The argument is
+      // larger than one read chunk, so the start of the line sits far before the end of the file.
+      put("LongCall", 40 * 60_000, undefined, call("x".repeat(200_000)));
+      // Its tool returned and it stopped there without a result: not running.
+      put("Returned", 40 * 60_000, undefined, `${call("ls")}{"type":"message","message":{"role":"toolResult"}}\n`);
+      // A tool call that started 7 h ago never finished: the subagent died with it.
+      put("Dead", 7 * 3600_000, undefined, call("ls"));
       fs.writeFileSync(path.join(sub, "Running.log"), "x");
       const kids = ompChildren(transcript, "omp-1", now);
       expect(kids.map((k) => [k.title, k.state])).toEqual([
         ["Running", "working"],
+        ["LongCall", "working"],
         ["Done", "done"],
         ["Failed", "error"],
         ["Stopped", "idle"],
+        ["Returned", "idle"],
+        ["Dead", "idle"],
       ]);
-      expect(kids[1]).toMatchObject({ key: "omp-1/Done", detail: "Kết quả" });
-      expect(kids[2].detail).toBe("Kết thúc mà không có kết quả");
+      expect(kids[2]).toMatchObject({ key: "omp-1/Done", detail: "Kết quả" });
+      expect(kids[3].detail).toBe("Kết thúc mà không có kết quả");
+      // The room's process is gone: a tool call left open is history, not work.
+      expect(ompChildren(transcript, "omp-1", now, false).find((k) => k.title === "LongCall")?.state).toBe("idle");
       expect(ompChildren(path.join(dir, "missing.jsonl"), "omp-1", now)).toEqual([]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

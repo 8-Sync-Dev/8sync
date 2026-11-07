@@ -1,6 +1,6 @@
 // Every omp session HQ can open, for the sidebar's session tree (GET /api/omp/sessions?all=1): the omp
 // rows of `8sync ls --all` (lib/server/floor.ts, its 4 s cache) with their folder resolved, their creation
-// time from the `8sync .` registry, and their `task` subagents as sub-sessions. A session created by POST
+// time from the `8sync .` registry, and their `task` subagents as sub-sessions (omp-children.ts). A session created by POST
 // /api/omp/sessions that ls does not list yet shows as starting. Read-only: nothing here writes.
 // Tested in tests/session-tree.test.ts.
 import fs from "node:fs";
@@ -8,70 +8,12 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isOmpRoomId } from "../labels";
 import { groupKey } from "../sidebar";
-import { treeStateOfFloor, type OmpTreeRow, type TreeChild } from "../session-tree";
+import { treeStateOfFloor, type OmpTreeRow } from "../session-tree";
 import { expand, loadFloor, ompTranscript } from "./floor";
+import { ompChildren } from "./omp-children";
 import { ompRegistryDir, ompRepoDir, pendingAll } from "./omp-sessions";
 
-/** A subagent whose transcript moved this recently and that has no result yet is still working. */
-const CHILD_LIVE_MS = 90_000;
-const CHILDREN_MAX = 40;
 const DAY_MS = 24 * 3600_000;
-
-function firstLine(file: string): string | null {
-  let fd: number | null = null;
-  try {
-    fd = fs.openSync(file, "r");
-    const buf = Buffer.alloc(2048);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    const line = buf
-      .toString("utf8", 0, n)
-      .split(/\r?\n/)
-      .map((l) => l.replace(/^[#>*\-\s]+/, "").trim())
-      .find(Boolean);
-    return line ? (line.length > 140 ? `${line.slice(0, 139)}…` : line) : null;
-  } catch {
-    return null;
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
-  }
-}
-
-/**
- * The `task` subagents of an omp transcript: omp writes each one next to the parent transcript, in the
- * folder named like it (`<ts>_<uuid>/<Agent>.jsonl`), and its final answer as `<Agent>.md` when it ends.
- * Result → Xong; an empty result → Lỗi (it ended without answering); no result and a transcript that
- * moved in the last 90 s → Đang làm; else nghỉ (stopped). Running first, then newest; at most 40.
- */
-export function ompChildren(transcript: string, parentId: string, now = Date.now()): TreeChild[] {
-  const dir = transcript.replace(/\.jsonl$/, "");
-  let names: string[];
-  try {
-    names = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-  } catch {
-    return [];
-  }
-  const out: TreeChild[] = [];
-  for (const f of names) {
-    const agent = f.slice(0, -".jsonl".length);
-    let at: number;
-    try {
-      at = fs.statSync(path.join(dir, f)).mtimeMs;
-    } catch {
-      continue;
-    }
-    const md = path.join(dir, `${agent}.md`);
-    let size: number | null = null;
-    try {
-      size = fs.statSync(md).size;
-    } catch {
-      size = null;
-    }
-    const state = size === null ? (now - at <= CHILD_LIVE_MS ? "working" : "idle") : size > 0 ? "done" : "error";
-    const detail = size ? firstLine(md) : size === 0 ? "Kết thúc mà không có kết quả" : null;
-    out.push({ key: `${parentId}/${agent}`, title: agent, state, at: Math.round(at), detail });
-  }
-  return out.sort((a, b) => Number(b.state === "working") - Number(a.state === "working") || (b.at ?? 0) - (a.at ?? 0)).slice(0, CHILDREN_MAX);
-}
 
 /** `<root>\0<name>` → creation ms, from every `<registry>/<key>/index.json`. */
 export function registryCreated(registry = ompRegistryDir()): Map<string, number> {
@@ -132,7 +74,7 @@ async function build(db: DatabaseSync, now: number): Promise<OmpTreeRow[]> {
       doing: r.caption || null,
       last_active: at,
       created: cwd ? (created.get(`${groupKey(cwd)}\0${r.name}`) ?? null) : null,
-      children: transcript ? ompChildren(transcript, id, now) : [],
+      children: transcript ? ompChildren(transcript, id, now, r.live) : [],
     });
   }
   for (const [id, p] of pendingAll(now)) {

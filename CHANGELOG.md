@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.133.1] — 2026-11-07
+
+### Fixed
+- HQ: phòng omp đã trả lời xong lượt của nó nhưng vẫn còn subagent `task` chạy nền ("Waiting for N background jobs") giờ hiện **đang làm** ("Chờ N việc nền: tên…") ở thanh bên, Văn phòng và đầu phòng, thay vì "Đang chờ prompt mới". Subagent đang ngồi trong một lệnh dài (bash, `wait`, quay video) mà transcript không động quá 90 s vẫn được tính là đang làm, chừng nào process omp của phòng còn sống và lệnh đó chưa quá 6 giờ (`lib/server/omp-children.ts`).
+
 ## [0.133.0] — 2026-11-07
 
 ### Added

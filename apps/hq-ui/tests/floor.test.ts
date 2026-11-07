@@ -39,6 +39,8 @@ describe("deriveFloor", () => {
     ["running but the turn ended -> resting at the prompt", { status: "running", last_tool: "bash", doing: null, last_activity: "bash: Measuring distill coverage", turn_open: false, last_active: ago(60) }, null, "idle", "nghỉ"],
     ["turn ended with open tasks is rest, not stall", { status: "running", last_tool: "Bash", turn_open: false, tasks_done: 1, tasks_total: 3, last_active: ago(400) }, null, "idle", "nghỉ"],
     ["turn ended with every task done -> done", { status: "running", last_tool: "Bash", turn_open: false, tasks_done: 3, tasks_total: 3, last_active: ago(10) }, null, "done", "xong"],
+    ["turn ended while background subagents run -> working on them", { status: "running", turn_open: false, bg_jobs: ["Render", "Upload"], last_active: ago(600) }, null, "running", "việc nền"],
+    ["background subagents still lose to a question for the owner", { status: "running", turn_open: false, bg_jobs: ["Render"], last_active: ago(10) }, { status: "needs_input", detail: "Trust?" }, "waiting", "chờ anh"],
     ["turn still open keeps working", { status: "running", last_tool: "Bash", turn_open: true, last_active: ago(10) }, null, "running", "chạy lệnh"],
     ["turn ended but Claude asks the owner -> waiting", { status: "running", turn_open: false, last_active: ago(10) }, { status: "needs_input", detail: "Trust?" }, "waiting", "chờ anh"],
   ];
