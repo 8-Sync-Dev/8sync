@@ -6,7 +6,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 ## [Unreleased]
 
 ### Added
-- HQ › Bots: nhóm bot. "Nhóm mới" (tên + chọn bot) ở đầu danh sách; trong nhóm anh gõ `@` để chọn bot bằng phím (↑↓ Enter), chỉ bot được @ nhận tin. Bot nhắn nhau trong một lượt bị giới hạn 6 tin và 3 hop, tin lặp trong 60 giây bị bỏ; vượt giới hạn thì tin bị giữ và hiện băng "Cho thêm 3 lượt". Tin phòng→phòng ngoài nhóm và tin Chief vẫn đi như cũ. Nhóm lưu ở máy (`~/.config/8sync/hq/groups.json`), bộ đếm nằm trong bộ nhớ và reset khi HQ khởi động lại.
+- HQ › Bots: nhóm bot. "Nhóm mới" (tên + chọn bot) ở đầu danh sách; trong nhóm anh gõ `@` để chọn bot bằng phím (↑↓ Enter), chỉ bot được @ nhận tin. Bot nhắn nhau trong một lượt bị giới hạn 6 tin và 3 hop, tin lặp trong 60 giây bị bỏ; vượt giới hạn thì tin bị giữ và hiện băng "Cho thêm 3 lượt". Nhóm lưu ở máy (`~/.config/8sync/hq/groups.json`), bộ đếm nằm trong bộ nhớ và reset khi HQ khởi động lại.
+- HQ: hai bot nhắn qua lại ngoài nhóm (`hq.mjs send`) không còn ping-pong mãi: cùng nội dung từ phòng A tới phòng B trong 60 giây bị bỏ (200 `dropped`), quá 12 tin A→B trong 10 phút bị từ chối 409 `pair-limit` cho tới khi anh nhắn A hoặc B. Tin anh gửi Chief và một tin phòng→phòng bình thường vẫn đi như cũ; bộ đếm cũng reset khi HQ khởi động lại. Skill hq-control dặn bot gặp `hop-limit`/`pair-limit` thì dừng chờ anh, gặp `dropped` thì không gửi lại.
 - HQ › Bots: trong khung chat 1:1 của bot A gõ `@B …` thì tin tới B kèm ngữ cảnh của A; câu trả lời của B hiện ở thread A thành thẻ "Trả lời từ B" với nút [Gửi cho A], không tự chuyển về A.
 
 ## [0.138.0] — 2026-11-07

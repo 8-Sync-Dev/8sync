@@ -90,17 +90,31 @@ export type RoomSendDeps = {
 export type RoomSendResult =
   | { status: 201; body: Delivered }
   | { status: 200; body: { delivery: "dropped"; error: string; message: null } }
-  | { status: 409; body: { error: "hop-limit"; turn: string | null; group: string | null; hop: number; max: number; detail: string } };
+  | { status: 409; body: { error: "hop-limit"; turn: string | null; group: string | null; hop: number; max: number; detail: string } }
+  | { status: 409; body: { error: "pair-limit"; from: string; to: string; count: number; max: number; detail: string } };
 
 /**
- * A room's message to `to` (`from`: the sending room's address when HQ found it): outside any group turn
- * it goes exactly as before (no line added, nothing counted); inside one it gets the hop line, is counted,
- * dropped when it repeats itself within 60 s, and refused (409 hop-limit) past the turn's limits.
+ * A room's message to `to` (`from`: the sending room's address when HQ found it). Outside any group turn
+ * it goes as before (no line added) under the pair guard: the same text from the same pair within 60 s
+ * is dropped, past 12 per pair in 10 min it is refused (409 pair-limit) until the owner writes to either
+ * room. Inside a turn it gets the hop line, is counted, dropped when it repeats itself within 60 s, and
+ * refused (409 hop-limit) past the turn's limits.
  */
 export async function roomSend(from: string | null, to: string, text: string, d: RoomSendDeps): Promise<RoomSendResult> {
   const now = d.now ?? Date.now();
   const c = d.guard.check(from, text, now);
-  if (c.kind === "free") return { status: 201, body: await d.deliver(text) };
+  if (c.kind === "free") {
+    if (!from || from === to) return { status: 201, body: await d.deliver(text) };
+    const p = d.guard.pairCheck(from, to, text, now);
+    if (p.kind === "duplicate") return { status: 200, body: { delivery: "dropped", error: "duplicate: cùng nội dung đã gửi tới phòng này dưới 60 giây", message: null } };
+    if (p.kind === "pair-limit") {
+      const detail = `${from} đã gửi ${to} ${p.count} tin trong 10 phút: dừng, chờ owner nhắn một trong hai phòng rồi mới gửi tiếp, không gửi lặp.`;
+      return { status: 409, body: { error: "pair-limit", from, to, count: p.count, max: p.max, detail } };
+    }
+    const r = await d.deliver(text);
+    if (!r.waiting) d.guard.pairCommit(from, to, text, now);
+    return { status: 201, body: r };
+  }
   if (c.kind === "duplicate") {
     d.log(c.group, { ts: now, turn: c.turn, kind: "dropped", from: from ?? "?", to: [to], text, hop: 0 });
     return { status: 200, body: { delivery: "dropped", error: "duplicate: cùng nội dung đã gửi trong lượt này dưới 60 giây", message: null } };

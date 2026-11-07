@@ -135,10 +135,39 @@ describe("loop guard", () => {
 
   it("regression: a room outside any group turn (a plain room→room message, the Chief of Staff's) goes as before", async () => {
     const guard = new GroupGuard();
-    for (let i = 0; i < 10; i++) expect((await send(guard, "hq-chief", "hq-a", "cùng một việc")).status).toBe(201);
-    expect((await send(guard, null, "hq-a", "không rõ ai gửi")).status).toBe(201);
-    expect(delivered.map((d) => d.text)).toEqual([...Array(10).fill("cùng một việc"), "không rõ ai gửi"]);
+    expect((await send(guard, "hq-chief", "hq-a", "làm phần web")).status).toBe(201);
+    expect((await send(guard, "hq-chief", "hq-b", "làm phần api")).status).toBe(201);
+    for (let i = 0; i < 15; i++) expect((await send(guard, null, "hq-a", "không rõ ai gửi")).status).toBe(201);
+    expect(delivered[0]).toEqual({ to: "hq-a", text: "làm phần web" });
+    expect(delivered).toHaveLength(17);
     expect(logs).toEqual([]);
+  });
+
+  it("pair guard: the same text from the same pair within 60 s is dropped (context line ignored); another pair or after 60 s it goes", async () => {
+    const guard = new GroupGuard();
+    expect((await send(guard, "hq-a", "hq-b", "[từ phòng a · đang: Rảnh]\nXong  rồi", 1_000)).status).toBe(201);
+    expect(await send(guard, "hq-a", "hq-b", "[từ phòng a · đang: Đang làm]\nxong rồi", 30_000)).toMatchObject({ status: 200, body: { delivery: "dropped" } });
+    expect((await send(guard, "hq-a", "hq-c", "xong rồi", 30_000)).status).toBe(201);
+    expect((await send(guard, "hq-b", "hq-a", "xong rồi", 30_000)).status).toBe(201);
+    expect((await send(guard, "hq-a", "hq-b", "xong rồi", 62_000)).status).toBe(201);
+    expect(delivered).toHaveLength(4);
+  });
+
+  it("pair guard: the 13th message of one pair within 10 min is refused (409 pair-limit); the owner writing to either room resets it", async () => {
+    const guard = new GroupGuard();
+    for (let i = 1; i <= 12; i++) expect((await send(guard, "hq-a", "hq-b", `lượt ${i}`, i * 1_000)).status).toBe(201);
+    const r = await send(guard, "hq-a", "hq-b", "lượt 13", 13_000);
+    expect(r).toMatchObject({ status: 409, body: { error: "pair-limit", from: "hq-a", to: "hq-b", count: 12, max: 12 } });
+    expect(r.status === 409 ? r.body.detail : "").toContain("chờ owner");
+    expect((await send(guard, "hq-b", "hq-a", "trả lời", 13_000)).status, "the other direction is its own pair").toBe(201);
+    expect((await send(guard, "hq-a", "hq-b", "lượt 13", 10 * 60_000 + 1_500)).status, "the oldest left the 10 min window").toBe(201);
+    expect((await send(guard, "hq-a", "hq-b", "lượt 14", 10 * 60_000 + 1_600)).status).toBe(409);
+    guard.leave("hq-b");
+    expect((await send(guard, "hq-a", "hq-b", "lượt 14", 10 * 60_000 + 1_700)).status, "the owner wrote to hq-b").toBe(201);
+    for (let i = 15; i <= 26; i++) expect((await send(guard, "hq-b", "hq-c", `việc ${i}`, 10 * 60_000 + 2_000)).status).toBe(201);
+    expect((await send(guard, "hq-b", "hq-c", "việc 27", 10 * 60_000 + 2_000)).status).toBe(409);
+    guard.startTurn(G(), ["hq-c"], 10 * 60_000 + 2_100);
+    expect((await send(guard, "hq-b", "hq-c", "việc 27", 10 * 60_000 + 2_200)).status, "an owner group message to hq-c resets it too").toBe(201);
   });
 
   it("the 7th bot→bot message of one owner turn is refused (409 hop-limit) until the owner continues", async () => {
@@ -269,7 +298,8 @@ describe("routes", () => {
     const r = await post({ session: "hq-web", text: "chạy test", from: "core", from_session: SID });
     expect(r.status).toBe(201);
     expect(sendKeys.mock.calls.at(-1)?.[1]).toBe(`[phòng core]\n[từ phòng core · ${path.basename(shop)} · đang: Đang nghỉ]\nchạy test`);
-    expect((await post({ session: "hq-web", text: "chạy test", from: "core", from_session: SID })).status, "no dedupe outside a group").toBe(201);
+    expect(await (await post({ session: "hq-web", text: "chạy test", from: "core", from_session: SID })).json(), "the same text again within 60 s").toMatchObject({ delivery: "dropped" });
+    expect((await post({ session: "hq-web", text: "chạy test lại", from: "core", from_session: SID })).status).toBe(201);
     expect((await chiefPUT(req("/api/chief", { method: "PUT", token, origin: ORIGIN, body: { room: "hq-api", on: true } }))).status).toBe(200);
     const ask = await chiefAskPOST(req("/api/chief/ask", { method: "POST", token, origin: ORIGIN, body: { text: "chia việc" }, ui: true }));
     expect(ask.status).toBe(201);

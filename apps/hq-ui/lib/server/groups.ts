@@ -233,6 +233,11 @@ export function roomGroupText(text: string, name: string, hop: number, max: numb
 export const DUP_MS = 60_000;
 /** A turn nobody touched for this long is over: its rooms send freely again. */
 export const TURN_IDLE_MS = 30 * 60_000;
+/** Outside group turns, one room may send another this many messages per `PAIR_WINDOW_MS` (room→room ping-pong). */
+export const PAIR_MAX = 12;
+export const PAIR_WINDOW_MS = 10 * 60_000;
+
+export type PairCheck = { kind: "ok" } | { kind: "duplicate" } | { kind: "pair-limit"; count: number; max: number };
 
 type Turn = { id: string; group: string; name: string; maxMsgs: number; hopCap: number; botMsgs: number; held: { hop: number; at: number } | null; lastAt: number };
 
@@ -246,14 +251,17 @@ export type GuardCheck =
 export type HeldTurn = { turn: string; hop: number; botMsgs: number; maxMsgs: number; hopCap: number; at: number };
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+/** A pair's text without the "[từ phòng …]" context line HQ puts on top (its "đang: …" part changes). */
+const bare = (s: string) => norm(s.replace(/^\[từ phòng [^\n]*\]\n/, ""));
 
 /** GET/PUT/DELETE /api/groups: the groups and, by group id, the turn the guard holds ("Cho thêm"). */
 export type GroupsView = { groups: Group[]; held: Record<string, HeldTurn> };
 
 /**
- * The per-turn counters. In memory only: an HQ restart forgets every turn, so rooms start over from 0
- * (the hop line a room copies still stops a chain past its max, see `check`). Accepted (research
- * hq-bots-groups.md "Rủi ro mở"): the owner's next message starts a new turn anyway.
+ * The per-turn counters, and per ordered room pair for room→room messages outside any turn. In memory
+ * only: an HQ restart forgets every turn and pair, so rooms start over from 0 (the hop line a room copies
+ * still stops a chain past its max, see `check`). Accepted (research hq-bots-groups.md "Rủi ro mở"): the
+ * owner's next message starts a new turn anyway.
  */
 export class GroupGuard {
   /** `room` answers `turn` from hop 0 too (the Chief of Staff a "chief" group hands the owner's message to). */
@@ -265,19 +273,49 @@ export class GroupGuard {
   /** room address → the turn it is answering and how deep. */
   private rooms = new Map<string, { turn: string; hop: number }>();
   private recent = new Map<string, { text: string; at: number }[]>();
+  /** "from\nto" → that pair's messages outside group turns within `PAIR_WINDOW_MS`. */
+  private pairs = new Map<string, { text: string; at: number }[]>();
 
   /** The owner's message to a group: a new turn, its recipients at hop 0 (any turn they had is left). */
   startTurn(g: Pick<Group, "id" | "name" | "maxHops" | "maxBotMsgsPerTurn">, recipients: readonly string[], now = Date.now()): string {
     this.sweep(now);
     const id = `t_${now.toString(36)}${crypto.randomBytes(3).toString("hex")}`;
     this.turns.set(id, { id, group: g.id, name: g.name, maxMsgs: g.maxBotMsgsPerTurn, hopCap: g.maxHops, botMsgs: 0, held: null, lastAt: now });
-    for (const r of recipients) this.rooms.set(r, { turn: id, hop: 0 });
+    for (const r of recipients) {
+      this.rooms.set(r, { turn: id, hop: 0 });
+      this.resetPairs(r);
+    }
     return id;
   }
 
-  /** The owner wrote to this room outside the group (its DM, the Chief box): it no longer answers a group turn. */
+  /** The owner wrote to this room outside the group (its DM, the Chief box): it no longer answers a group turn, and its room pairs start over. */
   leave(room: string): void {
     this.rooms.delete(room);
+    this.resetPairs(room);
+  }
+
+  /**
+   * A room→room message outside any group turn: dropped when the pair sent the same text within 60 s,
+   * refused past `PAIR_MAX` per `PAIR_WINDOW_MS` until the owner writes to either room. Counted on `pairCommit`.
+   */
+  pairCheck(from: string, to: string, text: string, now = Date.now()): PairCheck {
+    const list = (this.pairs.get(`${from}\n${to}`) ?? []).filter((r) => now - r.at < PAIR_WINDOW_MS);
+    const n = bare(text);
+    if (list.some((r) => r.text === n && now - r.at < DUP_MS)) return { kind: "duplicate" };
+    if (list.length >= PAIR_MAX) return { kind: "pair-limit", count: list.length, max: PAIR_MAX };
+    return { kind: "ok" };
+  }
+
+  pairCommit(from: string, to: string, text: string, now = Date.now()): void {
+    const key = `${from}\n${to}`;
+    this.pairs.set(key, [...(this.pairs.get(key) ?? []).filter((r) => now - r.at < PAIR_WINDOW_MS), { text: bare(text), at: now }]);
+  }
+
+  private resetPairs(room: string): void {
+    for (const key of this.pairs.keys()) {
+      const [a, b] = key.split("\n");
+      if (a === room || b === room) this.pairs.delete(key);
+    }
   }
 
   /**
@@ -345,6 +383,11 @@ export class GroupGuard {
       const keep = list.filter((r) => now - r.at < DUP_MS);
       if (keep.length) this.recent.set(key, keep);
       else this.recent.delete(key);
+    }
+    for (const [key, list] of this.pairs) {
+      const keep = list.filter((r) => now - r.at < PAIR_WINDOW_MS);
+      if (keep.length) this.pairs.set(key, keep);
+      else this.pairs.delete(key);
     }
   }
 }

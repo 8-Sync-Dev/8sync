@@ -82,8 +82,9 @@ export async function POST(req: Request) {
   const rooms = await liveRooms(o.db).catch(() => []);
   const ctx = senderContext(rooms, text.value, body, session);
   const to = rooms.find((r) => r.name === session || r.session_id === session)?.name ?? session;
-  // Only a room answering a group turn (or carrying a hop line past its max) is counted or refused;
-  // any other room message, the Chief of Staff's routing included, goes as before (roomSend "free").
+  // A room answering a group turn (or carrying a hop line past its max) is counted per turn; any other
+  // room message, the Chief of Staff's routing included, goes as before under the per-pair guard
+  // (roomSend: same text within 60 s dropped, 409 pair-limit past 12 per pair in 10 min).
   const r = await roomSend(ctx.from, to, ctx.text, {
     guard: groupGuard(),
     groups: readGroups(),
