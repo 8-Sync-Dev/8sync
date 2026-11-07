@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAIN_TABS, MORE_TABS, barTabs, isMore, moreLabel, moreTabs } from "@/lib/tabs";
+import { MAIN_TABS, MORE_TABS, barTabs, isMore, moreLabel, moreTabs, viewHeader } from "@/lib/tabs";
 
 describe("HQ tab bar groups", () => {
   it("keeps the daily tabs in the bar (+ Chat phòng while a room is open) and folds the rest, no tab lost or doubled", () => {
@@ -22,5 +22,16 @@ describe("HQ tab bar groups", () => {
     expect(moreTabs(false)).not.toContain("content");
     expect(moreTabs(false)).toHaveLength(MORE_TABS.length - 1);
     expect(moreTabs(true)).toContain("content");
+  });
+  it("heads a view that lists no rooms with its own name, not 'Tất cả phòng' (UAT 2026-11-07)", () => {
+    expect(viewHeader("codemap", "su-code")).toEqual({ title: "Bản đồ code", subtitle: "" });
+    expect(viewHeader("may", null)).toEqual({ title: "Máy", subtitle: "" });
+    expect(viewHeader("preview", "su-code")).toEqual({ title: "Preview", subtitle: "su-code" });
+    expect(viewHeader("know", null)).toEqual({ title: "Tri thức", subtitle: "" });
+    for (const t of ["overview", "office", "room", "group", "sessions"]) expect(viewHeader(t, "su-code")).toBeNull();
+    // Every other tab (Bots/Không gian have their own header in hq-app) gets a name of its own.
+    for (const t of [...MAIN_TABS, ...MORE_TABS].filter((t) => !["bots", "workspace", "overview", "office", "room", "group", "sessions"].includes(t))) {
+      expect(viewHeader(t, null)?.title).toBeTruthy();
+    }
   });
 });

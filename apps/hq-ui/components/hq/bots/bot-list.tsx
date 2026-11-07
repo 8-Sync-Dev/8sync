@@ -112,7 +112,7 @@ export function BotList({
                 )}
               >
                 {f === "all" ? "Tất cả" : BOT_STATUS_LABEL[f]}
-                <span className={cn("tabular", on ? "opacity-80" : "opacity-70")}>{n}</span>
+                {!loading && <span className={cn("tabular", on ? "opacity-80" : "opacity-70")}>{n}</span>}
               </button>
             );
           })}

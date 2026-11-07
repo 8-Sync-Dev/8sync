@@ -195,7 +195,8 @@ export function CodemapView({
               ) : (
                 <StatusStrip st={st} now={status.at} totals={mapNow?.data?.totals ?? null} onBuild={build} />
               )}
-              {st?.index.indexed && id != null && <SearchBox key={id} api={api} project={id} onOpen={openFile} />}
+              {/* Keyed per project so a switch resets them; the prefixes keep these siblings' keys apart. */}
+              {st?.index.indexed && id != null && <SearchBox key={`search:${id}`} api={api} project={id} onOpen={openFile} />}
               {st?.index.indexed &&
                 (mapNow?.error ? (
                   <Problem text={mapNow.error} onRetry={() => setMapNonce((x) => x + 1)} />
@@ -208,7 +209,7 @@ export function CodemapView({
                   <MapTree map={mapNow.data} onOpen={openFile} />
                 ))}
               {st?.graph.dir && <GraphNote st={st} now={status.at} onOpen={() => id != null && setSide({ kind: "graph", project: id })} />}
-              {id != null && <GraphifyPanel key={id} api={api} project={id} active={active} onUpdated={status.reload} />}
+              {id != null && <GraphifyPanel key={`graphify:${id}`} api={api} project={id} active={active} onUpdated={status.reload} />}
             </div>
           </div>
           {sideNow?.kind === "skeleton" && (
