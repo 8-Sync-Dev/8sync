@@ -249,8 +249,8 @@ export function botSummary(bots: readonly Pick<Bot, "status">[]): string {
  */
 export function threadHint(loading: boolean, failed: boolean, bots: number): string {
   if (loading) return "Đang tải danh sách bot…";
-  if (bots) return "Chọn một bot để xem cuộc trò chuyện.";
-  return failed ? "Chưa đọc được danh sách bot." : "Bot sẽ hiện ở đây khi có phiên đang chạy.";
+  if (bots) return "Chọn một bot bên trái hoặc tạo bot mới.";
+  return failed ? "Chưa đọc được danh sách bot." : "Chưa có bot nào. Bấm “Bot mới” để tạo bot đầu tiên.";
 }
 
 /**

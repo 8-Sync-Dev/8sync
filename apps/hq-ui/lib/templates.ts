@@ -1,0 +1,346 @@
+// Bot templates for the Bots tab's "Bot mới" sheet (components/hq/bots/new-bot-sheet.tsx), as decided in
+// su-code/research/hq-bots-groups.md §4. Built-in ones live here; the owner's own are JSON files in
+// ~/.config/8sync/hq/templates/ (lib/server/templates.ts reads them through `parseTemplate`) and replace a
+// built-in one with the same id. Text only: never a token, never client or CRM data. Pure and client-safe:
+// the request builders below are what the sheet sends. Tested in tests/templates.test.ts.
+import { isModelId, isRoleId, type ModelId, type RoleId } from "./roles";
+import { isOmpSessionName } from "./omp-workspace";
+
+export type BotEngine = "claude" | "omp";
+
+/** The accent a template card gets; the sheet maps each one to static Tailwind classes. */
+export const TEMPLATE_COLORS = ["slate", "sky", "amber", "lime", "violet", "indigo", "rose", "orange", "emerald", "cyan", "fuchsia", "teal"] as const;
+export type TemplateColor = (typeof TEMPLATE_COLORS)[number];
+
+export type BotTemplate = {
+  id: string;
+  name: string;
+  emoji: string;
+  color: TemplateColor;
+  /** One line, Vietnamese. */
+  purpose: string;
+  engine: BotEngine;
+  /** Claude Code only (lib/roles.ts ROLES): the session's role and model. */
+  role?: RoleId;
+  model?: ModelId;
+  /** ≤6 lines, put in front of the first message. */
+  instructions: string;
+  /** Skill names the bot is reminded to load; never a skill's content. */
+  skills: string[];
+  /** Where it usually works: a folder suffix ("tools/content-post-agency"), matched against the project paths. */
+  folderHint?: string;
+  /** The first message's placeholder. */
+  firstMessage?: string;
+  builtIn?: boolean;
+};
+
+/** Caps on a template file's fields (custom templates are typed by hand). */
+export const TEMPLATE_LIMITS = { name: 40, emoji: 16, purpose: 140, instructions: 1200, instructionLines: 6, skills: 12, skill: 64, folderHint: 200, firstMessage: 600 } as const;
+/** A template id: the same shape as a session name, so `<id>-<project>` stays a valid one. */
+const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const SKILL_RE = /^[a-z0-9][a-z0-9:._-]*$/;
+/** A folder hint: relative path segments, no `..`, no drive or leading slash. */
+const HINT_RE = /^(?![\\/])(?![a-z]:)(?!.*(?:^|[\\/])\.\.(?:[\\/]|$))[^\0<>|"?*]+$/i;
+
+const ok = (s: unknown, max: number): s is string => typeof s === "string" && s.trim() !== "" && s.length <= max;
+const optional = (s: unknown, max: number): boolean => s === undefined || s === null || s === "" || ok(s, max);
+// Control characters (except a newline in the instructions) never belong in a template.
+const clean = (s: string, newlines = false) => !(newlines ? /[\0-\x09\x0b-\x1f\x7f]/ : /[\0-\x1f\x7f]/).test(s);
+
+/** A template from a file (or anything else), checked field by field; null when any field is wrong. Never `builtIn`. */
+export function parseTemplate(raw: unknown): BotTemplate | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const t = raw as Record<string, unknown>;
+  const L = TEMPLATE_LIMITS;
+  if (typeof t.id !== "string" || !ID_RE.test(t.id)) return null;
+  if (!ok(t.name, L.name) || !clean(t.name) || !ok(t.emoji, L.emoji) || !clean(t.emoji) || !ok(t.purpose, L.purpose) || !clean(t.purpose)) return null;
+  if (!(TEMPLATE_COLORS as readonly unknown[]).includes(t.color)) return null;
+  if (t.engine !== "claude" && t.engine !== "omp") return null;
+  if (t.role !== undefined && !isRoleId(t.role)) return null;
+  if (t.model !== undefined && !isModelId(t.model)) return null;
+  if (t.engine === "omp" && (t.role !== undefined || t.model !== undefined)) return null;
+  const instructions = t.instructions ?? "";
+  if (typeof instructions !== "string" || instructions.length > L.instructions || !clean(instructions, true)) return null;
+  if (instructions.split("\n").length > L.instructionLines) return null;
+  const skills = t.skills ?? [];
+  if (!Array.isArray(skills) || skills.length > L.skills || !skills.every((s) => typeof s === "string" && s.length <= L.skill && SKILL_RE.test(s))) return null;
+  if (!optional(t.folderHint, L.folderHint) || (typeof t.folderHint === "string" && t.folderHint !== "" && !HINT_RE.test(t.folderHint))) return null;
+  if (!optional(t.firstMessage, L.firstMessage) || (typeof t.firstMessage === "string" && !clean(t.firstMessage))) return null;
+  return {
+    id: t.id,
+    name: t.name.trim(),
+    emoji: t.emoji.trim(),
+    color: t.color as TemplateColor,
+    purpose: t.purpose.trim(),
+    engine: t.engine,
+    ...(t.role !== undefined ? { role: t.role as RoleId } : {}),
+    ...(t.model !== undefined ? { model: t.model as ModelId } : {}),
+    instructions: instructions.trim(),
+    skills: [...new Set(skills as string[])],
+    ...(typeof t.folderHint === "string" && t.folderHint ? { folderHint: t.folderHint.trim() } : {}),
+    ...(typeof t.firstMessage === "string" && t.firstMessage ? { firstMessage: t.firstMessage.trim() } : {}),
+    builtIn: false,
+  };
+}
+
+/** Built-in first (a custom one with the same id takes its place), then the owner's other templates by name. */
+export function mergeTemplates(builtIn: readonly BotTemplate[], custom: readonly BotTemplate[]): BotTemplate[] {
+  const own = new Map(custom.map((t) => [t.id, t]));
+  const head = builtIn.map((t) => own.get(t.id) ?? t);
+  const rest = custom.filter((t) => !builtIn.some((b) => b.id === t.id)).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  return [...head, ...rest];
+}
+
+export const BLANK_TEMPLATE_ID = "blank";
+
+export const BUILT_IN_TEMPLATES: readonly BotTemplate[] = (
+  [
+    // General.
+    { id: "blank", name: "Trống", emoji: "💬", color: "slate", purpose: "Phiên trống, anh tự giao việc", engine: "claude", role: "quick", instructions: "", skills: [] },
+    {
+      id: "fullstack",
+      name: "Dev fullstack",
+      emoji: "🛠️",
+      color: "sky",
+      purpose: "Làm tính năng theo card, có test",
+      engine: "claude",
+      role: "fullstack",
+      instructions: "Làm tính năng theo card được giao. Viết test trước, chạy test và build trước khi báo xong.\nCập nhật CHANGELOG.md. Không push, merge hay release khi chưa có lệnh của owner.",
+      skills: ["tdd-workflow", "verification-loop"],
+      firstMessage: "Làm card này giúp anh: …",
+    },
+    {
+      id: "reviewer",
+      name: "Reviewer",
+      emoji: "🔍",
+      color: "amber",
+      purpose: "Review diff, chỉ báo lỗi có bằng chứng",
+      engine: "claude",
+      role: "reviewer",
+      instructions: "Đọc diff so với origin/main. Chỉ báo lỗi có file:line và cách tái hiện. Không sửa code.\nKết thúc bằng: chặn / cần sửa / ổn.",
+      skills: ["security-review", "karpathy-guidelines"],
+      firstMessage: "Review nhánh hiện tại",
+    },
+    {
+      id: "tester",
+      name: "Tester",
+      emoji: "🧪",
+      color: "lime",
+      purpose: "Viết và chạy e2e, regression",
+      engine: "claude",
+      role: "tester",
+      instructions: "Viết và chạy test e2e/regression cho phần được giao. Báo lệnh đã chạy và kết quả thật, không đoán.\nKhông sửa code sản phẩm, chỉ sửa test.",
+      skills: ["e2e-testing", "tdd-workflow"],
+      firstMessage: "Viết test cho luồng: …",
+    },
+    {
+      id: "researcher",
+      name: "Nghiên cứu",
+      emoji: "📚",
+      color: "violet",
+      purpose: "Báo cáo có trích nguồn",
+      engine: "omp",
+      instructions: "Mỗi nhận định phải có URL nguồn. Ghi 'chưa kiểm' khi chưa đọc được nguồn chính thức.\nGhi báo cáo vào su-code/research/. Không sửa code.",
+      skills: ["deep-research-web", "last30days"],
+      folderHint: "su-code",
+      firstMessage: "Nghiên cứu giúp anh: …",
+    },
+    {
+      id: "planner",
+      name: "Lập kế hoạch",
+      emoji: "🧭",
+      color: "indigo",
+      purpose: "Chia việc thành card, không sửa code",
+      engine: "claude",
+      role: "plan",
+      instructions: "Chia việc thành các card nhỏ, mỗi card có tiêu chí xong đo được. Không sửa code.",
+      skills: ["full-flow", "feature"],
+      firstMessage: "Lên kế hoạch cho: …",
+    },
+    // 8 Sync.
+    {
+      id: "cpa-full",
+      name: "Content full ngày",
+      emoji: "🎬",
+      color: "rose",
+      purpose: "Làm trọn bộ nội dung hằng ngày qua app Content AI",
+      engine: "omp",
+      instructions:
+        "Làm bộ nội dung hôm nay qua app (bài học, infographic trend, ASMR, MKT). UAT file xuất (ffprobe, meta.json).\nLedger chỉ được đổi ordered → drafted → checked, không ghi đè approved/published/rejected. Theme sáng.\nKhông đăng khi owner chưa duyệt. Báo bằng tiếng Việt.",
+      skills: ["cpa-ops-cli", "cpa-app-attach", "brand-8sync"],
+      folderHint: "tools/content-post-agency",
+      firstMessage: "Làm bộ nội dung hôm nay",
+    },
+    {
+      id: "research-mkt",
+      name: "Research marketing",
+      emoji: "📈",
+      color: "orange",
+      purpose: "Tìm xu hướng và đối thủ, đề xuất góc nội dung cho 8 Sync",
+      engine: "omp",
+      instructions:
+        "Mỗi nhận định phải có URL. Số liệu traction chỉ lấy từ Vercel/Cloudflare Web Analytics và ghi rõ nguồn.\nKhông bịa khách hàng hay đối tác. Không đụng dữ liệu CRM/AcoLeads.\nKết quả là 3 góc nội dung kèm hook.",
+      skills: ["market-research", "deep-research-web", "last30days", "brand-voice"],
+      folderHint: "su-code",
+      firstMessage: "Tuần này dev Việt đang quan tâm gì?",
+    },
+    {
+      id: "course-writer",
+      name: "Viết khóa học",
+      emoji: "🎓",
+      color: "emerald",
+      purpose: "Soạn bài và bài tập cho 8 Sync Courses",
+      engine: "claude",
+      role: "fullstack",
+      instructions: "Tinh thần 'We teach you to learn, not to copy': mỗi bài có mục tiêu, giải thích, bài tập tự làm và gợi ý, không đưa sẵn lời giải.\nThuật ngữ giữ tiếng Anh.",
+      skills: ["article-writing", "brand-voice"],
+      folderHint: "8sync/platform",
+      firstMessage: "Soạn bài: …",
+    },
+    {
+      id: "news-curator",
+      name: "Biên tập tin",
+      emoji: "📰",
+      color: "cyan",
+      purpose: "Chọn và tóm tắt tin AI/dev cho 8 Sync News",
+      engine: "omp",
+      instructions: "Chọn ≤5 tin trong 24–48 giờ từ nguồn gốc, mỗi tin 3 dòng kèm link. Ghi 'chưa kiểm' khi chưa đọc nguồn gốc.\nKhông đăng, chỉ gửi bản nháp.",
+      skills: ["last30days", "deep-research-web", "article-writing"],
+      folderHint: "8sync/platform",
+      firstMessage: "Tin AI/dev đáng chú ý hôm nay",
+    },
+    {
+      id: "zus-release",
+      name: "Phát hành ZUS",
+      emoji: "🚀",
+      color: "fuchsia",
+      purpose: "Chuẩn bị bản phát hành ZUS: gate, changelog, build Tauri",
+      engine: "claude",
+      role: "fullstack",
+      instructions: "ZUS là local-first: không đề xuất đưa dữ liệu user lên server. Chạy gate/test trước khi kết luận.\nCập nhật CHANGELOG. Không push/merge/release khi chưa có lệnh của owner.",
+      skills: ["tauri-v2", "encore-deploy", "verification-loop"],
+      folderHint: "zus/ide",
+      firstMessage: "Kiểm xem đã sẵn sàng phát hành chưa",
+    },
+    {
+      id: "tia-release",
+      name: "Phát hành TIA",
+      emoji: "🧠",
+      color: "teal",
+      purpose: "Kiểm và phát hành TIA (decision API)",
+      engine: "claude",
+      role: "fullstack",
+      instructions: "Chạy encore test từ thư mục service, kiểm /healthz sau deploy. Không in secret.\nRelease chỉ chạy khi owner ra lệnh.",
+      skills: ["encore-deploy", "verification-loop"],
+      folderHint: "ml/tia-platform",
+      firstMessage: "Kiểm TIA trước khi phát hành",
+    },
+  ] satisfies Omit<BotTemplate, "builtIn">[]
+).map((t) => ({ ...t, builtIn: true }));
+
+/** The three cards the empty Bots list suggests. */
+export const SUGGESTED_TEMPLATE_IDS = ["fullstack", "research-mkt", "cpa-full"] as const;
+
+// ── folders ──────────────────────────────────────────────────────────────────
+
+const key = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+/** The folder is the template's hint: its path ends with the hint's segments ("…/tools/content-post-agency"). */
+export function matchesHint(folder: string, hint: string | undefined): boolean {
+  const h = hint ? key(hint).replace(/^\/+/, "") : "";
+  if (!h) return false;
+  const f = key(folder);
+  return f === h || f.endsWith(`/${h}`);
+}
+
+/** Projects for the folder step: the template's hint first (flagged), then the most recently used, then the rest by name. */
+export function orderFolders<P extends { path: string; name: string; lastUsed?: number | null }>(projects: readonly P[], hint: string | undefined): (P & { hinted: boolean })[] {
+  return projects
+    .map((p) => ({ ...p, hinted: matchesHint(p.path, hint) }))
+    .sort((a, b) => Number(b.hinted) - Number(a.hinted) || (b.lastUsed ?? 0) - (a.lastUsed ?? 0) || a.name.localeCompare(b.name, "vi"));
+}
+
+// ── names ────────────────────────────────────────────────────────────────────
+
+/** A session name: what both `POST /api/sessions` (lib/server/validate.ts SESSION_NAME_RE) and an omp session take. */
+const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const NAME_MAX = 32;
+
+/** "Content Post Agency" -> "content-post-agency"; accents dropped ("Dự án" -> "du-an"). */
+export function slugify(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** `<template>-<project>` (just the project for "Trống"), ≤32 chars, never one of `taken` (`-2`, `-3`… appended). */
+export function suggestName(templateId: string, project: string, taken: readonly string[]): string {
+  const p = slugify(project);
+  const base = (templateId === BLANK_TEMPLATE_ID ? p || "bot" : [templateId, p].filter(Boolean).join("-")).slice(0, NAME_MAX).replace(/-+$/, "") || "bot";
+  const used = new Set(taken);
+  if (!used.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const tail = `-${n}`;
+    const name = `${base.slice(0, NAME_MAX - tail.length).replace(/-+$/, "")}${tail}`;
+    if (!used.has(name)) return name;
+  }
+}
+
+/** Why `name` cannot be used (Vietnamese, for the field), or null. `taken`: names of live bots. */
+export function nameProblem(name: string, engine: BotEngine, taken: readonly string[]): string | null {
+  const n = name.trim();
+  if (!n) return "Đặt tên cho bot.";
+  if (!NAME_RE.test(n) || (engine === "omp" && !isOmpSessionName(n))) return "Tên chỉ gồm chữ thường không dấu, số và '-', tối đa 32 ký tự, bắt đầu bằng chữ hoặc số.";
+  if (taken.includes(n)) return "Đã có bot tên này. Đặt tên khác để không mở nhầm bot cũ.";
+  return null;
+}
+
+// ── the create request ───────────────────────────────────────────────────────
+
+/** The first message a new bot gets: the template's instructions and skills, then the owner's message. Null when all are empty. */
+export function firstPrompt(t: Pick<BotTemplate, "instructions" | "skills">, message: string): string | null {
+  const brief = [t.instructions.trim(), t.skills.length ? `Skill nên nạp: ${t.skills.join(", ")}.` : ""].filter(Boolean).join("\n");
+  const text = [brief, message.trim()].filter(Boolean).join("\n\n");
+  return text || null;
+}
+
+export type CreateInput = {
+  template: BotTemplate;
+  name: string;
+  /** The folder; `id` is its registered project (Claude Code needs one). */
+  project: { id: number | null; path: string };
+  message: string;
+  /** "Tạo và gửi" (true) or "Chỉ tạo" (false: the owner's message stays out; the template's brief still goes). */
+  send: boolean;
+  /** omp only: its own git worktree. */
+  worktree?: boolean;
+};
+
+export type CreateRequest =
+  | { url: "/api/sessions"; body: { name: string; project: number; role?: RoleId; model?: ModelId; prompt?: string } }
+  | { url: "/api/omp/sessions"; body: { cwd: string; name: string; worktree?: true; prompt?: string } };
+
+/**
+ * The POST that creates the bot. Claude Code: `POST /api/sessions` (a registered project, role/model from the
+ * template, the prompt passed to `claude` at start). omp: `POST /api/omp/sessions` (the folder; the prompt queued
+ * in its inbox). Throws when Claude Code has no project id.
+ */
+export function createRequest(i: CreateInput): CreateRequest {
+  const name = i.name.trim();
+  const prompt = firstPrompt(i.template, i.send ? i.message : "");
+  if (i.template.engine === "omp") {
+    return { url: "/api/omp/sessions", body: { cwd: i.project.path, name, ...(i.worktree ? { worktree: true as const } : {}), ...(prompt ? { prompt } : {}) } };
+  }
+  if (i.project.id == null) throw new Error("Claude Code cần một dự án đã đăng ký");
+  const t = i.template;
+  return { url: "/api/sessions", body: { name, project: i.project.id, ...(t.role ? { role: t.role } : {}), ...(t.model ? { model: t.model } : {}), ...(prompt ? { prompt } : {}) } };
+}
+
+/** The new bot's key in the Bots list (lib/server/office.ts: a room's key is its session name). */
+export function botKeyOf(req: CreateRequest, res: { id?: string; session?: { name?: string } }): string | null {
+  return req.url === "/api/omp/sessions" ? (res.id ?? null) : (res.session?.name ?? `hq-${req.body.name}`);
+}

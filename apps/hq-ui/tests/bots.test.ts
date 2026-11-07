@@ -135,9 +135,9 @@ describe("bot search and keys", () => {
   it("says 'no bots' only after /api/office answered with none, never while the first load is pending (UAT 2026-11-07)", () => {
     expect(threadHint(true, false, 0)).toBe("Đang tải danh sách bot…");
     expect(threadHint(true, false, 3)).toBe("Đang tải danh sách bot…");
-    expect(threadHint(false, false, 0)).toBe("Bot sẽ hiện ở đây khi có phiên đang chạy.");
+    expect(threadHint(false, false, 0)).toBe("Chưa có bot nào. Bấm “Bot mới” để tạo bot đầu tiên.");
     expect(threadHint(false, true, 0)).toBe("Chưa đọc được danh sách bot.");
-    expect(threadHint(false, false, 2)).toBe("Chọn một bot để xem cuộc trò chuyện.");
+    expect(threadHint(false, false, 2)).toBe("Chọn một bot bên trái hoặc tạo bot mới.");
   });
 });
 

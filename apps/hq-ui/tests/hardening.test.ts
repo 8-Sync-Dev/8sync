@@ -21,6 +21,7 @@ import * as stream from "@/app/api/stream/route";
 import * as brief from "@/app/api/brief/route";
 import * as chief from "@/app/api/chief/route";
 import * as chiefAsk from "@/app/api/chief/ask/route";
+import * as templates from "@/app/api/templates/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { sendKeysPlan } from "@/lib/server/proc";
@@ -50,6 +51,7 @@ const ROUTES: { path: string; mod: Record<string, unknown> }[] = [
   { path: "/api/sessions/hq-x/screen", mod: screen },
   { path: "/api/sessions/hq-x/stop", mod: stop },
   { path: "/api/stream", mod: stream },
+  { path: "/api/templates", mod: templates },
 ];
 const METHODS = ["GET", "POST", "DELETE", "PUT", "PATCH"];
 const cases = ROUTES.flatMap((r) =>

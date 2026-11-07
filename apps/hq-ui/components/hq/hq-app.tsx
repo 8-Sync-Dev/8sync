@@ -532,7 +532,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
           {tab !== "bots" && <PinnedAsks office={office.office} token={token} onOpenRoom={openRoom} />}
           <main className="min-h-0 flex-1">
             <TabsContent value="bots" className="h-full">
-              <BotsView hq={hq} office={office} selected={bot} onSelect={setBot} onDrawer={setDrawer} onNew={() => newSession(null)} />
+              <BotsView hq={hq} office={office} selected={bot} onSelect={setBot} onDrawer={setDrawer} />
             </TabsContent>
             <TabsContent value="workspace" className="h-full">
               <WorkspaceView token={token} projects={wsProjects} sessions={tree.sessions} />
