@@ -16,6 +16,7 @@ import type { Hq } from "../use-hq";
 import { BotAvatar } from "./bot-avatar";
 import { GroupAvatar } from "./group-avatar";
 import type { ComboBot } from "./mention-combobox";
+import { FullReply, useFullReply } from "./full-reply";
 import { useBotBrief } from "./use-bot-brief";
 
 /** The open group's log, while it is on screen. */
@@ -278,10 +279,12 @@ function Entry({ e, nameOf, bot }: { e: GroupLogEntry; nameOf: (id: string) => s
   );
 }
 
-/** A member's latest answer once it replied after the owner's last turn (its brief: a summary, ≤ 200 characters). */
+/** A member's latest answer once it replied after the owner's last turn: its whole last reply (GET /api/turns, folded when long), the brief's summary until that loads. */
 function MemberAnswer({ hq, bot, since }: { hq: Hq; bot: Bot<Room>; since: number }) {
   const brief = useBotBrief(hq.api, bot.room);
-  const reply = brief?.lastReply && (brief.updatedAt ?? 0) > since ? brief.lastReply : null;
+  const summary = brief?.lastReply && (brief.updatedAt ?? 0) > since ? brief.lastReply : null;
+  const full = useFullReply(hq.api, bot.room, since, !!summary);
+  const reply = full ?? summary;
   if (!reply && bot.status !== "working") return null;
   return (
     <div className="flex items-start gap-2">
@@ -290,7 +293,11 @@ function MemberAnswer({ hq, bot, since }: { hq: Hq; bot: Bot<Room>; since: numbe
         <span className="text-[11px] text-muted-foreground">
           <span className="font-medium text-foreground/80">{bot.name}</span> · {reply ? "trả lời gần nhất" : "đang làm…"}
         </span>
-        {reply && <div className="max-w-full rounded-2xl rounded-tl-md border bg-background px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{reply}</div>}
+        {reply && (
+          <div className="max-w-full rounded-2xl rounded-tl-md border bg-background px-3.5 py-2.5 text-sm">
+            {full ? <FullReply text={full} /> : <p className="whitespace-pre-wrap break-words">{reply}</p>}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,7 @@ import path from "node:path";
 import { POST } from "@/app/api/messages/route";
 import { getToken } from "@/lib/server/auth";
 import { inboxFile } from "@/lib/server/inbox";
+import { stripDigest } from "@/lib/digest-frame";
 import { saveUpload } from "@/lib/server/uploads";
 import { ORIGIN, req, tempHome } from "./helpers";
 
@@ -106,9 +107,10 @@ describe("POST /api/messages with files", () => {
     expect(sendKeys.mock.calls[1][1]).toContain(placed(a.id, "retry.png"));
   });
 
-  it("no files: unchanged, no session lookup", async () => {
+  it("no files: unchanged, no lookup for files (only the digest's one office read)", async () => {
     const res = await post({ session: SID, text: "chỉ chữ" });
     expect(res.status).toBe(201);
-    expect(merged).not.toHaveBeenCalled();
+    expect(merged).toHaveBeenCalledTimes(1);
+    expect(stripDigest((await res.json()).message.text)).toBe("chỉ chữ");
   });
 });

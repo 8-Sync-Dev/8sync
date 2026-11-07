@@ -9,13 +9,16 @@ import type { Room } from "@/lib/server/office";
 import { FileChips, useFileSpots } from "../path-open";
 import { RoomLog } from "../room-log";
 import { useRoomLog } from "../room-outputs";
+import type { Hq } from "../use-hq";
 import { BotAvatar, StatusPill } from "./bot-avatar";
+import { BotKnows } from "./bot-knows";
 
 /**
- * The bot's detail pane: who it is and where it works, the files it wrote lately (its brief from GET /api/brief: waiting, doing, last ask and reply), then its Nhật ký
- * (results per turn, every step). Inside the thread's RoomLogProvider and PathOpenProvider.
+ * The bot's detail pane: who it is and where it works, the files it wrote lately (its brief from GET /api/brief: waiting, doing, last ask and reply), what it
+ * knows of the others ("Bot này đang biết gì": shared facts, its last digest), then its Nhật ký (results per turn, every step). Inside the thread's
+ * RoomLogProvider and PathOpenProvider.
  */
-export function BotBrief({ bot, brief = null, now, onFull }: { bot: Bot<Room>; brief?: Brief | null; now: number; onFull?: () => void }) {
+export function BotBrief({ hq, bot, brief = null, now, onFull }: { hq: Hq; bot: Bot<Room>; brief?: Brief | null; now: number; onFull?: () => void }) {
   const r = bot.room;
   const ctx = useRoomLog();
   const logFiles = useMemo(() => recentFiles(ctx?.log?.events ?? []), [ctx?.log?.events]);
@@ -65,6 +68,7 @@ export function BotBrief({ bot, brief = null, now, onFull }: { bot: Bot<Room>; b
           </div>
         )}
       </div>
+      <BotKnows hq={hq} bot={bot} />
       <div className="min-h-0 flex-1">
         <RoomLog room={bot.name} onFull={onFull} fill />
       </div>

@@ -17,6 +17,7 @@ import path from "node:path";
 import { POST as messagesPOST } from "@/app/api/messages/route";
 import { GET as chiefGET, PUT as chiefPUT } from "@/app/api/chief/route";
 import { GET as briefGET } from "@/app/api/brief/route";
+import { splitDigest } from "@/lib/digest-frame";
 import { getToken } from "@/lib/server/auth";
 import { BRIEF_MAX, briefFrom, briefLength, editedFiles, findRoom, senderRoomOf, type Brief } from "@/lib/server/brief";
 import { CHIEF_TEXT_MAX, chiefAsk, chiefPrompt, hqScript, normChief, readChief, rosterTable, writeChief } from "@/lib/server/chief";
@@ -247,7 +248,9 @@ describe("routes", () => {
     const sent = (await (await messagesPOST(req("/api/messages", { method: "POST", token, origin: ORIGIN, body: { session: "hq-web", text: "y", from: "x", from_cwd: path.join(shop, "core") } }))).json()).message.text;
     expect(sent).toBe(`[phòng x]\n[từ phòng core · ${project} · đang: Đang nghỉ]\ny`);
     await post({ session: "hq-web", text: "việc", from: "core", from_session: SID }, true);
-    expect(sendKeys.mock.calls.at(-1)?.[1], "the owner's words go in as typed").toBe("việc");
+    const owner = splitDigest(sendKeys.mock.calls.at(-1)?.[1] ?? "");
+    expect(owner.body, "the owner's words go in as typed, first").toBe("việc");
+    expect(owner.digest, "then HQ's who-does-what digest, the context line's job for the owner").toContain("- core · rảnh");
     await post({ session: "hq-web", text: "việc", from: "web", from_cwd: shop });
     expect(sendKeys.mock.calls.at(-1)?.[1], "the only room in that folder is the recipient: no line").toBe("[phòng web]\nviệc");
   });

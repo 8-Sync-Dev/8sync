@@ -11,7 +11,10 @@ import path from "node:path";
 const USAGE = `usage: node hq.mjs <command>
   ls [--all]                         rooms, one line each (--all: ended ones too)
   log <id> [n] [--full]              n latest steps of a room (default 20, max 200)
-  turns <id> [n] [--full]            n latest turns: prompt -> final reply (default 5, max 20)
+  turns <bot> [n] [--full]           n latest turns of a bot: prompt -> its whole final reply (default 5, max 20; bot = id, label or name)
+  digest [bot]                       who is doing what now (≤10 lines) + shared facts (no bot: this room's own)
+  facts                              the owner's shared facts, and proposals waiting for the owner
+  fact <text...>                     propose a shared fact: it waits until the owner approves it in HQ
   msgs <id> [n] [--full]             n latest messages to/from a room (default 20, max 500)
   msg <id> <messageId>               one message in full (messageId = #id of msgs)
   send <id> <text...>                message a room (one whole message per send)
@@ -146,14 +149,39 @@ switch (cmd) {
   }
   case "turns": {
     // Each turn: the prompt and the reply it ended with ("Kết quả"), up to 8 000 chars server side.
+    // `id` may be a label or the name HQ's Bots view shows ("clean"), not only an id.
     const n = count(args[0], 5, 20);
-    const { turns } = await call("GET", `/api/sessions/${enc(need(id, "session id"))}/activity?limit=1`);
-    for (const t of turns.slice(-n)) {
+    const { room, turns } = await call("GET", `/api/turns?room=${enc(need(id, "bot (id, label or name)"))}&n=${n}`);
+    if (room) console.log(`# ${room.label} (${room.id})`);
+    for (const t of turns) {
       const head = `${when(t.at)}\t${t.live ? "live" : "done"}\t${t.steps} steps${t.errors ? ` · ${t.errors} errors` : ""}${t.agents ? ` · ${t.agents} agents` : ""}`;
       const reply = t.output ?? (t.live ? "(no reply yet)" : "(no reply)");
       if (full) console.log(`${head}\n> ${t.prompt ?? "(prompt before the log tail)"}\n${reply}\n`);
       else console.log(`${head}\t${cut(t.prompt ?? "", 100, `turns ${id} ${n} --full`)}\t→ ${cut(reply, 200, `turns ${id} ${n} --full`)}`);
     }
+    break;
+  }
+  case "digest": {
+    // The same text HQ puts under the owner's next message when it changed; pulling it counts as got.
+    const sid = process.env.CLAUDE_CODE_SESSION_ID;
+    const r = await call("POST", "/api/digest", { ...(id ? { room: id } : {}), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
+    console.log(r.text ?? "no other bot live, no shared fact");
+    break;
+  }
+  case "facts": {
+    const { facts, pending, broken } = await call("GET", "/api/facts");
+    if (broken) console.log("(facts.json is broken: the owner re-saves it in HQ)");
+    for (const f of facts) console.log(`- ${f.text}`);
+    if (!facts.length) console.log("no shared fact yet");
+    if (pending.length) console.log(`${pending.length} proposal(s) wait for the owner in HQ`);
+    break;
+  }
+  case "fact": {
+    // Never applied by itself: the owner approves or drops it in HQ (Bot này đang biết gì).
+    const text = need([id, ...rest].filter(Boolean).join(" ").trim(), "fact text");
+    const sid = process.env.CLAUDE_CODE_SESSION_ID;
+    const r = await call("POST", "/api/facts", { text, from: path.basename(process.cwd()), from_cwd: process.cwd(), ...(sid ? { from_session: sid } : {}) });
+    console.log(r.created ? `proposed ${r.pending.id}: waits for the owner's approval in HQ` : `already waiting as ${r.pending.id}`);
     break;
   }
   case "msgs": {

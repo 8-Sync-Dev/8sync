@@ -187,7 +187,7 @@ export function BotThread({
                 </ResizablePanel>
                 <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa cuộc trò chuyện và Nhật ký" />
                 <ResizablePanel id="brief" defaultSize="34" minSize="24" maxSize="50" className="min-h-0 border-l bg-muted/20">
-                  <BotBrief bot={bot} brief={brief} now={now} />
+                  <BotBrief hq={hq} bot={bot} brief={brief} now={now} />
                 </ResizablePanel>
               </ResizablePanelGroup>
             ) : (
@@ -202,7 +202,7 @@ export function BotThread({
                 <SheetDescription>Chi tiết, file vừa sửa và từng bước bot đã làm.</SheetDescription>
               </SheetHeader>
               <div className="h-full min-h-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-                <BotBrief bot={bot} brief={brief} now={now} />
+                <BotBrief hq={hq} bot={bot} brief={brief} now={now} />
               </div>
             </SheetContent>
           </Sheet>

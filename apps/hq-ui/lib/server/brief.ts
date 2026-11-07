@@ -144,8 +144,8 @@ export function briefFrom(r: Room, log: RoomLog | null): Brief {
   });
 }
 
-/** The transcript tail of a live room: a Claude Code session's by its id, an omp room's by the file `8sync ls` names. */
-async function logOf(db: DatabaseSync, r: Room): Promise<RoomLog | null> {
+/** The transcript tail of a live room: a Claude Code session's by its id, an omp room's by the file `8sync ls` names. Its turns come from the whole cached tail. */
+export async function logOf(db: DatabaseSync, r: Room): Promise<RoomLog | null> {
   if (r.engine === "omp") {
     const f = await ompTranscript(db, r.name);
     return f ? readOmpActivity(f, LOG_STEPS) : null;

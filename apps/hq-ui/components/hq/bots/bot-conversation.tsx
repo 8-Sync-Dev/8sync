@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fileRefsIn } from "@/lib/ask-quote";
+import { splitDigest } from "@/lib/digest-frame";
 import { threadItems, type Bot, type ThreadItem } from "@/lib/bots";
 import { bareFileNamesIn } from "@/lib/file-path";
 import type { ActivityEvent } from "@/lib/server/activity";
@@ -91,6 +92,27 @@ export function BotConversation({ bot, messages, token, now: officeNow, footer }
   );
 }
 
+/** The owner's words, and the "ai đang làm gì" digest HQ put under them (lib/server/digest.ts) folded into one line. */
+function OwnerText({ text, token }: { text: string | null; token: string }) {
+  const { body, digest } = splitDigest(text ?? "");
+  return (
+    <>
+      <MessageText text={body} token={token} className="whitespace-pre-wrap break-words" />
+      {digest && (
+        <Collapsible className="mt-1.5">
+          <CollapsibleTrigger className="group/dg inline-flex min-h-7 items-center gap-1 rounded-md text-[11px] opacity-80 outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 max-md:min-h-11">
+            <ChevronRightIcon aria-hidden className="size-3 transition-transform group-data-[state=open]/dg:rotate-90 motion-reduce:transition-none" />
+            HQ kèm bảng ai đang làm gì
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <pre className="mt-1 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words opacity-90">{digest}</pre>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+    </>
+  );
+}
+
 function Mine({ children, at, tag }: { children: React.ReactNode; at: number | null; tag?: React.ReactNode }) {
   return (
     <div className="flex flex-col items-end gap-1">
@@ -141,7 +163,7 @@ const TurnItem = memo(function TurnItem({ it, bot, token, rev }: { it: Extract<T
     <div className="space-y-3">
       {sent ? (
         <Mine at={sent.ts} tag={<DeliveryTag delivery={sent.delivery} />}>
-          <MessageText text={sent.text} token={token} className="whitespace-pre-wrap break-words" />
+          <OwnerText text={sent.text} token={token} />
         </Mine>
       ) : prompt && from?.kind === "room" ? (
         <FromBot name={from.name} at={turn.at} text={prompt} />
@@ -221,7 +243,7 @@ function MessageItem({ it, bot, token }: { it: Extract<ThreadItem<Message>, { ki
   if (m.kind === "owner_message")
     return (
       <Mine at={m.ts} tag={from?.kind === "auto" ? <span>Tự động</span> : <DeliveryTag delivery={m.delivery} />}>
-        {from?.kind === "auto" ? <p className="whitespace-pre-wrap break-words">{body}</p> : <MessageText text={m.text} token={token} className="whitespace-pre-wrap break-words" />}
+        {from?.kind === "auto" ? <p className="whitespace-pre-wrap break-words">{body}</p> : <OwnerText text={m.text} token={token} />}
       </Mine>
     );
   const own = m.from_ === bot.room.name || m.from_ === bot.room.session_id;
