@@ -5,6 +5,7 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.138.0] — 2026-11-07
 ### Added
 - HQ › Bots: nút **Bot mới** ở đầu danh sách mở một sheet duy nhất: chọn mẫu (lưới thẻ emoji, tên, mục đích; tab "Mẫu" / "Của tôi") → chọn thư mục (dự án dùng gần đây lên đầu, thư mục khớp mẫu được ghim kèm nhãn "Gợi ý", "Thư mục khác…" để duyệt máy) → tên tự gợi ý `<mẫu>-<dự án>`, báo ngay khi sai luật hay trùng → tin nhắn đầu tùy chọn. "Tạo và gửi" hoặc "Chỉ tạo"; xong thì sheet đóng và thread của bot mới mở. Có 12 mẫu sẵn: 6 mẫu chung (Trống, Dev fullstack, Reviewer, Tester, Nghiên cứu, Lập kế hoạch) và 6 mẫu cho 8 Sync (Content full ngày, Research marketing, Viết khóa học, Biên tập tin, Phát hành ZUS, Phát hành TIA). Mẫu riêng của anh là file JSON trong `~/.config/8sync/hq/templates/`, chỉ nằm trên máy; file hỏng bị bỏ qua, mẫu trùng id thay mẫu có sẵn. Danh sách trống giờ gợi ý 3 mẫu để tạo bot đầu tiên. Điện thoại: sheet toàn màn hình, mẫu cuộn ngang hai hàng.
 - HQ API: `GET /api/templates` trả mẫu bot; `POST /api/sessions` nhận thêm `prompt` (tin đầu, truyền cho `claude` khi khởi động).
