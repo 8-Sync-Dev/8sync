@@ -95,14 +95,17 @@ export function AttachList({ a, token, className }: { a: Attach; token: string; 
       <ol className={cn("flex flex-wrap items-center gap-2 px-2 pt-1 pb-2", className)} aria-label="File đính kèm, theo thứ tự phòng nhận">
         {a.list.map((s, i) => {
           const n = i + 1;
+          // The X keeps its look; on ≤768 px its hit area is 44 px (owner UAT 2026-11-08: it was 28–32 px).
           const x = (
             <button
               type="button"
-              className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border bg-background text-muted-foreground shadow-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-7"
+              className="group/x absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full outline-none max-md:-top-3.5 max-md:-right-3.5 max-md:size-11"
               aria-label={`Bỏ file ${n}: ${s.name}`}
               onClick={() => a.remove(s.key)}
             >
-              <XIcon className="size-3" aria-hidden />
+              <span className="grid size-5 place-items-center rounded-full border bg-background text-muted-foreground shadow-xs group-hover/x:text-foreground group-focus-visible/x:ring-2 group-focus-visible/x:ring-ring/60 max-md:size-7">
+                <XIcon className="size-3" aria-hidden />
+              </span>
             </button>
           );
           if (!s.up)
@@ -129,7 +132,7 @@ export function AttachList({ a, token, className }: { a: Attach; token: string; 
               </span>
               <button
                 type="button"
-                className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:size-8"
+                className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 max-md:-my-2 max-md:size-11"
                 aria-label={`Bỏ file ${n}: ${s.up.name}`}
                 onClick={() => a.remove(s.key)}
               >

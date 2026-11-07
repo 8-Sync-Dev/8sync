@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- HQ › menu model ("Bot mới" và chip model ở ô chat): model trùng tên (cùng model ở hai provider, hoặc id có ngày) hiện thêm "· <provider>", trùng cả provider thì thêm "· <id model>", để phân biệt được. Tên không trùng giữ nguyên.
+- HQ › ô chat trên điện thoại: nút X bỏ file đính kèm (trên chip file, trước 32×32 px, và góc ảnh thu nhỏ, trước 28 px) có vùng bấm 44×44 px ở màn ≤768 px; hình nút và máy tính giữ nguyên.
+
 ## [0.140.0] — 2026-11-08
 
 ### Added

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { modelShort, ompModelLabel } from "@/lib/roles";
-import { effortsFor, filterModels, findChoice, type ModelChoice, type ModelsReply } from "@/lib/room-model";
+import { distinctNames, effortsFor, filterModels, findChoice, type ModelChoice, type ModelsReply } from "@/lib/room-model";
 import { cn } from "@/lib/utils";
 import type { Api } from "./use-hq";
 
@@ -57,7 +57,7 @@ export function ModelPicker({ api, session, engine, model, className }: { api: A
 
   const shownModel = pending?.model ?? curModel;
   const shownThinking = pending?.thinking ?? curThinking;
-  const models = useMemo(() => data?.models ?? [], [data]);
+  const models = useMemo(() => distinctNames(data?.models ?? []), [data]);
   const canApply = data ? data.apply !== null : true;
   const label = modelChipLabel(engine, shownModel);
 
@@ -162,7 +162,8 @@ export function ModelMenu({
   onModel: (selector: string | null) => void;
 }) {
   const [q, setQ] = useState("");
-  const all = useMemo(() => models ?? [], [models]);
+  // Same-named entries (one model from two providers, dated ids) get a suffix so each row is tellable.
+  const all = useMemo(() => distinctNames(models ?? []), [models]);
   const chosen = findChoice(all, model);
   const efforts = effortsFor(engine, chosen);
   const list = useMemo(() => filterModels(all, q), [all, q]);

@@ -87,3 +87,22 @@ export function filterModels(models: ModelChoice[], q: string): ModelChoice[] {
     return words.every((w) => hay.includes(w));
   });
 }
+
+/**
+ * Labels the owner can tell apart: a name two or more entries share gets "· <provider>"; when the provider
+ * is shared too (dated ids, aliases) it gets "· <model id>" instead. Unique names stay as they are.
+ */
+export function distinctNames(models: ModelChoice[]): ModelChoice[] {
+  const count = (key: (m: ModelChoice) => string) => {
+    const n = new Map<string, number>();
+    for (const m of models) n.set(key(m), (n.get(key(m)) ?? 0) + 1);
+    return n;
+  };
+  const byName = count((m) => m.name);
+  const byNameProvider = count((m) => `${m.name}\n${m.provider}`);
+  return models.map((m) => {
+    if ((byName.get(m.name) ?? 0) < 2) return m;
+    const suffix = (byNameProvider.get(`${m.name}\n${m.provider}`) ?? 0) < 2 ? m.provider : m.selector.slice(m.selector.indexOf("/") + 1);
+    return { ...m, name: `${m.name} · ${suffix}` };
+  });
+}
