@@ -15,7 +15,7 @@ describe("slash commands (GET /api/commands)", () => {
     expect(commandDescription(`---\ndescription: ${"x".repeat(400)}\n---\n`)).toHaveLength(160);
   });
 
-  it("omp built-ins, omp files, the live omp list, then Claude's; first name wins", () => {
+  it("omp built-ins, omp files, the live omp list, then Claude's commands and skills; first name wins", () => {
     const home = tempHome();
     const omp = path.join(home, ".omp", "agent", "commands");
     const claude = path.join(home, ".claude", "commands");
@@ -33,6 +33,11 @@ describe("slash commands (GET /api/commands)", () => {
       path.join(state, "omp-commands.json"),
       JSON.stringify({ commands: [{ name: "skill:trail", description: "Code map\n for agents" }, { name: "bad name" }, { name: "review", description: "omp review" }, 7] }),
     );
+    const skills = path.join(home, ".claude", "skills");
+    for (const s of ["solo", "hidden", "review", "empty"]) fs.mkdirSync(path.join(skills, s), { recursive: true });
+    fs.writeFileSync(path.join(skills, "solo", "SKILL.md"), "---\nname: solo\ndescription: 'Continuous solo mode'\n---\nbody");
+    fs.writeFileSync(path.join(skills, "hidden", "SKILL.md"), "---\r\ndescription: Internal\r\nuser-invocable: false\r\n---\r\n");
+    fs.writeFileSync(path.join(skills, "review", "SKILL.md"), "---\ndescription: skill review\n---\n");
     const got = listCommands(home);
     const names = got.map((c) => c.name);
     // A bare "/" shows the everyday built-ins.
@@ -47,6 +52,7 @@ describe("slash commands (GET /api/commands)", () => {
       { name: "ship", description: "Ship", source: "omp" },
       { name: "review", description: "omp review", source: "omp" },
       { name: "skill:trail", description: "Code map for agents", source: "omp" },
+      { name: "solo", description: "Continuous solo mode", source: "claude" },
     ]);
     const bare = listCommands(path.join(home, "none"));
     expect(bare.every((c) => c.source === "omp") && bare.some((c) => c.name === "model")).toBe(true);

@@ -44,4 +44,4 @@ Scope: harness basics: standards, learning, compaction, always-on rules.
 - `/ecc-project-init` — Detect a project's stack and produce a dry-run ECC onboarding plan using
 
 ## Tools
-- `graphify` — only when `trail` falls short (`no indexed callers`, or the path A→B): `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (re-run after edits), then `graphify explain <symbol>` / `graphify path "A()" "B()"`; skip `graphify query` (~2K tokens)
+- `graphify` — who calls X, what X calls, impact, path A→B: `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (once per session + after edits), then `graphify explain <symbol>` / `graphify path "A()" "B()"`; skip `graphify query` (~2K tokens)

@@ -5,8 +5,9 @@ Enforced, so NOT restated here: a TTSR rule interrupts `grep`/`glob` on code-str
 the moment they fire. Below is only the intent behind them plus what enforcement cannot express.
 
 ## RULE #0 — code intelligence before native search
-Structure questions (where is X · who calls X · impact · architecture): `trail ask "<question>"` · `trail grep <pattern>` · `trail skeleton <file>` · `trail callers <symbol>` · `trail map` in bash first (local, deterministic).
-trail says `no indexed callers` (a common name like `open`) or you need the path A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (PowerShell: `$env:GRAPHIFY_MAX_WORKERS=4; graphify update . --no-cluster`; first run ~20 s, then ~2 s incremental, so re-run after edits), then `graphify explain <symbol>` (ambiguous name → re-run `graphify explain <id>` with an id from its list) / `graphify path "A()" "B()"`; skip `graphify query` (~2K tokens a call).
+Every code search goes through the local code map, never raw grep/glob (both deterministic, no model call, ~100–200 tokens a query vs ~23K to read a 2K-line file):
+- **Who calls X · what X calls · impact · path A→B** → graphify: `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` once per session and after edits (PowerShell: `$env:GRAPHIFY_MAX_WORKERS=4; graphify update . --no-cluster`; first run ~20 s, then ~2 s incremental), then `graphify explain <symbol>` (ambiguous name → re-run `graphify explain <id>` with an id from its list) / `graphify path "A()" "B()"`; skip `graphify query` (~2K tokens a call).
+- **Where is X · text hit with symbol context · file outline** → trail: `trail ask "<question>"` · `trail grep <pattern>` · `trail skeleton <file>` · `trail map` (`trail callers <symbol>` when graphify is not installed).
 After learning something durable about the repo: `trail note "<fact>"`.
 Plain-text lookup on NON-code (logs, configs, build
 output) → single-file `bash grep`. `read` a file when you are about to edit it (read-before-edit).

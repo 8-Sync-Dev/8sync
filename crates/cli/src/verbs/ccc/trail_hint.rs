@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 /// Dedupe files older than this are pruned (a session rarely lives a week).
 const MAX_AGE_S: u64 = 7 * 24 * 3600;
 
-const HINT: &str = "Repo có trail index (.trail/): dùng `trail ask|grep|skeleton|callers` trước (rẻ hơn grep/glob, có ngữ cảnh symbol). Chỉ grep khi trail không trả lời được.";
+const HINT: &str = "Repo có trail index (.trail/): mọi tìm kiếm code đi qua code map, rẻ hơn grep/glob nhiều lần. Ai gọi X · X gọi gì · impact · đường A→B → `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster` (đầu phiên + sau khi sửa) rồi `graphify explain <symbol>` / `graphify path \"A()\" \"B()\"`. X ở đâu · chữ kèm ngữ cảnh symbol · khung file → `trail ask|grep|skeleton`. Chỉ grep khi cả hai không trả lời được.";
 
 /// Where the per-session dedupe files live.
 pub(super) fn state_dir(home: Option<&Path>) -> Option<PathBuf> {
