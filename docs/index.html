@@ -302,19 +302,20 @@
     .levels-head h3 { margin: 0; font-size: clamp(1.5rem, 2.6vw, 2.1rem); font-weight: 760; line-height: 1.1; letter-spacing: -0.015em; }
     .levels-head p { margin: 0; color: var(--ink-2); max-width: 62ch; }
     @media (max-width: 860px) { .levels-head { grid-template-columns: minmax(0, 1fr); } }
-    .rungs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: clamp(0.75rem, 1.6vw, 1.25rem); }
+    .rungs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(0.75rem, 1.4vw, 1.1rem); }
     .rung { display: flex; flex-direction: column; gap: 0.8rem; }
     .stair { height: clamp(8rem, 15vw, 12rem); display: flex; align-items: flex-end; }
     .fill {
-      width: 100%; height: calc(3.4rem + (var(--h) - 1) * (100% - 3.4rem) / 4);
+      width: 100%; height: calc(3.4rem + (var(--h) - 1) * (100% - 3.4rem) / 5);
       background: var(--fill); color: var(--fill-ink); border-radius: 9px 9px 3px 3px; padding: 0.65rem 0.8rem;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem;
     }
     .rung:nth-child(1) { --fill: oklch(0.5 0.17 256); --fill-ink: var(--ink); }
     .rung:nth-child(2) { --fill: oklch(0.6 0.15 240); --fill-ink: var(--ink); }
     .rung:nth-child(3) { --fill: oklch(0.74 0.12 210); --fill-ink: oklch(0.18 0.04 230); }
-    .rung:nth-child(4) { --fill: oklch(0.8 0.17 150); --fill-ink: oklch(0.18 0.05 150); }
-    .rung:nth-child(5) { --fill: oklch(0.88 0.19 128); --fill-ink: oklch(0.18 0.05 130); }
+    .rung:nth-child(4) { --fill: oklch(0.78 0.13 178); --fill-ink: oklch(0.18 0.05 175); }
+    .rung:nth-child(5) { --fill: oklch(0.8 0.17 150); --fill-ink: oklch(0.18 0.05 150); }
+    .rung:nth-child(6) { --fill: oklch(0.88 0.19 128); --fill-ink: oklch(0.18 0.05 130); }
     .lvl { font-weight: 800; font-stretch: 118%; font-size: clamp(1.6rem, 2.4vw, 2.1rem); line-height: 1; }
     .reach { font-stretch: 78%; font-weight: 700; font-size: 0.8rem; line-height: 1.25; text-align: right; padding-top: 0.2rem; }
     .rung code.slash { align-self: flex-start; font-size: 0.9rem; font-weight: 700; color: var(--ink); background: var(--bg-raised); padding: 0.3rem 0.6rem; border-radius: 6px; }
@@ -323,12 +324,47 @@
     .needs b { display: block; font-stretch: 80%; font-weight: 700; font-size: 0.8rem; color: var(--ink-3); }
     @keyframes rise { from { clip-path: inset(86% 0 0 0 round 9px 9px 3px 3px); } to { clip-path: inset(0 0 0 0 round 9px 9px 3px 3px); } }
     @keyframes rise-x { from { clip-path: inset(0 86% 0 0 round 9px); } to { clip-path: inset(0 0 0 0 round 9px); } }
-    @media (max-width: 880px) {
+    @media (max-width: 980px) {
       .rungs { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; }
       .stair { height: auto; }
-      .fill { height: auto; width: calc(32% + (var(--h) - 1) * 17%); border-radius: 9px; align-items: center; }
+      .fill { height: auto; width: calc(32% + (var(--h) - 1) * 13.6%); border-radius: 9px; align-items: center; }
     }
     .fine { margin: 1.4rem 0 0; color: var(--ink-3); font-size: 0.9rem; max-width: 80ch; }
+
+    /* /solo: one item's run (a real sequence) beside what reaches the owner */
+    .solo { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(2rem, 5vw, 4.5rem); align-items: start; margin-top: clamp(3rem, 6vw, 4.5rem); }
+    .solo > div > h3 { font-size: clamp(1.5rem, 2.6vw, 2.1rem); font-weight: 760; line-height: 1.1; letter-spacing: -0.015em; margin-bottom: 1.4rem; }
+    .solo .steps { gap: 1.25rem; }
+    @media (max-width: 920px) { .solo { grid-template-columns: minmax(0, 1fr); } }
+
+    /* Code search: measured table; the bar is each answer's tokens against reading the file */
+    .measure-wrap { margin: 0; }
+    .measure { width: 100%; border-collapse: collapse; font-size: 0.97rem; }
+    .measure th, .measure td { text-align: left; vertical-align: baseline; padding: 0.95rem 1rem 0.95rem 0; border-bottom: 1px solid var(--line-soft); }
+    .measure thead th { font-stretch: 85%; font-weight: 700; font-size: 0.85rem; color: var(--ink-3); border-bottom-color: var(--line); padding-top: 0; }
+    .measure td:first-child { color: var(--ink-2); max-width: 22ch; }
+    .measure td.num { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); }
+    .measure .tok { display: grid; gap: 0.45rem; min-width: 14rem; }
+    .measure .meter { display: block; height: 6px; border-radius: 3px; background: var(--bg-raised); overflow: hidden; }
+    .measure .meter::before { content: ""; display: block; height: 100%; width: max(4px, var(--w)); background: var(--lime); border-radius: 3px; }
+    .measure tr.file .meter::before { background: var(--amber); }
+    .measure tr.file td { color: var(--ink-2); }
+    .measure-wrap figcaption { margin-top: 0.9rem; color: var(--ink-3); font-size: 0.9rem; }
+    @media (max-width: 700px) {
+      .measure thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      .measure, .measure tbody, .measure tr, .measure td { display: block; }
+      .measure tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.35rem 1rem; padding: 1rem 0; border-bottom: 1px solid var(--line-soft); }
+      .measure td { padding: 0; border: 0; }
+      .measure td:first-child { grid-column: 1 / -1; max-width: none; }
+      .measure td.time::before { content: attr(data-label) " "; color: var(--ink-3); font-size: 0.85rem; }
+      .measure td.time.empty { display: none; }
+      .measure td.tokens { grid-column: 1 / -1; }
+      .measure .tok { min-width: 0; }
+    }
+    .code-intel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.25rem clamp(1.5rem, 4vw, 3rem); margin-top: clamp(2rem, 4vw, 2.75rem); }
+    .code-intel p { margin: 0.4rem 0 0; color: var(--ink-2); font-size: 0.97rem; }
+    .code-intel h3 { margin: 0; font-size: 1.1rem; }
+    @media (max-width: 760px) { .code-intel { grid-template-columns: minmax(0, 1fr); } }
 
     /* Install */
     .install { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(2rem, 5vw, 4.5rem); align-items: start; }
@@ -370,7 +406,7 @@
       .panel.test .lamp-label { animation: lamp-test 1.1s var(--ease-out) both; animation-delay: calc(var(--i) * 120ms); }
       .rungs.grow .fill { animation: rise 1s var(--ease-out) both; animation-delay: calc(var(--h) * 90ms); }
       .copy { transition: background-color 0.2s var(--ease-out); }
-      @media (max-width: 880px) { .rungs.grow .fill { animation-name: rise-x; } }
+      @media (max-width: 980px) { .rungs.grow .fill { animation-name: rise-x; } }
     }
     @keyframes ln-in { from { opacity: 0; transform: translateY(0.3em); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0 0 -0.2em 0); } }
     @keyframes fade-up { from { opacity: 0; transform: translateY(0.6rem); } }
@@ -390,7 +426,9 @@
         <ul>
           <li><a href="#engines">Engines</a></li>
           <li><a href="#hq">HQ</a></li>
-          <li><a href="#claude-code">Claude Code</a></li>
+          <li><a href="#solo">/solo</a></li>
+          <li><a href="#claude-code">Rails</a></li>
+          <li><a href="#search">Code search</a></li>
           <li><a href="#install">Install</a></li>
           <li class="hide-sm"><a href="https://github.com/8-Sync-Dev/8sync/blob/main/docs/huong-dan.md" lang="vi" hreflang="vi">Tiếng Việt</a></li>
           <li><a class="gh" href="https://github.com/8-Sync-Dev/8sync">GitHub</a></li>
@@ -456,7 +494,7 @@
               <span class="name">omp</span>
               <span class="flag">--mode omp<small>the default</small></span>
               <span class="state tested">Tested daily</span>
-              <span class="what">The default engine, on your own API key. It reads the project memory 8sync seeds in <code>su-code/</code>.</span>
+              <span class="what">The default engine, on your own API key. It reads the project memory 8sync seeds in <code>su-code/</code> and runs <code>/solo</code>, <code>/autopilot</code>, <code>/ship-loop</code> and <code>/ship-auto</code>.</span>
             </button>
           </li>
           <li class="engine" data-mode="claude-code-cli">
@@ -464,7 +502,7 @@
               <span class="name">Claude Code</span>
               <span class="flag">--mode claude-code-cli<small>or claude, ccc</small></span>
               <span class="state tested">Tested daily</span>
-              <span class="what">Anthropic's CLI with the 8sync kit: guard, verify hook, stop and ask gates, <code>/ship</code>. Signs in with Anthropic's own login.</span>
+              <span class="what">Anthropic's CLI with the 8sync kit: guard, verify hook, stop and ask gates, <code>/do</code> to <code>/solo</code>. Signs in with Anthropic's own login.</span>
             </button>
           </li>
           <li class="engine" data-mode="forgecode">
@@ -492,7 +530,10 @@
     <section class="section" id="hq" aria-labelledby="hq-title">
       <div class="sec-head">
         <h2 id="hq-title">8 Sync HQ: every session on one page</h2>
-        <p>A local web dashboard for every omp and Claude Code session on the machine: who is working and who waits on you, each room's log and chat, the reports sessions post, a web terminal, and the machine's RAM, CPU and GPU. 8sync never opens a session or sends a prompt on its own.</p>
+        <div>
+          <p>A local web dashboard for every omp and Claude Code session on the machine: who is working and who waits on you, each room's log and chat, the reports sessions post, a web terminal, and the machine's RAM, CPU and GPU. 8sync never opens a session or sends a prompt on its own.</p>
+          <p>Type <code>/</code> in a room's message box for what that session can run: omp's built-ins and commands, Claude Code's commands, and the skills in <code>~/.claude/skills</code> such as <code>/solo</code> and <code>/ship-loop</code>.</p>
+        </div>
       </div>
 
       <div class="hq-cmds">
@@ -534,6 +575,84 @@
       <p class="note">Screenshots and video from a real HQ; other projects' private data is blurred. HQ copy is in Vietnamese today.</p>
     </section>
 
+    <section class="section" id="solo" aria-labelledby="solo-title">
+      <div class="sec-head">
+        <h2 id="solo-title">/solo works the backlog until you stop it</h2>
+        <div>
+          <p>Type <code>/solo</code> once, in Claude Code or omp. A Router session picks items from your labelled issues, the Next list in <code>su-code/STATE.md</code> and unguarded failures in <code>su-code/KNOWLEDGE.md</code>. It never edits code: each item gets its own Worker, worktree and <code>solo/&lt;slug&gt;</code> branch.</p>
+          <p>The design follows DeepSeek's Super-Agent prototype (<a href="https://github.com/deepseek-ai/dsh-superagent-prototype">dsh-superagent-prototype</a>, MIT): spend as little of your attention as possible, report in fixed states, ask one question at a time.</p>
+        </div>
+      </div>
+
+      <div class="levels-head">
+        <h3>Six levels of hands-off work</h3>
+        <p>Type one in a session, from your terminal or HQ's chat; levels 3 to 6 run in omp as well as Claude Code. You start levels 3 to 6, an agent can't, and the command you type is the permission to merge and release.</p>
+      </div>
+      <ol class="rungs" data-anim="grow">
+        <li class="rung" style="--h:1">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">1</span><span class="reach">one edit</span></div></div>
+          <code class="slash">/do &lt;task&gt;</code>
+          <p>A change of three files or fewer. No plan, no commit.</p>
+          <p class="needs"><b>Needs you</b> to look at the diff and commit.</p>
+        </li>
+        <li class="rung" style="--h:2">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">2</span><span class="reach">to commit</span></div></div>
+          <code class="slash">/ship &lt;task&gt;</code>
+          <p>Plan, research, code, test, review, CHANGELOG and memory, then a commit on a branch.</p>
+          <p class="needs"><b>Needs you</b> to push. It never pushes.</p>
+        </li>
+        <li class="rung" style="--h:3">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">3</span><span class="reach">to release</span></div></div>
+          <code class="slash">/ship-auto &lt;task&gt;</code>
+          <p><code>/ship</code>, then a PR, CI green on Windows, macOS and Linux, merge, tag and release.</p>
+          <p class="needs"><b>Needs you</b> only for an irreversible, production or billing choice.</p>
+        </li>
+        <li class="rung" style="--h:4">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">4</span><span class="reach">until green</span></div></div>
+          <code class="slash">/ship-loop &lt;goal&gt;</code>
+          <p>Writes acceptance checks, repeats until every check exits 0, then merges and releases.</p>
+          <p class="needs"><b>Needs you</b> when a cap is hit: 12 rounds, 90 minutes, or stuck.</p>
+        </li>
+        <li class="rung" style="--h:5">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">5</span><span class="reach">a batch</span></div></div>
+          <code class="slash">/autopilot</code>
+          <p>Up to 5 backlog items or 8 hours, each item its own loop on its own branch.</p>
+          <p class="needs"><b>Needs you</b> to read the brief it leaves in <code>STATE.md</code>.</p>
+        </li>
+        <li class="rung" style="--h:6">
+          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">6</span><span class="reach">until you stop</span></div></div>
+          <code class="slash">/solo</code>
+          <p>A Router and one Worker per item, item after item, 12 hours by default.</p>
+          <p class="needs"><b>Needs you</b> at a hard rail, or to say <code>dừng</code>.</p>
+        </li>
+      </ol>
+
+      <div class="solo">
+        <div>
+          <h3>One item, start to finish</h3>
+          <ol class="steps">
+            <li><div><h3>Pick</h3><p>Items you wrote (an issue, a Next line) run at once. Inferred ones (a bot's issue, a failure line) are only logged as <code>would accept:</code> until you send <code class="nb">/solo --accept auto</code>.</p></div></li>
+            <li><div><h3>Map the blast radius</h3><p>The Worker runs <code>graphify explain</code> and <code>graphify path</code> before any edit and writes <code>Impact:</code> into the item's <code>PLAN.md</code>. Two Workers run side by side only when their impact doesn't overlap.</p></div></li>
+            <li><div><h3>Loop to green</h3><p>Acceptance checks that run as commands, with evidence for each. Stuck on the same failure twice, it researches first, in the code and on the web for larger choices, and keeps the findings in <code>research.md</code>.</p></div></li>
+            <li><div><h3>Gate</h3><p>UAT on the real surface first: the built binary runs the changed path, or a real browser opens the page and saves screenshots. No evidence, no merge. Then review, <code>8sync ccc risk</code>, <code>/sec</code>, and CI green on Windows, macOS and Linux.</p></div></li>
+            <li><div><h3>Merge and release</h3><p>A diff of 200 lines or fewer (<code class="nb">--merge-lines</code>) is squash-merged and released, installed with <code>8sync up</code> and tested again on the installed version, and the worktree removed. A bigger one waits for your answer. <code class="nb">--no-release</code> stops at merge; production deploy is never granted.</p></div></li>
+            <li><div><h3>Learn, then the next item</h3><p>A retro line goes to <code class="nb">su-code/KNOWLEDGE.md</code> before the Router picks again.</p></div></li>
+          </ol>
+        </div>
+        <div class="gets">
+          <h3>When it needs you</h3>
+          <dl>
+            <div><dt>One question, never blocking</dt><dd>Written to <code>su-code/ship/solo/SOLO.md</code> with 2 to 4 options, the first recommended. Workers go on with items that don't depend on it.</dd></div>
+            <div><dt>Pinned in HQ</dt><dd>HQ shows the question with one button per option. From any chat, <code>solo: &lt;option&gt;</code> answers it.</dd></div>
+            <div><dt>A strict Critic after 15 minutes</dt><dd>If you're away past <code class="nb">--answer-after</code>, a Critic picks for your original goal. Destructive steps, red CI, secrets, production data and billing still wait for you. <code class="nb">solo: override &lt;option&gt;</code> corrects it and records the lesson in <code class="nb">su-code/PREFERENCES.md</code>.</dd></div>
+            <div><dt>Safe to restart</dt><dd>After a reboot it checks the worktree, git, the PR and CI before repeating any push, merge or release.</dd></div>
+            <div><dt>On omp</dt><dd>No cron: <code>/solo</code> runs as an <code>engine_plan</code> loop that continues up to 8 times in a row; typing <code>/solo</code> again picks up from <code>SOLO.md</code>.</dd></div>
+          </dl>
+          <p class="ci">Defaults: <code>--hours 12</code>, <code>--max-tokens 2000000</code> per day (an estimate), <code>--workers 2</code>, <code>--accept observe</code>. <code>dừng</code> or <code>/solo stop</code> finishes the step in flight, then stops with a daily summary.</p>
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="claude-code" aria-labelledby="cc-title">
       <div class="sec-head">
         <h2 id="cc-title">Claude Code mode comes with rails</h2>
@@ -558,7 +677,7 @@
         </li>
         <li class="lamp" data-tone="amber" style="--i:4">
           <span class="lamp-label">Ship grant</span>
-          <p>Push to main, merge, tag, release, publish and deploy wait for one Ship answer that lists every step.</p>
+          <p>Merge, tag and release need your grant: a Ship answer, or the loop you typed yourself (<code class="nb">/ship-auto</code>, <code class="nb">/ship-loop</code>, <code>/autopilot</code>, <code>/solo</code>). It covers that session and repo for 24 hours or the loop's <code class="nb">--hours</code>, never a production deploy, and <code>dừng</code> revokes it.</p>
         </li>
         <li class="lamp" data-tone="blue" style="--i:5">
           <span class="lamp-label">No bypass</span>
@@ -566,43 +685,38 @@
         </li>
       </ul>
 
-      <div class="levels-head">
-        <h3>Five levels of hands-off work</h3>
-        <p>Type one inside the Claude Code session, from your terminal or HQ's chat. Each runs longer before it needs you; you start levels 3 to 5, an agent can't.</p>
-      </div>
-      <ol class="rungs" data-anim="grow">
-        <li class="rung" style="--h:1">
-          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">1</span><span class="reach">one edit</span></div></div>
-          <code class="slash">/do &lt;task&gt;</code>
-          <p>A change of three files or fewer. No plan, no commit.</p>
-          <p class="needs"><b>Needs you</b> to look at the diff and commit.</p>
-        </li>
-        <li class="rung" style="--h:2">
-          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">2</span><span class="reach">to commit</span></div></div>
-          <code class="slash">/ship &lt;task&gt;</code>
-          <p>Plan, research, code, test, review, CHANGELOG and memory, then a commit on a branch.</p>
-          <p class="needs"><b>Needs you</b> to push. It never pushes.</p>
-        </li>
-        <li class="rung" style="--h:3">
-          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">3</span><span class="reach">to release</span></div></div>
-          <code class="slash">/ship-auto &lt;task&gt;</code>
-          <p><code>/ship</code>, then a PR, CI green on Windows, macOS and Linux, merge, tag and release.</p>
-          <p class="needs"><b>Needs you</b> for one Ship answer.</p>
-        </li>
-        <li class="rung" style="--h:4">
-          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">4</span><span class="reach">until green</span></div></div>
-          <code class="slash">/ship-loop &lt;goal&gt;</code>
-          <p>Writes acceptance checks, then repeats until every check exits 0, within caps on iterations and time.</p>
-          <p class="needs"><b>Needs you</b> when a cap is hit, or to release.</p>
-        </li>
-        <li class="rung" style="--h:5">
-          <div class="stair" aria-hidden="true"><div class="fill"><span class="lvl">5</span><span class="reach">the backlog</span></div></div>
-          <code class="slash">/autopilot</code>
-          <p>Labelled issues and the Next list in <code>su-code/STATE.md</code>, each item as its own loop on its own branch.</p>
-          <p class="needs"><b>Needs you</b> for one Ship answer for the batch.</p>
-        </li>
-      </ol>
       <p class="fine">The guard is a seat belt, not a sandbox: a program that deletes files itself (<code>python -c</code>, a build script) is not inspected. Claude Code signs in with Anthropic's own login; 8sync never proxies a consumer subscription. omp and Forge use your own API key.</p>
+    </section>
+
+    <section class="section" id="search" aria-labelledby="search-title">
+      <div class="sec-head">
+        <h2 id="search-title">Code search reads a map before a file</h2>
+        <p>Every session starts at STEP 0: questions about code go to a local code map, with no model call, before any file is opened. graphify answers who calls X, what X calls, the impact of a change and the path from A to B. trail answers where X is and what a file looks like.</p>
+      </div>
+      <figure class="measure-wrap">
+        <table class="measure">
+          <thead>
+            <tr><th scope="col">Question</th><th scope="col">Command</th><th scope="col">Time</th><th scope="col">Answer size</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Who calls X, what X calls, impact</td><td><code>graphify explain &lt;symbol&gt;</code></td><td class="num time" data-label="Time">1.4 s</td><td class="num tokens"><span class="tok">~170 tokens<span class="meter" style="--w:0.74%"></span></span></td></tr>
+            <tr><td>The same, where graphify is missing</td><td><code>trail callers &lt;symbol&gt;</code></td><td class="num time" data-label="Time">7.5 s</td><td class="num tokens"><span class="tok">~92 tokens<span class="meter" style="--w:0.4%"></span></span></td></tr>
+            <tr><td>Where is X, text with its symbol</td><td><code>trail grep &lt;pattern&gt;</code></td><td class="num time" data-label="Time">0.8 s</td><td class="num tokens"><span class="tok">~161 tokens<span class="meter" style="--w:0.7%"></span></span></td></tr>
+            <tr class="file"><td>Reading the file instead</td><td>a 2,000-line file</td><td class="num time empty">&nbsp;</td><td class="num tokens"><span class="tok">~23,000 tokens<span class="meter" style="--w:100%"></span></span></td></tr>
+          </tbody>
+        </table>
+        <figcaption>Measured on the 8sync repo itself, on Windows, November 2026. Bars are to scale against reading the file.</figcaption>
+      </figure>
+      <div class="code-intel">
+        <div>
+          <h3>graphify: callers, impact, path</h3>
+          <p><code>graphify update . --no-cluster</code> builds the graph: 20.6 s the first time on 15,406 nodes, about 2 s after each edit. Then <code>graphify explain &lt;symbol&gt;</code> or <code>graphify path "A()" "B()"</code>. <code>/solo</code> Workers run it before every change.</p>
+        </div>
+        <div>
+          <h3>trail: where, and the outline</h3>
+          <p><code>trail ask "&lt;question&gt;"</code>, <code>trail grep &lt;pattern&gt;</code>, <code>trail skeleton &lt;file&gt;</code>. A raw file is read only right before it is edited. The installer sets up both; graphify needs <code>uv</code>.</p>
+        </div>
+      </div>
     </section>
 
     <section class="section" id="install" aria-labelledby="install-title">
@@ -658,7 +772,7 @@
             <div><dt>The <code>8sync</code> binary</dt><dd>One file, sha256-checked against the release, put on your PATH.</dd></div>
             <div><dt>omp and Claude Code</dt><dd>From their official installers, Claude Code with the 8sync kit in <code>~/.claude</code>.</dd></div>
             <div><dt>Forge with zsh</dt><dd>From Forge's GitHub release; on Windows, a private zsh next to Git for Windows.</dd></div>
-            <div><dt>gh, trail, skills, MCP</dt><dd>GitHub CLI, the trail code map, bundled skills, MCP servers and global agent rules.</dd></div>
+            <div><dt>gh, trail, graphify, skills, MCP</dt><dd>GitHub CLI, the trail code map, graphify when <code>uv</code> is present, bundled skills, MCP servers and global agent rules.</dd></div>
           </dl>
           <p class="ci">Every step is idempotent, and a step that fails is reported while the rest still installs. CI runs these one-liners on Ubuntu (x64, arm64), macOS (Apple silicon, Intel) and Windows after every release and every week.</p>
         </div>

@@ -5,6 +5,16 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.132.0] — 2026-11-07
+
+### Added
+- `/solo` làm tới cùng và kiểm được: Worker tự research web (nguồn gốc: docs, source, changelog; ≤5 dòng `Research:` trong PLAN.md) trước khi sửa phần đụng thư viện/API ngoài hay lỗi chưa rõ; cổng UAT bắt buộc trước `ready` (chạy binary thật hoặc mở trang bằng browser thật, ảnh vào `su-code/ship/<slug>/uat/`, thiếu bằng chứng → `blocked: thiếu UAT`) và chạy lại UAT trên bản đã cài sau `8sync up`, bằng chứng đăng lên tab Kết quả của HQ; chuẩn "vượt kỳ vọng" (criteria theo ý owner, tối đa 3 cải tiến kề trong `Impact:`); chữ tự do sau `/solo` = item explicit ưu tiên nhất, "auto"/"tự làm" = `--accept auto --answer-after 0`; Router chỉ đọc Report ≤15 dòng, token mỗi item vào dòng `daily:`. omp: khối "Chạy trên omp" map `WebSearch`/`WebFetch` → `web_search`/`read <url>`, ảnh → `browser`/`8sync shot`.
+- README, site get.8syncdev.com và `docs/huong-dan.md`: mục `/solo` (Super-Agent Router/Worker, thang 6 mức tự chạy, chạy được trong omp, cổng UAT), bảng tìm code graphify-first đo trên chính repo 8sync, gợi ý `/` của HQ có skill Claude Code và lệnh omp.
+
+### Fixed
+- `/solo`: dòng "`$ARGUMENTS` = `stop`" bị thay chữ thành câu vô nghĩa khi có tham số → "`/solo stop` (hoặc tham số chỉ là `stop`)".
+- README/site/hướng dẫn: bỏ câu cũ "mức 3–5 còn chờ một câu Ship" (giấy phép là chính lệnh owner gõ, cả omp từ v0.131.0).
+
 ## [0.131.1] — 2026-11-07
 
 ### Fixed

@@ -1416,7 +1416,7 @@ const OMP_KIT_MARK: &str = "<!-- 8sync:kit-loop -->";
 const OMP_KIT_HEADER: &str = "> **Chạy trên omp.** Thân lệnh dưới đây viết cho Claude Code; trên omp đọc theo bảng này:\n\
 > - `CronCreate` / `CronList` / `CronDelete` / `/ship-tick` theo cron → omp không có cron. Gọi `engine_plan` NGAY sau bước khởi động (goal = lệnh owner gõ, một slice mỗi item hoặc criterion, `verify` = lệnh kiểm), nó bật vòng run-to-done: mỗi lần lượt dừng, engine tự tiếp (tối đa 8 lần liền) và việc của một tick làm ở đầu lượt tiếp đó. Hết 8 lần mà còn việc → báo owner gõ lại lệnh; lần gõ lại đọc state và đi tiếp (bước Khởi động lại).\n\
 > - `~/.claude/commands/<x>.md` → `~/.omp/agent/commands/<x>.md`; `~/.claude/skills/<x>/SKILL.md` → `~/.omp/agent/commands/<x>.md` cho solo/autopilot/ship-loop/ship-auto/ship-tick, còn lại `skill://<x>`.\n\
-> - Subagent / `Task` / `Agent` → tool `task` (các việc độc lập = một lời gọi, nhiều `tasks[]`); `ListAgents` → `read proc://`. `AskUserQuestion` → `ask`. `/remember` → `learn`. `/sec` → `skill://aup-audit` + security-review.\n\
+> - Subagent / `Task` / `Agent` → tool `task` (các việc độc lập = một lời gọi, nhiều `tasks[]`); `ListAgents` → `read proc://`. `AskUserQuestion` → `ask`. `/remember` → `learn`. `/sec` → `skill://aup-audit` + security-review. `WebSearch` / `WebFetch` → `web_search` / `read <url>`; screenshot → `browser` hoặc `8sync shot`.\n\
 > - Giấy phép merge + release: omp không có hook ghi giấy phép; chính lệnh owner gõ vào phiên này là giấy phép, `dừng` thu hồi. `8sync ccc loop …`, `8sync ccc risk` chạy y như trên.\n\n";
 
 /// `assets/claude/skills/<name>/SKILL.md` as an omp command: same name, description and
@@ -1896,6 +1896,7 @@ mod command_prefix_tests {
         }
         let solo = std::fs::read_to_string(dir.join("solo.md")).unwrap();
         assert!(solo.contains("\nargument-hint: ") && solo.contains("SOLO.md"), "{solo}");
+        assert!(solo.contains("`WebSearch` / `WebFetch` → `web_search` / `read <url>`"), "{solo}");
         assert_eq!(super::deploy_eccx_commands(&home).unwrap(), 0, "idempotent");
         // An owner's own `/solo` (no marker) survives; v0.131.0's unmarked copy is still ours and refreshes.
         std::fs::write(dir.join("solo.md"), "---\ndescription: my solo\n---\nmine\n").unwrap();
