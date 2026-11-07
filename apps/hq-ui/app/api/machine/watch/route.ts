@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   return json(await view());
 }
 
-/** `{on?, room?, everyMin?, cpu?, ram?, gpu?}`: fields left out keep their value. */
+/** `{on?, room?, everyMin?, cpu?, ram?, gpu?, observe?, observeSkip?}`: fields left out keep their value. */
 export async function PUT(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
