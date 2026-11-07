@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- HQ › Bots › Bản đồ code: repo của bot chưa đăng ký trong HQ nhưng đã có bản đồ trên máy (`.trail/cache/.graph/wiring.json` hoặc `graphify-out/graph.json`, VD `core · su-code`) không còn hiện "chưa có bản đồ code" + "Tạo bản đồ code cho repo này". Tab ghi "su-code đã có bản đồ code trên máy", nút "Thêm vào HQ" chỉ đăng ký repo; làm mới vẫn là nút "Cập nhật graph" / "Index ngay" riêng. Server cũng vậy: `POST /api/codemap/enable` gặp repo đã có trail index hoặc graph thì chỉ đăng ký (`started: false`), không chạy `graphify update` hay `trail build`. `GET /api/codemap/enable?path=` (chỉ chủ, repo HQ đã biết) cho biết repo có gì trên máy.
+
 ## [0.139.0] — 2026-11-07
 ### Added
 - HQ: giao diện mới xoay quanh Bot (kiểu Grok Bot). Thanh bên máy tính là danh sách bot: mặt, tên, vai trò, trạng thái (Đang làm · Chờ anh · Rảnh), chấm tin chưa xem; bot chờ anh lên đầu, nhóm theo dự án, ghim/ẩn lưu ở máy, "Bot ẩn" gập lại, Nhóm nằm dưới. Bot chính (phiên solo) đứng đầu với nhãn "Chính" và thấy thẻ "Trả lời từ B". Worktree, phiên con và "+N cũ hơn" không còn ở thanh bên mà nằm trong trang bot › Lịch sử phiên.

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { POST } from "@/app/api/codemap/enable/route";
+import { GET, POST } from "@/app/api/codemap/enable/route";
 import { getToken } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
 import { resetGraphify } from "@/lib/server/graphify";
@@ -71,5 +71,44 @@ describe("codemap enable route", () => {
     expect((await post({ path: roomRoot })).status).toBe(202);
     expect((await post({ project: row!.id })).status).toBe(202);
     expect(getDb().prepare("SELECT COUNT(*) AS n FROM projects WHERE path = ?").get(roomRoot)).toEqual({ n: 1 });
+  });
+
+  it("GET ?path=: what a known repo already has on disk; unknown folders and missing paths refused", async () => {
+    const get = (q: string) => GET(req(`/api/codemap/enable?path=${encodeURIComponent(q)}`, { token, origin: ORIGIN }));
+    const r = await get(roomRoot);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ indexed: false, graph: false });
+    expect((await get(stranger)).status).toBe(409);
+    expect((await GET(req("/api/codemap/enable", { token, origin: ORIGIN }))).status).toBe(422);
+  });
+
+  it("a repo that already has a code map on disk is only registered: no graphify update, no trail build", async () => {
+    const mapped = path.join(path.dirname(roomRoot), "mapped-repo");
+    fs.mkdirSync(path.join(mapped, ".trail", "cache", ".graph"), { recursive: true });
+    fs.mkdirSync(path.join(mapped, "graphify-out"));
+    fs.writeFileSync(path.join(mapped, ".trail", "cache", ".graph", "wiring.json"), "{}");
+    fs.writeFileSync(path.join(mapped, "graphify-out", "graph.json"), "{}");
+    getDb().prepare("INSERT INTO sessions(name, started_at, status, cwd, updated_at) VALUES (?, ?, 'ended', ?, ?)").run("hq-bot-mapped", Date.now(), mapped, Date.now());
+    // graphify and trail "installed" (dummy files never meant to run): any start would show as an update/build state.
+    const bin = path.join(path.dirname(roomRoot), "bin");
+    fs.mkdirSync(bin);
+    for (const f of process.platform === "win32" ? ["graphify.exe", "trail.exe"] : ["graphify", "trail"]) fs.writeFileSync(path.join(bin, f), "");
+    process.env.PATH = bin;
+    try {
+      const g = await GET(req(`/api/codemap/enable?path=${encodeURIComponent(mapped)}`, { token, origin: ORIGIN }));
+      expect(await g.json()).toEqual({ indexed: true, graph: true });
+      const r = await post({ path: mapped });
+      expect(r.status).toBe(202);
+      const row = projectRow(mapped);
+      expect(row).toBeDefined();
+      expect(await r.json()).toMatchObject({ project: { id: row!.id, root: mapped }, update: null, build: null, notes: [], started: false, indexed: true, graph: true });
+      // A graph alone (no trail index) is a map too.
+      fs.rmSync(path.join(mapped, ".trail"), { recursive: true });
+      expect(await (await post({ project: row!.id })).json()).toMatchObject({ update: null, build: null, started: false, indexed: false, graph: true });
+    } finally {
+      process.env.PATH = "";
+      resetGraphify();
+      resetTrail();
+    }
   });
 });

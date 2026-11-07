@@ -129,12 +129,14 @@ export function CodemapView({
   const enable = async (target: { path: string } | { project: number }) => {
     setEnabling(true);
     try {
-      const r = await api<{ project: { id: number; name: string }; notes: string[] }>("/api/codemap/enable", { method: "POST", body: target });
+      const r = await api<{ project: { id: number; name: string }; notes: string[]; started: boolean }>("/api/codemap/enable", { method: "POST", body: target });
       await onAdded();
       setPick(r.project.id);
-      setFast(true);
       status.reload();
-      toast.success(`Đang tạo bản đồ code cho ${r.project.name}`);
+      if (r.started) {
+        setFast(true);
+        toast.success(`Đang tạo bản đồ code cho ${r.project.name}`);
+      } else toast.success(`Đã thêm ${r.project.name} vào HQ, dùng bản đồ code có sẵn trên máy`);
       for (const note of r.notes) toast.warning(note);
     } catch (e) {
       toast.error(`Tạo bản đồ code: ${(e as Error).message}`);
@@ -145,6 +147,19 @@ export function CodemapView({
   // A bot's repo HQ has not registered yet, or a registered one with neither a trail index nor a graph.
   const pending = id == null && repo ? addable.find((o) => rootKey(o.path) === rootKey(repo)) : undefined;
   const bare = st != null && !st.index.indexed && !st.graph.dir && !building;
+  // Whether the unregistered repo already has a map on disk (then the tap only registers it). A failed
+  // check counts as "no map": the server still skips the rebuild when one is there.
+  const [disk, setDisk] = useState<{ path: string; has: boolean } | null>(null);
+  const pendingPath = pending?.path ?? null;
+  useEffect(() => {
+    if (!pendingPath) return;
+    const ac = new AbortController();
+    api<{ indexed: boolean; graph: boolean }>(`/api/codemap/enable?path=${encodeURIComponent(pendingPath)}`, { signal: ac.signal })
+      .then((d) => setDisk({ path: pendingPath, has: d.indexed || d.graph }))
+      .catch(() => !ac.signal.aborted && setDisk({ path: pendingPath, has: false }));
+    return () => ac.abort();
+  }, [api, pendingPath]);
+  const pendingHas = disk && disk.path === pendingPath ? disk.has : null;
 
   if (!live.length && !addable.length) {
     return (
@@ -212,7 +227,7 @@ export function CodemapView({
           <div className={cn("min-h-0 overflow-y-auto", sideNow && "max-lg:hidden lg:border-r")}>
             <div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-4 sm:px-6">
               {pending ? (
-                <EnablePrompt name={pending.name} root={pending.path} busy={enabling} onEnable={() => void enable({ path: pending.path })} />
+                <EnablePrompt name={pending.name} root={pending.path} existing={pendingHas} busy={enabling} onEnable={() => void enable({ path: pending.path })} />
               ) : id == null ? (
                 <p className="text-sm text-muted-foreground">Chọn một repo ở góc phải để thêm vào HQ và xem bản đồ code của nó.</p>
               ) : status.error && !st ? (
@@ -220,7 +235,7 @@ export function CodemapView({
               ) : !st ? (
                 <Bone className="h-16 w-full" />
               ) : bare ? (
-                <EnablePrompt name={st.project.name} root={st.project.root} busy={enabling} onEnable={() => void enable({ project: st.project.id })} />
+                <EnablePrompt name={st.project.name} root={st.project.root} existing={false} busy={enabling} onEnable={() => void enable({ project: st.project.id })} />
               ) : (
                 <StatusStrip st={st} now={status.at} totals={mapNow?.data?.totals ?? null} onBuild={build} />
               )}

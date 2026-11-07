@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownIcon, ArrowLeftRightIcon, LoaderIcon, MapIcon, NetworkIcon, RefreshCwIcon, RouteIcon, SearchIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowLeftRightIcon, LoaderIcon, MapIcon, NetworkIcon, PlusIcon, RefreshCwIcon, RouteIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -37,20 +37,28 @@ export function Problem({ text, onRetry }: { text: string; onRetry?: () => void 
 }
 
 /**
- * A repo with no code map yet: one owner action registers it (POST /api/codemap/enable, which adds
- * the project the way "+ Dự án" does) and starts `graphify update` and `trail build` in the background.
+ * A repo HQ shows no code map for yet: one owner action (POST /api/codemap/enable) registers it the
+ * way "+ Dự án" does. `existing`: the repo already has a trail index or a graph on disk, so the tap
+ * only registers it (rebuilding stays the separate "Cập nhật graph" / "Index ngay"); false: it also
+ * starts `graphify update` and `trail build` in the background; null: still checking the disk.
  */
-export function EnablePrompt({ name, root, busy, onEnable }: { name: string; root: string | null; busy: boolean; onEnable: () => void }) {
+export function EnablePrompt({ name, root, existing, busy, onEnable }: { name: string; root: string | null; existing: boolean | null; busy: boolean; onEnable: () => void }) {
+  const title = existing ? `${name} đã có bản đồ code trên máy` : existing === false ? `${name} chưa có bản đồ code` : `${name} chưa có trong HQ`;
+  const body = existing
+    ? "Thêm vào HQ để xem. HQ chỉ đăng ký repo, không chạy lại graphify hay trail; muốn làm mới thì bấm Cập nhật graph sau khi thêm."
+    : existing === false
+      ? "HQ sẽ thêm repo vào danh sách dự án, rồi chạy graphify và trail trên máy này để đọc cấu trúc code (không gọi model). Repo lớn có thể mất vài phút; tab này hiện tiến độ."
+      : "Đang xem repo này đã có bản đồ code trên máy chưa…";
   return (
     <section aria-labelledby="codemap-enable" className="space-y-3 rounded-lg border bg-muted/30 px-4 py-4">
       <div className="flex items-start gap-3">
         <MapIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 space-y-1">
           <h3 id="codemap-enable" className="text-sm font-semibold text-balance">
-            {name} chưa có bản đồ code
+            {title}
           </h3>
-          <p className="max-w-prose text-sm text-pretty text-muted-foreground">
-            HQ sẽ thêm repo vào danh sách dự án, rồi chạy graphify và trail trên máy này để đọc cấu trúc code (không gọi model). Repo lớn có thể mất vài phút; tab này hiện tiến độ.
+          <p className="max-w-prose text-sm text-pretty text-muted-foreground" aria-live="polite">
+            {body}
           </p>
           {root && (
             <code className="block truncate font-mono text-[11px] text-muted-foreground" title={root}>
@@ -59,9 +67,9 @@ export function EnablePrompt({ name, root, busy, onEnable }: { name: string; roo
           )}
         </div>
       </div>
-      <Button type="button" onClick={onEnable} disabled={busy} className="w-full sm:w-auto max-sm:h-11">
-        {busy ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <NetworkIcon />}
-        {busy ? "Đang tạo…" : "Tạo bản đồ code cho repo này"}
+      <Button type="button" onClick={onEnable} disabled={busy || existing === null} className="w-full sm:w-auto max-sm:h-11">
+        {busy ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : existing ? <PlusIcon /> : <NetworkIcon />}
+        {existing ? (busy ? "Đang thêm…" : "Thêm vào HQ") : busy ? "Đang tạo…" : "Tạo bản đồ code cho repo này"}
       </Button>
     </section>
   );
