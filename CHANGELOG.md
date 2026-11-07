@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- Quan sát phòng đọc chữ "Không tiến triển" và nhãn "việc nền" từ cùng hằng số mà `deriveFloor` dùng, nên đổi câu chữ ở tab Văn phòng không còn làm observer nhầm phòng đứng thành phòng lỗi API. Test dựng caption bằng chính `deriveFloor`.
+
 ## [0.136.0] — 2026-11-07
 
 ### Added

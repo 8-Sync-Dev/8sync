@@ -3,7 +3,7 @@
 // signal it climbs a ladder: `note` (shown on the Máy tab) → `nudge` (one short line to that room)
 // → `page` (to the Canh máy room, which the owner reads), one step per `cooldownMin`, back to zero
 // as soon as the signal clears. This file is pure; machine-watch.ts delivers what it decides.
-import type { FloorRow } from "../floor";
+import { BG_LABEL, STALL_QUIET as QUIET, type FloorRow } from "../floor";
 
 export type Signal = "stalled" | "looping" | "waiting" | "error";
 export type Level = "note" | "nudge" | "page";
@@ -42,9 +42,6 @@ export type ObserveAction = { room: string; title: string; signal: Signal; level
 export type ObserveScope = { skip: readonly string[]; watchRoom: string | null };
 
 const WORKING = new Set<FloorRow["state"]>(["typing", "running", "reading"]);
-/** deriveFloor's caption for a quiet room with open work; any other "stalled" caption is an API error / usage limit. */
-const QUIET = "Không tiến triển";
-const BG_LABEL = "việc nền";
 
 /**
  * The signals a room shows this tick (pure), with a reason in Vietnamese. `loop`: how long it has
