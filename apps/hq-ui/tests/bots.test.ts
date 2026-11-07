@@ -10,6 +10,7 @@ import {
   filterBots,
   hashId,
   messageSender,
+  openBotKey,
   promptSender,
   recentFiles,
   stepKey,
@@ -242,5 +243,56 @@ describe("Chief of Staff in Bots", () => {
     const { ApiError } = await import("@/components/hq/use-hq");
     expect(chiefError(new ApiError("Chief of Staff đang tắt: chọn phòng và bật ở tab Máy", 409))).toContain("đang tắt");
     expect(chiefError(new ApiError("session-waiting", 409))).toContain("Chief đang chờ anh trả lời");
+  });
+});
+
+describe("openBotKey (owner 2026-11-07: the open chat never switches to another bot)", () => {
+  // BotsView's rule over successive polls: the open key is held between renders.
+  const view = (picked: string | null, auto = true) => {
+    let held: string | null = null;
+    return (next: BotRoom[]) => {
+      const bots = botList(next, [], []);
+      const keys = bots.map((b) => b.key);
+      const open = openBotKey(keys, keys[0] ?? null, picked, held, auto);
+      if (open != null) held = open;
+      return { open, order: keys };
+    };
+  };
+  const a = room({ key: "a", status: "running", last_active: 300 });
+  const b = room({ key: "b", last_active: 200 });
+  const c = room({ key: "c", last_active: 100 });
+
+  it("keeps the picked bot when the list re-sorts, a room climbs or a new one appears on top", () => {
+    const poll = view("c");
+    expect(poll([a, b, c]).open).toBe("c");
+    expect(poll([a, { ...b, status: "needs_input", waiting: "permission" }, c])).toEqual({ open: "c", order: ["b", "a", "c"] });
+    expect(poll([a, b, room({ key: "new", status: "needs_input", waiting: "question" }), c])).toMatchObject({ open: "c", order: ["new", "a", "b", "c"] });
+    // The open bot itself moves to the top: still the same bot.
+    expect(poll([a, b, { ...c, status: "needs_input", waiting: "question" }])).toEqual({ open: "c", order: ["c", "a", "b"] });
+  });
+
+  it("keeps the bot a wide screen opened by itself while another one climbs above it", () => {
+    const poll = view(null);
+    expect(poll([a, b, c]).open).toBe("a");
+    // b gets busy and newer: it goes first, the open thread stays on a.
+    expect(poll([a, { ...b, status: "running", last_active: 900 }, c])).toEqual({ open: "a", order: ["b", "a", "c"] });
+    expect(poll([room({ key: "z", status: "needs_input", waiting: "q" }), a, b, c]).open).toBe("a");
+  });
+
+  it("lets go only when the open room disappears, then opens the top one (a phone goes back to the list)", () => {
+    const wide = view("b");
+    expect(wide([a, b, c]).open).toBe("b");
+    expect(wide([a, c]).open).toBe("a");
+    const phone = view("b", false);
+    expect(phone([c, b, a]).open).toBe("b");
+    expect(phone([a, c]).open).toBe(null);
+    expect(view(null, false)([a, b]).open).toBe(null);
+  });
+
+  it("keeps the held bot through an empty poll (rooms not loaded yet)", () => {
+    const poll = view(null);
+    expect(poll([a, b, c]).open).toBe("a");
+    expect(poll([]).open).toBe(null);
+    expect(poll([{ ...b, status: "needs_input", waiting: "q" }, a, c]).open).toBe("a");
   });
 });

@@ -5,6 +5,7 @@ import { useRef, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useFlip } from "@/hooks/use-flip";
 import { BOT_STATUS_LABEL, botCounts, stepKey, type Bot, type BotFilter } from "@/lib/bots";
 import { agoShort } from "@/lib/now";
 import { cn } from "@/lib/utils";
@@ -14,7 +15,9 @@ const FILTERS: BotFilter[] = ["all", "needs", "working", "idle", "error"];
 
 /**
  * The bot list: search, a status filter with counts, then one row per bot in attention order. ↑/↓ move
- * between rows, Enter opens one (a row is a button).
+ * between rows, Enter opens one (a row is a button). A bot that climbs (it got busy or asks the owner)
+ * slides up to its place and the rows it passes shift down, Messenger style (hooks/use-flip.ts); the
+ * scroll position holds for a reader further down.
  */
 export function BotList({
   all,
@@ -50,6 +53,8 @@ export function BotList({
   chief?: string | null;
 }) {
   const list = useRef<HTMLUListElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  useFlip(list, scroller);
   const counts = botCounts(all);
   const keys = bots.map((b) => b.key);
 
@@ -119,7 +124,7 @@ export function BotList({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} className="relative min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]">
         {loading ? (
           <ListSkeleton />
         ) : error && !all.length ? (
@@ -158,7 +163,7 @@ export function BotList({
         ) : (
           <ul ref={list} onKeyDown={onKey} aria-label="Bot" className="py-1">
             {bots.map((b) => (
-              <li key={b.key}>
+              <li key={b.key} data-flip={b.key} className="relative bg-background">
                 <BotRow b={b} now={now} current={b.key === selected} chief={b.key === chief} onOpen={onOpen} />
               </li>
             ))}

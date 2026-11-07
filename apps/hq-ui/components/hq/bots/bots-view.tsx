@@ -4,7 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState, useSyncExt
 import { useDefaultLayout } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { botList, filterBots, pinChief, threadHint, type BotFilter } from "@/lib/bots";
+import { botList, filterBots, openBotKey, pinChief, threadHint, type BotFilter } from "@/lib/bots";
 import type { ChiefView } from "@/lib/server/chief";
 import type { OfficeState } from "../use-office";
 import type { Hq } from "../use-hq";
@@ -27,7 +27,8 @@ const CHIEF_POLL_MS = 30_000;
 /**
  * Bots: every live room as a teammate to message. A phone shows the list, then one thread full screen
  * with a back arrow; wider screens show the list and the open thread side by side (resizable), the
- * first bot open when none is picked.
+ * first bot open when none is picked. The open thread follows its room key, never the list order: a
+ * room that climbs the list (Messenger style, components/hq/bots/bot-list.tsx) leaves it where it is.
  */
 export function BotsView({
   hq,
@@ -59,9 +60,16 @@ export function BotsView({
   const shown = useMemo(() => filterBots(all, q, filter), [all, q, filter]);
   const layout = useDefaultLayout({ id: "hq-bots-columns", panelIds: ["list", "thread"] });
 
-  // A bot whose room ended is gone; a wider screen then opens the first one left.
-  const picked = all.find((b) => b.key === selected) ?? null;
-  const bot = picked ?? (mobile ? null : (shown[0] ?? all[0] ?? null));
+  // The open bot by key (lib/bots openBotKey): the pick, else the one this view opened by itself, which
+  // keeps the pane while other rooms re-sort above it. A bot whose room ended is gone; a wider screen then
+  // opens the top one left.
+  const live = useMemo(() => all.map((b) => b.key), [all]);
+  const [held, setHeld] = useState<string | null>(null);
+  const openKey = openBotKey(live, shown[0]?.key ?? all[0]?.key ?? null, selected, held, !mobile);
+  // Adjusting state while rendering (react.dev "storing information from previous renders"): no extra
+  // commit with the wrong bot. A null (rooms not loaded yet, a phone) keeps the last one held.
+  if (openKey != null && openKey !== held) setHeld(openKey);
+  const bot = all.find((b) => b.key === openKey) ?? null;
 
   const open = useCallback(
     (key: string) => {
