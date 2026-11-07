@@ -55,38 +55,58 @@ const clean = (s: string, newlines = false) => !(newlines ? /[\0-\x09\x0b-\x1f\x
 
 /** A template from a file (or anything else), checked field by field; null when any field is wrong. Never `builtIn`. */
 export function parseTemplate(raw: unknown): BotTemplate | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = checkTemplate(raw);
+  return r.ok ? r.template : null;
+}
+
+/** parseTemplate with the reason (Vietnamese, one field) when a field is wrong: the editor and the API show it. */
+export function checkTemplate(raw: unknown): { ok: true; template: BotTemplate } | { ok: false; error: string } {
+  const no = (error: string) => ({ ok: false as const, error });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return no("Mẫu phải là một object JSON.");
   const t = raw as Record<string, unknown>;
   const L = TEMPLATE_LIMITS;
-  if (typeof t.id !== "string" || !ID_RE.test(t.id)) return null;
-  if (!ok(t.name, L.name) || !clean(t.name) || !ok(t.emoji, L.emoji) || !clean(t.emoji) || !ok(t.purpose, L.purpose) || !clean(t.purpose)) return null;
-  if (!(TEMPLATE_COLORS as readonly unknown[]).includes(t.color)) return null;
-  if (t.engine !== "claude" && t.engine !== "omp") return null;
-  if (t.role !== undefined && (t.engine === "omp" || !isRoleId(t.role))) return null;
-  if (t.model !== undefined && (t.engine === "claude" ? !isModelId(t.model) : typeof t.model !== "string" || t.model.length > L.model || !SELECTOR_RE.test(t.model))) return null;
-  if (t.thinking !== undefined && (t.engine === "claude" ? !isClaudeEffort(t.thinking) : !isThinking(t.thinking) || t.model === undefined)) return null;
+  if (typeof t.id !== "string" || !ID_RE.test(t.id)) return no("Mã mẫu: chữ thường, số, gạch nối, tối đa 32 ký tự.");
+  if (!ok(t.name, L.name) || !clean(t.name)) return no(`Tên: 1 đến ${L.name} ký tự, một dòng.`);
+  if (!ok(t.emoji, L.emoji) || !clean(t.emoji)) return no("Emoji: chọn một emoji.");
+  if (!ok(t.purpose, L.purpose) || !clean(t.purpose)) return no(`Mục đích: 1 đến ${L.purpose} ký tự, một dòng.`);
+  if (!(TEMPLATE_COLORS as readonly unknown[]).includes(t.color)) return no("Màu: chọn một màu trong danh sách.");
+  if (t.engine !== "claude" && t.engine !== "omp") return no("Engine: claude hoặc omp.");
+  if (t.role !== undefined && (t.engine === "omp" || !isRoleId(t.role))) return no("Vai trò: chỉ Claude Code có, chọn trong danh sách.");
+  if (t.model !== undefined && (t.engine === "claude" ? !isModelId(t.model) : typeof t.model !== "string" || t.model.length > L.model || !SELECTOR_RE.test(t.model))) {
+    return no(t.engine === "claude" ? "Model: chọn một model Claude trong danh sách." : "Model omp: dạng <provider>/<model>.");
+  }
+  if (t.thinking !== undefined && (t.engine === "claude" ? !isClaudeEffort(t.thinking) : !isThinking(t.thinking) || t.model === undefined)) {
+    return no(t.engine === "omp" && t.model === undefined ? "Mức suy nghĩ của omp cần một model." : "Mức suy nghĩ không hợp lệ.");
+  }
   const instructions = t.instructions ?? "";
-  if (typeof instructions !== "string" || instructions.length > L.instructions || !clean(instructions, true)) return null;
-  if (instructions.split("\n").length > L.instructionLines) return null;
+  if (typeof instructions !== "string" || instructions.length > L.instructions || !clean(instructions, true)) return no(`Lời dặn: tối đa ${L.instructions} ký tự.`);
+  if (instructions.split("\n").length > L.instructionLines) return no(`Lời dặn: tối đa ${L.instructionLines} dòng.`);
   const skills = t.skills ?? [];
-  if (!Array.isArray(skills) || skills.length > L.skills || !skills.every((s) => typeof s === "string" && s.length <= L.skill && SKILL_RE.test(s))) return null;
-  if (!optional(t.folderHint, L.folderHint) || (typeof t.folderHint === "string" && t.folderHint !== "" && !HINT_RE.test(t.folderHint))) return null;
-  if (!optional(t.firstMessage, L.firstMessage) || (typeof t.firstMessage === "string" && !clean(t.firstMessage))) return null;
+  if (!Array.isArray(skills) || skills.length > L.skills || !skills.every((s) => typeof s === "string" && s.length <= L.skill && SKILL_RE.test(s))) {
+    return no(`Skill: tối đa ${L.skills} tên, chữ thường, số và . _ : -`);
+  }
+  if (!optional(t.folderHint, L.folderHint) || (typeof t.folderHint === "string" && t.folderHint !== "" && !HINT_RE.test(t.folderHint))) {
+    return no("Thư mục hay làm: đường dẫn tương đối, không có '..'.");
+  }
+  if (!optional(t.firstMessage, L.firstMessage) || (typeof t.firstMessage === "string" && !clean(t.firstMessage))) return no(`Tin nhắn đầu: một dòng, tối đa ${L.firstMessage} ký tự.`);
   return {
-    id: t.id,
-    name: t.name.trim(),
-    emoji: t.emoji.trim(),
-    color: t.color as TemplateColor,
-    purpose: t.purpose.trim(),
-    engine: t.engine,
-    ...(t.role !== undefined ? { role: t.role as RoleId } : {}),
-    ...(t.model !== undefined ? { model: t.model as string } : {}),
-    ...(t.thinking !== undefined ? { thinking: t.thinking as string } : {}),
-    instructions: instructions.trim(),
-    skills: [...new Set(skills as string[])],
-    ...(typeof t.folderHint === "string" && t.folderHint ? { folderHint: t.folderHint.trim() } : {}),
-    ...(typeof t.firstMessage === "string" && t.firstMessage ? { firstMessage: t.firstMessage.trim() } : {}),
-    builtIn: false,
+    ok: true,
+    template: {
+      id: t.id,
+      name: t.name.trim(),
+      emoji: t.emoji.trim(),
+      color: t.color as TemplateColor,
+      purpose: t.purpose.trim(),
+      engine: t.engine,
+      ...(t.role !== undefined ? { role: t.role as RoleId } : {}),
+      ...(t.model !== undefined ? { model: t.model as string } : {}),
+      ...(t.thinking !== undefined ? { thinking: t.thinking as string } : {}),
+      instructions: instructions.trim(),
+      skills: [...new Set(skills as string[])],
+      ...(typeof t.folderHint === "string" && t.folderHint ? { folderHint: t.folderHint.trim() } : {}),
+      ...(typeof t.firstMessage === "string" && t.firstMessage ? { firstMessage: t.firstMessage.trim() } : {}),
+      builtIn: false,
+    },
   };
 }
 
@@ -147,9 +167,8 @@ export const BUILT_IN_TEMPLATES: readonly BotTemplate[] = (
       color: "violet",
       purpose: "Báo cáo có trích nguồn",
       engine: "omp",
-      instructions: "Mỗi nhận định phải có URL nguồn. Ghi 'chưa kiểm' khi chưa đọc được nguồn chính thức.\nGhi báo cáo vào su-code/research/. Không sửa code.",
+      instructions: "Mỗi nhận định phải có URL nguồn. Ghi 'chưa kiểm' khi chưa đọc được nguồn chính thức.\nGhi báo cáo thành file Markdown trong thư mục research/ của dự án. Không sửa code.",
       skills: ["deep-research-web", "last30days"],
-      folderHint: "su-code",
       firstMessage: "Nghiên cứu giúp anh: …",
     },
     {
@@ -164,89 +183,11 @@ export const BUILT_IN_TEMPLATES: readonly BotTemplate[] = (
       skills: ["full-flow", "feature"],
       firstMessage: "Lên kế hoạch cho: …",
     },
-    // 8 Sync.
-    {
-      id: "cpa-full",
-      name: "Content full ngày",
-      emoji: "🎬",
-      color: "rose",
-      purpose: "Làm trọn bộ nội dung hằng ngày qua app Content AI",
-      engine: "omp",
-      instructions:
-        "Làm bộ nội dung hôm nay qua app (bài học, infographic trend, ASMR, MKT). UAT file xuất (ffprobe, meta.json).\nLedger chỉ được đổi ordered → drafted → checked, không ghi đè approved/published/rejected. Theme sáng.\nKhông đăng khi owner chưa duyệt. Báo bằng tiếng Việt.",
-      skills: ["cpa-ops-cli", "cpa-app-attach", "brand-8sync"],
-      folderHint: "tools/content-post-agency",
-      firstMessage: "Làm bộ nội dung hôm nay",
-    },
-    {
-      id: "research-mkt",
-      name: "Research marketing",
-      emoji: "📈",
-      color: "orange",
-      purpose: "Tìm xu hướng và đối thủ, đề xuất góc nội dung cho 8 Sync",
-      engine: "omp",
-      instructions:
-        "Mỗi nhận định phải có URL. Số liệu traction chỉ lấy từ Vercel/Cloudflare Web Analytics và ghi rõ nguồn.\nKhông bịa khách hàng hay đối tác. Không đụng dữ liệu CRM/AcoLeads.\nKết quả là 3 góc nội dung kèm hook.",
-      skills: ["market-research", "deep-research-web", "last30days", "brand-voice"],
-      folderHint: "su-code",
-      firstMessage: "Tuần này dev Việt đang quan tâm gì?",
-    },
-    {
-      id: "course-writer",
-      name: "Viết khóa học",
-      emoji: "🎓",
-      color: "emerald",
-      purpose: "Soạn bài và bài tập cho 8 Sync Courses",
-      engine: "claude",
-      role: "fullstack",
-      instructions: "Tinh thần 'We teach you to learn, not to copy': mỗi bài có mục tiêu, giải thích, bài tập tự làm và gợi ý, không đưa sẵn lời giải.\nThuật ngữ giữ tiếng Anh.",
-      skills: ["article-writing", "brand-voice"],
-      folderHint: "8sync/platform",
-      firstMessage: "Soạn bài: …",
-    },
-    {
-      id: "news-curator",
-      name: "Biên tập tin",
-      emoji: "📰",
-      color: "cyan",
-      purpose: "Chọn và tóm tắt tin AI/dev cho 8 Sync News",
-      engine: "omp",
-      instructions: "Chọn ≤5 tin trong 24–48 giờ từ nguồn gốc, mỗi tin 3 dòng kèm link. Ghi 'chưa kiểm' khi chưa đọc nguồn gốc.\nKhông đăng, chỉ gửi bản nháp.",
-      skills: ["last30days", "deep-research-web", "article-writing"],
-      folderHint: "8sync/platform",
-      firstMessage: "Tin AI/dev đáng chú ý hôm nay",
-    },
-    {
-      id: "zus-release",
-      name: "Phát hành ZUS",
-      emoji: "🚀",
-      color: "fuchsia",
-      purpose: "Chuẩn bị bản phát hành ZUS: gate, changelog, build Tauri",
-      engine: "claude",
-      role: "fullstack",
-      instructions: "ZUS là local-first: không đề xuất đưa dữ liệu user lên server. Chạy gate/test trước khi kết luận.\nCập nhật CHANGELOG. Không push/merge/release khi chưa có lệnh của owner.",
-      skills: ["tauri-v2", "encore-deploy", "verification-loop"],
-      folderHint: "zus/ide",
-      firstMessage: "Kiểm xem đã sẵn sàng phát hành chưa",
-    },
-    {
-      id: "tia-release",
-      name: "Phát hành TIA",
-      emoji: "🧠",
-      color: "teal",
-      purpose: "Kiểm và phát hành TIA (decision API)",
-      engine: "claude",
-      role: "fullstack",
-      instructions: "Chạy encore test từ thư mục service, kiểm /healthz sau deploy. Không in secret.\nRelease chỉ chạy khi owner ra lệnh.",
-      skills: ["encore-deploy", "verification-loop"],
-      folderHint: "ml/tia-platform",
-      firstMessage: "Kiểm TIA trước khi phát hành",
-    },
   ] satisfies Omit<BotTemplate, "builtIn">[]
 ).map((t) => ({ ...t, builtIn: true }));
 
 /** The three cards the empty Bots list suggests. */
-export const SUGGESTED_TEMPLATE_IDS = ["fullstack", "research-mkt", "cpa-full"] as const;
+export const SUGGESTED_TEMPLATE_IDS = ["fullstack", "researcher", "reviewer"] as const;
 
 // ── folders ──────────────────────────────────────────────────────────────────
 

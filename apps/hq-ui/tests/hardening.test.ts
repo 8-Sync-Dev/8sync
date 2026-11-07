@@ -22,6 +22,7 @@ import * as brief from "@/app/api/brief/route";
 import * as chief from "@/app/api/chief/route";
 import * as chiefAsk from "@/app/api/chief/ask/route";
 import * as templates from "@/app/api/templates/route";
+import * as templatesAi from "@/app/api/templates/ai/route";
 import * as digest from "@/app/api/digest/route";
 import * as facts from "@/app/api/facts/route";
 import * as turns from "@/app/api/turns/route";
@@ -57,6 +58,7 @@ const ROUTES: { path: string; mod: Record<string, unknown> }[] = [
   { path: "/api/sessions/hq-x/stop", mod: stop },
   { path: "/api/stream", mod: stream },
   { path: "/api/templates", mod: templates },
+  { path: "/api/templates/ai", mod: templatesAi },
   { path: "/api/turns?room=hq-x", mod: turns },
 ];
 const METHODS = ["GET", "POST", "DELETE", "PUT", "PATCH"];

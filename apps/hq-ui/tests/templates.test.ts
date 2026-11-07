@@ -29,21 +29,8 @@ const valid = { id: "my-bot", name: "Bot của tôi", emoji: "🤖", color: "sky
 const tpl = (id: string): BotTemplate => BUILT_IN_TEMPLATES.find((t) => t.id === id)!;
 
 describe("built-in templates", () => {
-  it("are the 12 of the research doc, each one valid and unique", () => {
-    expect(BUILT_IN_TEMPLATES.map((t) => t.id)).toEqual([
-      "blank",
-      "fullstack",
-      "reviewer",
-      "tester",
-      "researcher",
-      "planner",
-      "cpa-full",
-      "research-mkt",
-      "course-writer",
-      "news-curator",
-      "zus-release",
-      "tia-release",
-    ]);
+  it("are the 6 generic ones, each one valid and unique", () => {
+    expect(BUILT_IN_TEMPLATES.map((t) => t.id)).toEqual(["blank", "fullstack", "reviewer", "tester", "researcher", "planner"]);
     for (const t of BUILT_IN_TEMPLATES) {
       expect(t.builtIn).toBe(true);
       // A built-in one passes the same check a file does (only `builtIn` differs).
@@ -51,9 +38,14 @@ describe("built-in templates", () => {
     }
     for (const id of SUGGESTED_TEMPLATE_IDS) expect(tpl(id)).toBeDefined();
   });
-  it("never ask to touch client or CRM data", () => {
+  it("never ask for a secret", () => {
     for (const t of BUILT_IN_TEMPLATES) expect(t.instructions).not.toMatch(/token|password|api key/i);
-    expect(tpl("research-mkt").instructions).toContain("Không đụng dữ liệu CRM/AcoLeads");
+  });
+  it("are brand-free: the public binary ships no product, company or owner folder (those are the owner's own files)", () => {
+    const text = JSON.stringify(BUILT_IN_TEMPLATES);
+    expect(text).not.toMatch(/8 ?sync|acoleads|su-code|content-post-agency|cpa-/i);
+    expect(text).not.toMatch(/\b(ZUS|TIA)\b/);
+    for (const t of BUILT_IN_TEMPLATES) expect(t.folderHint, t.id).toBeUndefined();
   });
 });
 
