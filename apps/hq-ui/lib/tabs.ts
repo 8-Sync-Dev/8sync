@@ -23,8 +23,9 @@ export const MORE_LABEL: Record<MoreTab, string> = {
   report: "Báo cáo",
   usage: "Hạn mức",
   may: "Máy",
-  sessions: "Sessions",
-  activity: "Activity",
+  // Vietnamese like the rest of the menu (UI audit 2026-11-07: "Sessions"/"Activity" were the only English).
+  sessions: "Quản lý phiên",
+  activity: "Hoạt động",
 };
 
 export const isMore = (t: string): t is MoreTab => (MORE_TABS as readonly string[]).includes(t);

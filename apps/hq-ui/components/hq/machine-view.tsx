@@ -992,7 +992,7 @@ function WatchPanel({ api, active }: { api: Hq["api"]; active: boolean }) {
     try {
       await api("/api/machine/watch/urgent", { method: "POST" });
       const r = v?.rooms.find((x) => x.id === v.cfg.room);
-      toast.success(`Đã gửi urgent cho ${r ? roomLabel(r) : "phòng canh máy"}`, { description: "Phòng xem kĩ từng nghi vấn rồi mới kill, xong báo lại." });
+      toast.success(`Đã gửi khẩn cho ${r ? roomLabel(r) : "phòng canh máy"}`, { description: "Phòng xem kĩ từng nghi vấn rồi mới kill, xong báo lại." });
       w.reload();
     } catch (e) {
       toast.error("Chưa gửi được", { description: (e as Error).message });
@@ -1092,7 +1092,7 @@ function WatchPanel({ api, active }: { api: Hq["api"]; active: boolean }) {
               </Button>
               <Button size="sm" className={TOUCH} disabled={urgent || !cfg.room || roomGone} onClick={() => void sendNow()}>
                 {urgent ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <SendIcon />}
-                Gửi urgent ngay
+                Gửi khẩn ngay
               </Button>
             </div>
           </div>

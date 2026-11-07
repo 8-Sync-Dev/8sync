@@ -1,5 +1,6 @@
 "use client";
 
+import { loopStop } from "@/lib/labels";
 import { rootKey } from "@/lib/preview";
 import { repoOf } from "@/lib/sidebar";
 import { BarChart3Icon } from "lucide-react";
@@ -63,14 +64,15 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
             </dl>
 
             <div className="relative overflow-x-auto rounded-lg border">
-              <table className="w-full min-w-[46rem] text-sm">
+              {/* Phone: Model is hidden (Văn phòng shows it) so the room's numbers fit with less sideways scroll. */}
+              <table className="w-full min-w-[36rem] text-sm sm:min-w-[46rem]">
                 <caption className="sr-only">Số liệu theo phòng</caption>
                 <thead className="border-b bg-muted/50 text-xs text-muted-foreground">
                   <tr>
                     {/* Sticky: on a phone the numbers scroll sideways under the room names (opaque mixes of the same tints). */}
                     <th scope="col" className="sticky left-0 bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))] px-3 py-2 text-left font-medium">Phòng</th>
                     <th scope="col" className="px-3 py-2 text-left font-medium">Dự án · nhánh</th>
-                    <th scope="col" className="px-3 py-2 text-left font-medium">Model</th>
+                    <th scope="col" className="px-3 py-2 text-left font-medium max-sm:hidden">Model</th>
                     <th scope="col" className="px-3 py-2 text-right font-medium">Context</th>
                     <th scope="col" className="px-3 py-2 text-right font-medium">Chi phí</th>
                     <th scope="col" className="px-3 py-2 text-right font-medium">Thời gian</th>
@@ -95,7 +97,7 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
                         <td className="max-w-48 truncate px-3 py-2 text-muted-foreground" title={r.project?.root ?? r.cwd ?? undefined}>
                           {r.project ? `${r.project.name}${r.project.branch ? ` · ${r.project.branch}` : ""}` : (r.cwd ?? "?")}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.model?.replace(/^claude-/, "") ?? "chưa đo"}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-muted-foreground max-sm:hidden">{r.model?.replace(/^claude-/, "") ?? "chưa đo"}</td>
                         <Num v={fmtTokens(r.tokens)} />
                         <Num v={fmtUsd(r.usage?.cost_usd)} />
                         <Num v={fmtDuration(r.usage?.duration_ms)} />
@@ -119,7 +121,7 @@ export function ReportView({ data: { office, error, retry }, onOpen, repo = null
                         {l.max_iter != null && `/${l.max_iter}`}
                       </span>
                       <span className={cn("shrink-0 text-xs", l.stopped ? "text-muted-foreground" : "font-medium text-st-running")}>
-                        {l.stopped ? `dừng: ${l.stopped}` : "đang chạy"}
+                        {l.stopped ? loopStop(l.stopped) : "đang chạy"}
                       </span>
                     </li>
                   ))}

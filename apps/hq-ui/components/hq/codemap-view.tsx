@@ -134,14 +134,15 @@ export function CodemapView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2.5 sm:px-6">
-        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-          <MapIcon aria-hidden className="size-3.5 text-muted-foreground" />
-          Bản đồ code
-          <span className="text-xs font-normal text-muted-foreground max-sm:hidden">trail đọc cấu trúc repo, không gọi model</span>
+        {/* The app header already says "Bản đồ code": here only what it is (screen readers keep the name). */}
+        <h2 className="flex items-center gap-1.5 text-xs text-muted-foreground max-sm:sr-only">
+          <MapIcon aria-hidden className="size-3.5" />
+          <span className="sr-only">Bản đồ code:</span>
+          trail đọc cấu trúc repo, không gọi model
         </h2>
         <div className="ml-auto flex items-center gap-2">
           <Select value={id != null ? String(id) : ""} onValueChange={(v) => void choose(v)} disabled={adding != null}>
-            <SelectTrigger size="sm" className="max-w-64 text-xs" aria-label="Dự án">
+            <SelectTrigger size="sm" className="max-w-64 text-xs max-sm:h-10" aria-label="Dự án">
               <SelectValue placeholder={adding ? "Đang thêm…" : "Chọn dự án"} />
             </SelectTrigger>
             <SelectContent>

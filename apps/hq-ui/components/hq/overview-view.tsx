@@ -95,7 +95,7 @@ export function OverviewView({
           <OverviewSkeleton />
         ) : groups.length === 0 ? (
           <EmptyState icon={<LayoutDashboardIcon />} title="Chưa có phòng nào đang chạy">
-            Mở một session (tab Sessions hoặc terminal): mỗi dự án có phòng chạy sẽ thành một khối ở đây, gồm phòng, ảnh preview và chat.
+            Mở một phiên (nút Phiên mới ở thanh bên, hoặc terminal): mỗi dự án có phòng chạy sẽ thành một khối ở đây, gồm phòng, ảnh preview và chat.
           </EmptyState>
         ) : (
           <>
@@ -185,14 +185,13 @@ function StateBoard({ sessions, now, onOpen }: { sessions: TreeSession[]; now: n
           const list = by[state];
           return (
             <div key={state} className="min-w-0 bg-card p-3">
-              <h3 className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              {/* An empty state is just its header and 0 (no "Không có." block): on a phone the four groups stack. */}
+              <h3 className={cn("flex items-center gap-2 text-xs font-medium text-muted-foreground", list.length > 0 && "mb-1.5")}>
                 <span aria-hidden className={cn("size-1.5 rounded-full", ink)} />
                 {TREE_WORD[state]}
-                <span className="ml-auto text-foreground tabular">{list.length}</span>
+                <span className={cn("ml-auto tabular", list.length > 0 && "text-foreground")}>{list.length}</span>
               </h3>
-              {list.length === 0 ? (
-                <p className="py-1 text-xs text-muted-foreground">Không có.</p>
-              ) : (
+              {list.length > 0 && (
                 <ul className="space-y-px">
                   {list.slice(0, BOARD_ROWS).map((s) => (
                     <li key={s.key}>

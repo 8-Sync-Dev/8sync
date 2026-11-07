@@ -31,6 +31,13 @@ export function targetLabel(s: Pick<Session, "label" | "name" | "session_id" | "
   return project && project.toLowerCase() !== name.toLowerCase() ? `${name} · ${project}` : name;
 }
 
+/** The label for a session name or id in messages ("omp-c1f506dd…" → "core · su-code"); null when HQ does not know it. */
+export function roomNameOf(sessions: Pick<Session, "label" | "name" | "session_id" | "cwd">[], id: string | null | undefined): string | null {
+  if (!id) return null;
+  const s = sessions.find((x) => x.name === id || x.session_id === id);
+  return s ? targetLabel(s) : null;
+}
+
 /**
  * Idle for over a day (or ended) collapses in the nav. started_at is the only
  * timestamp the API row carries, so it is the proxy for "last seen".
@@ -94,4 +101,21 @@ export function addressOf(s: Pick<Session, "tmux" | "name" | "session_id">): str
 /** Sessions the composer can message: every live session HQ can reach. Empty: show the start CTA. */
 export function messageTargets<T extends Pick<Session, "tmux" | "status" | "name" | "session_id">>(sessions: T[]): T[] {
   return sessions.filter((s) => s.status !== "ended" && deliveryOf(s) !== null);
+}
+
+// loop.json `stopped` (eccx-loop / `8sync ccc cancel`) in the owner's words: Vòng lặp and Báo cáo
+// showed the raw "dừng: done" / "dừng: no-change" (UI audit 2026-11-07).
+const LOOP_STOP: Record<string, string> = {
+  done: "xong",
+  "no-change": "dừng: không còn thay đổi",
+  stuck: "dừng: bị kẹt",
+  "max-iter": "dừng: hết lượt",
+  "max-min": "dừng: hết giờ",
+  cancelled: "đã huỷ",
+  corrupt: "dừng: loop.json hỏng",
+};
+
+/** "xong" / "dừng: hết lượt" / "dừng: <raw>" for a reason this table does not know yet. */
+export function loopStop(stopped: string): string {
+  return LOOP_STOP[stopped] ?? `dừng: ${stopped}`;
 }

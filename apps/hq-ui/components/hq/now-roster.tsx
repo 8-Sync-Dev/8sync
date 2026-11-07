@@ -37,9 +37,10 @@ function WorkingMark() {
 export function StateTag({ n }: { n: RoomNow }) {
   const Icon = n.state === "working" ? null : STATE_ICON[n.state];
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[13px] font-medium", STATE_INK[n.state])}>
+    // shrink-0: the three labels are short; on a phone the room name truncates instead of the state ("R…").
+    <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-[13px] font-medium", STATE_INK[n.state])}>
       {Icon ? <Icon aria-hidden className="size-3.5 shrink-0" /> : <WorkingMark />}
-      <span className="truncate">{NOW_LABEL[n.state]}</span>
+      <span>{NOW_LABEL[n.state]}</span>
     </span>
   );
 }
@@ -88,7 +89,8 @@ export function NowRoster({
                 <span className="flex min-w-0 items-center gap-1.5 md:order-none">
                   <RoleIcon role={n.role} className="size-3.5 text-muted-foreground" />
                   <span className="truncate text-sm font-semibold">{n.label}</span>
-                  {n.modelLabel && <span className="shrink-0 text-xs text-muted-foreground">{n.modelLabel}</span>}
+                  {/* Phone: the model repeats on every row and pushed the state off; the room card below shows it. */}
+                  {n.modelLabel && <span className="shrink-0 text-xs text-muted-foreground max-sm:hidden">{n.modelLabel}</span>}
                 </span>
               </span>
               <span className={cn("text-right text-xs text-muted-foreground tabular md:hidden", n.flagged && cn("font-medium", NEEDS_INK))}>

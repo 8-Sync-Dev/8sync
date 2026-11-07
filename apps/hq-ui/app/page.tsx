@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { GithubLogin } from "@/components/hq/github-login";
+import { LoginProbe } from "@/components/hq/login-probe";
 import { GuestApp } from "@/components/hq/guest-app";
 import { HqApp } from "@/components/hq/hq-app";
 import { getToken, readPublic } from "@/lib/server/auth";
@@ -59,6 +60,8 @@ export default async function Page() {
     <main className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
       {onPublic ? (
         <div className="flex flex-col items-center gap-5">
+          {/* Opened from another app, the Strict cookie was left out of this load: one same-site retry. */}
+          <LoginProbe />
           {!!readGithubConfig()?.allow.length && <GithubLogin />}
           <p>
             Chưa đăng nhập hoặc link đã hết hạn. Mở lại link <code className="font-mono">/api/login?k=…</code> mà{" "}
