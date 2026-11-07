@@ -61,7 +61,7 @@ export function SearchView({
             placeholder="Tìm bot, nhóm, phiên…"
             aria-label="Tìm bot, nhóm hoặc phiên"
             autoComplete="off"
-            className="h-11 pr-10 pl-9 text-base sm:text-sm"
+            className="h-11 pr-10 pl-9 text-base sm:text-sm [&::-webkit-search-cancel-button]:appearance-none"
           />
           {query && (
             <button
