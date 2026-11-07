@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.135.2] — 2026-11-07
+
+### Fixed
+- HQ › Máy › Tự cập nhật, phát hiện khi UAT thật v0.135.0 → v0.135.1 (HQ tự lên lúc 18:02, không ai gõ `8sync up`):
+  - Sau khi HQ khởi động lại thì mất dấu lần tự cài. Giờ lần chạy `8sync up` gần nhất được ghi vào `~/.config/8sync/hq/auto-update-last.json`, và khung hiện "tự cài 0.135.0 → 0.135.1 lúc …".
+  - Trước lượt kiểm đầu, khung hiện "8sync ?". Giờ HQ đọc bản binary ngay khi mở.
+  - Trong ~30 giây HQ đổi bản, khung báo sai là "chờ shell trong HQ đóng". Giờ báo đúng là đang đổi bản.
+
 ## [0.135.1] — 2026-11-07
 
 ### Changed
