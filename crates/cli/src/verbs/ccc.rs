@@ -188,7 +188,9 @@ pub fn run(a: Args) -> Result<()> {
                     ui::ok(&format!("skill library registered → {}", dir.display()));
                 }
             }
-            let res = install_kit(&env, rest.iter().any(|a| a == "--force"));
+            // The kit links ~/.omp/skills into Claude Code: bring those copies to this binary first
+            // (as `prepare` does on a version change). An older `8sync up` refreshes through here.
+            let res = deploy::install_bundled_global(&env).and_then(|()| install_kit(&env, rest.iter().any(|a| a == "--force")));
             refresh_ancestor_claude_md(&env, &root);
             res
         }
@@ -574,7 +576,7 @@ fn display_name(sessions_dir: &Path, name: &str, root: &Path) -> String {
     }
 }
 
-fn claude_dir(env: &Env) -> PathBuf {
+pub(crate) fn claude_dir(env: &Env) -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| env.home.join(".claude"))
 }
 

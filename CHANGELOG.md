@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- Skill hq-control: HQ nhận ra phòng omp đang gọi `hq.mjs`. `digest`, `fact`, `send` gửi thêm `EIGHTSYNC_ROOM_ID` và `PI_SESSION_FILE` (cả subagent omp), bên cạnh `CLAUDE_CODE_SESSION_ID`. `digest` không có id trong thư mục nhiều phòng (VD 8sync-startup: coding, mkt, game-studio) giờ tìm đúng phòng mình. Id không phòng nào mang, hai id chỉ hai phòng, thư mục có nhiều phòng mà không có id → `digest` 422, `fact`/`send` không gắn tên phòng; HQ không đoán theo thư mục khi đã có id. Phòng omp do 8sync mở bỏ `CLAUDE_CODE_SESSION_ID` thừa hưởng từ shell.
+- `8sync up`: sau khi tự cập nhật, binary MỚI làm mới skill bundled trong `~/.omp/skills` (rồi link vào `~/.claude/skills` nếu có), không phải chờ `8sync harness`. Chỉ ghi file khác bản mới; skill anh đã sửa được giữ nguyên và báo tên (xoá thư mục để nhận bản của 8sync). Không mạng, không đụng dự án nào, chạy lại không ghi gì. 8sync ghi hash file đã ghi ở `~/.omp/skills/.8sync-bundled.json`; `8sync setup`, `8sync harness`, `8sync ccc kit` đi cùng đường này (lần đầu chưa có file thì nhận bản đang có là của 8sync, như trước).
+
 ## [0.139.0] — 2026-11-07
 ### Added
 - HQ: giao diện mới xoay quanh Bot (kiểu Grok Bot). Thanh bên máy tính là danh sách bot: mặt, tên, vai trò, trạng thái (Đang làm · Chờ anh · Rảnh), chấm tin chưa xem; bot chờ anh lên đầu, nhóm theo dự án, ghim/ẩn lưu ở máy, "Bot ẩn" gập lại, Nhóm nằm dưới. Bot chính (phiên solo) đứng đầu với nhãn "Chính" và thấy thẻ "Trả lời từ B". Worktree, phiên con và "+N cũ hơn" không còn ở thanh bên mà nằm trong trang bot › Lịch sử phiên.
