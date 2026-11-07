@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Changed
+- Site get.8syncdev.com và README: video demo 42 giây (1920x1080, H.264+AAC, 6 cảnh) thay video HQ 13 giây; gỡ `hq-demo.mp4`/`hq-demo-poster.webp`.
+
+### Fixed
+- Inbox HQ: phòng omp chạy trong Orca (`omp --resume`, không có `EIGHTSYNC_ROOM_ID`) luôn nhận tin từ HQ, không cần bấm "Chuyển sang HQ": tra lại room id ở tick sau khi `8sync . ls` chưa trả lời, tra lại sau `/resume` sang phòng khác, bỏ poll treo quá 60 s (kết quả muộn bị bỏ, không giao trùng) và báo lỗi khi đổi model quá 20 s mà tin đi kèm vẫn được giao.
+
 ## [0.132.0] — 2026-11-07
 
 ### Added
