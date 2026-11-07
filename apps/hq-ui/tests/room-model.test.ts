@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { claudeCommands, effortsFor, findChoice, OMP_THINKING, ompControl, type ModelChoice } from "@/lib/room-model";
+import { claudeCommands, distinctNames, effortsFor, findChoice, OMP_THINKING, ompControl, type ModelChoice } from "@/lib/room-model";
 import { getToken } from "@/lib/server/auth";
 import { inboxFile } from "@/lib/server/inbox";
 import { modelStateFile, parseOmpModels, readRoomModel } from "@/lib/server/models";
@@ -148,5 +148,42 @@ describe("/api/models", () => {
   });
   it("is owner only", async () => {
     expect((await GET(req(`/api/models?session=${ROOM}`))).status).toBe(401);
+  });
+});
+
+describe("distinctNames: same-named models get told apart", () => {
+  const m = (selector: string, name: string): ModelChoice => ({ selector, provider: selector.slice(0, selector.indexOf("/")), name, thinking: [] });
+  const fixture = [
+    m("anthropic/claude-haiku-4-5", "Claude Haiku 4.5"),
+    m("8sync-api/claude-haiku-4-5", "Claude Haiku 4.5"),
+    m("anthropic/claude-opus-4-5", "Claude Opus 4.5"),
+    m("anthropic/claude-opus-4-5-20251101", "Claude Opus 4.5"),
+    m("anthropic/claude-sonnet-4-5", "Claude Sonnet 4.5"),
+    m("anthropic/claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
+    m("8sync-api/claude-sonnet-4-5", "Claude Sonnet 4.5"),
+    m("zai/glm-5.3", "GLM 5.3"),
+  ];
+
+  it("suffixes the provider, or the model id when the provider is shared; unique names unchanged", () => {
+    const out = distinctNames(fixture);
+    expect(out.map((x) => x.name)).toEqual([
+      "Claude Haiku 4.5 · anthropic",
+      "Claude Haiku 4.5 · 8sync-api",
+      "Claude Opus 4.5 · claude-opus-4-5",
+      "Claude Opus 4.5 · claude-opus-4-5-20251101",
+      "Claude Sonnet 4.5 · claude-sonnet-4-5",
+      "Claude Sonnet 4.5 · claude-sonnet-4-5-20250929",
+      "Claude Sonnet 4.5 · 8sync-api",
+      "GLM 5.3",
+    ]);
+    expect(new Set(out.map((x) => x.name)).size).toBe(fixture.length);
+    expect(out.map((x) => x.selector)).toEqual(fixture.map((x) => x.selector));
+    expect(out[7]).toBe(fixture[7]);
+  });
+
+  it("leaves a list without collisions as it is and is idempotent", () => {
+    const plain = [fixture[0]!, fixture[2]!, fixture[7]!];
+    expect(distinctNames(plain)).toEqual(plain);
+    expect(distinctNames(distinctNames(fixture))).toEqual(distinctNames(fixture));
   });
 });

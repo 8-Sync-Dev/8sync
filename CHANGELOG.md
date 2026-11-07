@@ -7,6 +7,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - HQ › Bản đồ code (UAT 0.140.0): "Tìm đường từ đây" trên thẻ Giải thích điền ô "Điểm đầu" bằng tên đọc được (`showToast()`) thay cho id nội bộ của graphify (`su_code_skills_…_showtoast`). Khi tên có thể trùng nhiều node (thẻ mở từ một lựa chọn trong danh sách "khớp N chỗ", hay câu hỏi khác tên node), HQ vẫn gửi id cho graphify ở dưới; chọn một mục trong danh sách trùng cũng giữ tên trong ô (điểm đầu hay điểm cuối). Gõ lại ô thì bỏ id. Thông báo "Không có đường…" cũng ghi tên thay cho id.
+- HQ › menu model ("Bot mới" và chip model ở ô chat): model trùng tên (cùng model ở hai provider, hoặc id có ngày) hiện thêm "· <provider>", trùng cả provider thì thêm "· <id model>", để phân biệt được. Tên không trùng giữ nguyên.
+- HQ › ô chat trên điện thoại: nút X bỏ file đính kèm (trên chip file, trước 32×32 px, và góc ảnh thu nhỏ, trước 28 px) có vùng bấm 44×44 px ở màn ≤768 px; hình nút và máy tính giữ nguyên.
 
 ## [0.140.0] — 2026-11-08
 
