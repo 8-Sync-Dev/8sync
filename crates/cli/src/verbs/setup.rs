@@ -682,7 +682,7 @@ fn install_trail() -> Result<()> {
 /// 49/50 callers of `open()` where trail found 0; cold build 18.7 s / 490 MB at 4 workers).
 const GRAPHIFY_PKG: &str = "graphifyy==0.9.102";
 
-/// Best-effort, like trail: the fallback code graph for what trail misses (callers of a common
+/// Best-effort, like trail: the code graph STEP 0 routes callers/impact/path to (callers of a common
 /// name, `graphify path A B`). Needs `uv` (Python tool installer); without it the step only says
 /// how to get it, since STEP 0 still works with trail alone.
 fn install_graphify() -> Result<()> {
