@@ -167,7 +167,7 @@ export type Restarted = { ok: true; app: string; freedMb: number; relaunched: bo
 /** `8sync` through the argv-only runner (the binary that started this HQ). */
 export type Run8 = (args: string[], timeoutMs: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
 
-const run8: Run8 = (args, timeoutMs) => runProc("8sync", args, timeoutMs);
+export const run8: Run8 = (args, timeoutMs) => runProc("8sync", args, timeoutMs);
 /** The renderers change slowly; the 5 s machine poll reads them at most this often. */
 const HEAVY_TTL_MS = 30_000;
 const HEAVY_TIMEOUT_MS = 10_000;

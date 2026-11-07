@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDownIcon, HardDriveIcon, Loader2Icon, RotateCwIcon, SendIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, HardDriveIcon, Loader2Icon, RadarIcon, RotateCwIcon, SendIcon, ShieldCheckIcon, SkullIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import type { Awake } from "@/lib/server/awake";
 import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
 import type { Heavy, Restarted, Spec } from "@/lib/server/machine";
+import type { KillRow, Scan, Suspect, WatchConfig } from "@/lib/server/machine-watch";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
 import { Bar, dayTime, energy, gb, holdLine, hhmm, level, LoadChart, Meter, Row, span, text, vnd, worstLoad, type MachineView as MachineData } from "./machine-chip";
@@ -722,8 +723,338 @@ function HeavyPanel({ heavy, api, onRestarted }: { heavy: Heavy[]; api: Hq["api"
   );
 }
 
+type WatchView = {
+  cfg: WatchConfig;
+  status: { lastCheck: number | null; nextCheck: number | null; lastSent: { at: number; kind: "routine" | "spike" | "owner"; room: string; why: string | null } | null; note: string | null };
+  rooms: { id: string; name: string; title: string; repo: string | null; engine: string | null }[];
+};
+const WATCH_POLL_MS = 30_000;
+/** Each scan lists every process twice (~2 s of the core's time): every 5 minutes while the tab is open. */
+const SCAN_POLL_MS = 300_000;
+const EVERY = [15, 30, 60, 120, 240];
+const SENT_KIND = { routine: "định kỳ", spike: "khẩn (tăng bất thường)", owner: "khẩn (anh bấm)" } as const;
+const KIND: Record<Suspect["kind"], { label: string; hint: string }> = {
+  duplicate: { label: "Mở trùng", hint: "cùng dòng lệnh, cùng tiến trình cha" },
+  spam: { label: "Spam mở", hint: "nhiều bản mới mở trong 10 phút" },
+  orphan: { label: "Mồ côi", hint: "phiên mở nó đã đóng" },
+  hog: { label: "Ngốn", hint: "CPU hoặc RAM cao" },
+};
+const roomLabel = (r: WatchView["rooms"][number]) => `${r.title || r.name}${r.repo ? ` · ${r.repo.split(/[\\/]/).filter(Boolean).pop()}` : ""}`;
+
+function KillDialog({ s, api, onDone, onCancel }: { s: Suspect; api: Hq["api"]; onDone: () => void; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [tree, setTree] = useState(s.kind !== "hog");
+  const [error, setError] = useState<string | null>(null);
+  const rows = s.procs.filter((p) => s.kill.includes(p.id));
+  const mb = rows.reduce((a, p) => a + p.mb, 0);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ results: KillRow[] }>("/api/machine/kill", { method: "POST", body: { ids: s.kill, tree } });
+      const ok = r.results.filter((x) => x.ok);
+      const no = r.results.filter((x) => !x.ok);
+      if (ok.length) toast.success(`Đã kill ${ok.length}/${r.results.length} ${s.image}`, { description: no.length ? no.map((x) => `${x.id}: ${x.error}`).join(" · ") : `Trả lại khoảng ${gb(mb)} RAM` });
+      else toast.error("Chưa kill được", { description: no.map((x) => `${x.id}: ${x.error}`).join(" · ") });
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onCancel()}>
+      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>
+            Kill {s.kill.length} {s.image}?
+          </DialogTitle>
+          <DialogDescription className="text-pretty">
+            {s.reason}. Kill chỉ đúng pid + giờ mở trong danh sách (pid đã đổi chủ thì bỏ qua); phiên Claude/omp, Claude Desktop, HQ, 8sync và tiến trình hệ thống luôn bị từ chối. Việc đang chạy trong các tiến trình này sẽ mất.
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 text-xs">
+          {rows.map((p) => (
+            <li key={p.id} className="min-w-0">
+              <span className="tabular font-medium">{p.id}</span> <span className="tabular text-muted-foreground">{p.mb} MB · {p.cpu}% CPU · {p.ageMin} phút</span>
+              <p className="truncate font-mono text-[11px] text-muted-foreground" title={p.cmd}>
+                {p.cmd}
+              </p>
+            </li>
+          ))}
+        </ul>
+        <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
+          <input type="checkbox" className="size-4 accent-primary" checked={tree} onChange={(e) => setTree(e.target.checked)} disabled={busy} />
+          Kill cả cây (tiến trình con nó mở)
+        </label>
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" className="max-sm:h-11" onClick={onCancel} disabled={busy}>
+            Để sau
+          </Button>
+          <Button type="button" variant="destructive" className="max-sm:h-11" onClick={() => void submit()} disabled={busy}>
+            {busy ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <SkullIcon />}
+            {busy ? "Đang kill…" : `Kill ${s.kill.length}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SuspectRow({ s, onKill }: { s: Suspect; onKill: () => void }) {
+  const [open, setOpen] = useState(false);
+  const k = KIND[s.kind];
+  return (
+    <li className="py-2.5">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-1.5">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm">
+            <span className={cn("mr-1.5 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium", s.kind === "hog" ? "bg-muted text-foreground" : "bg-st-needs/15 " + NEEDS_INK)} title={k.hint}>
+              {k.label}
+            </span>
+            {s.reason}
+          </p>
+          <button type="button" className="mt-0.5 inline-flex min-h-11 items-center gap-1 text-xs text-muted-foreground hover:text-foreground sm:min-h-6" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <ChevronDownIcon className={cn("size-3.5 transition-transform motion-reduce:transition-none", open && "rotate-180")} />
+            {s.procs.length} tiến trình{s.keep ? " · giữ bản cũ nhất" : ""}
+          </button>
+        </div>
+        {s.canKill && s.kill.length > 0 ? (
+          <Button size="sm" variant="outline" className={cn(TOUCH, "text-destructive hover:text-destructive")} onClick={onKill}>
+            <SkullIcon /> Kill {s.kill.length}
+          </Button>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="Phiên Claude/omp, Claude Desktop, HQ, 8sync, hệ thống: chỉ báo, không kill từ đây">
+            <ShieldCheckIcon className="size-3.5" /> Được bảo vệ
+          </span>
+        )}
+      </div>
+      {open && (
+        <ul className="mt-1.5 space-y-1 border-l-2 pl-2.5 text-xs">
+          {s.procs.map((p) => (
+            <li key={p.id} className="min-w-0">
+              <span className="tabular">{p.id}</span>{" "}
+              <span className="tabular text-muted-foreground">
+                {p.mb} MB · {p.cpu}% · {p.procs} tiến trình · {p.ageMin} phút
+              </span>
+              {s.keep === p.id && <span className="ml-1.5 rounded bg-muted px-1 text-[11px]">giữ</span>}
+              <p className="truncate font-mono text-[11px] text-muted-foreground" title={p.cmd}>
+                {p.cmd}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 /**
- * Tab "Máy": load, power, awake (with its switch), what the machine is, how big the projects have
+ * "Canh máy": a room the owner picks gets what `8sync ccc eco scan` found every N minutes (only when
+ * there is something new) and at once on a CPU / RAM / GPU spike; "Gửi urgent ngay" sends now. The
+ * suspects list underneath kills only behind a confirm, and the room is told to look before killing.
+ */
+function WatchPanel({ api, active }: { api: Hq["api"]; active: boolean }) {
+  const w = usePoll<WatchView>(api, "/api/machine/watch", WATCH_POLL_MS, active);
+  const [saving, setSaving] = useState(false);
+  const [urgent, setUrgent] = useState(false);
+  // The list refreshes slowly on its own (HQ reuses a scan under 20 s old); "Quét ngay" asks for a new one.
+  const polled = usePoll<Scan>(api, "/api/machine/scan", SCAN_POLL_MS, active);
+  const [asked, setAsked] = useState<Scan | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  const scan = asked && (!polled.data || asked.at >= polled.data.at) ? asked : polled.data;
+  const scanError = askError ?? polled.error;
+  const [kill, setKill] = useState<Suspect | null>(null);
+  const v = w.data;
+
+  async function rescan(fresh: boolean) {
+    setScanning(true);
+    setAskError(null);
+    try {
+      setAsked(await api<Scan>(`/api/machine/scan${fresh ? "?fresh=1" : ""}`));
+    } catch (e) {
+      setAskError((e as Error).message);
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function save(patch: Partial<WatchConfig>) {
+    setSaving(true);
+    try {
+      await api("/api/machine/watch", { method: "PUT", body: patch });
+      w.reload();
+    } catch (e) {
+      toast.error("Chưa lưu được", { description: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function sendNow() {
+    setUrgent(true);
+    try {
+      await api("/api/machine/watch/urgent", { method: "POST" });
+      const r = v?.rooms.find((x) => x.id === v.cfg.room);
+      toast.success(`Đã gửi urgent cho ${r ? roomLabel(r) : "phòng canh máy"}`, { description: "Phòng xem kĩ từng nghi vấn rồi mới kill, xong báo lại." });
+      w.reload();
+    } catch (e) {
+      toast.error("Chưa gửi được", { description: (e as Error).message });
+    } finally {
+      setUrgent(false);
+    }
+  }
+
+  const cfg = v?.cfg;
+  const roomGone = !!cfg?.room && !v?.rooms.some((r) => r.id === cfg.room);
+  const st = v?.status;
+  return (
+    <Panel
+      id="may-watch"
+      title="Canh máy"
+      aside={
+        cfg && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{cfg.on ? `Đang canh · ${cfg.everyMin} phút` : "Đang tắt"}</span>
+            <Switch on={cfg.on} busy={saving} disabled={!cfg.room || roomGone} label="Bật canh máy" onChange={(on) => void save({ on })} />
+          </div>
+        )
+      }
+    >
+      <p className="text-xs leading-snug text-muted-foreground">
+        Một phòng anh chọn canh RAM, CPU, GPU cho mọi dự án: mỗi chu kỳ HQ quét tiến trình (mở trùng, spam mở, mồ côi, ngốn) và chỉ gửi khi có gì mới; tăng bất thường kéo dài 2 phút thì gửi khẩn ngay. Phòng được dặn xem kĩ rồi mới kill, không đụng phiên, Claude, HQ.
+      </p>
+      {w.error && !v && <ErrorNote what="canh máy" error={w.error} onRetry={w.reload} />}
+      {!v && !w.error && <Skeleton className="h-20 rounded-md" />}
+      {cfg && v && (
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <label className="space-y-1 text-xs">
+              <span className="text-muted-foreground">Phòng canh</span>
+              <Select value={cfg.room ?? ""} onValueChange={(room) => void save({ room })} disabled={saving}>
+                <SelectTrigger className={cn("w-full", TOUCH)} aria-label="Phòng canh máy">
+                  <SelectValue placeholder={v.rooms.length ? "Chọn phòng" : "Chưa có phòng nào đang mở"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {roomGone && cfg.room && (
+                    <SelectItem value={cfg.room} disabled>
+                      Phòng đã chọn không còn mở
+                    </SelectItem>
+                  )}
+                  {v.rooms.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {roomLabel(r)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="text-muted-foreground">Chu kỳ</span>
+              <Select value={String(cfg.everyMin)} onValueChange={(x) => void save({ everyMin: Number(x) })} disabled={saving}>
+                <SelectTrigger className={cn("w-full", TOUCH)} aria-label="Chu kỳ quét">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EVERY.map((m) => (
+                    <SelectItem key={m} value={String(m)}>
+                      {m < 60 ? `${m} phút` : `${m / 60} giờ`}
+                      {m === 30 ? " (mặc định)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            {(["cpu", "ram", "gpu"] as const).map((k) => (
+              <label key={k} className="space-y-1 text-xs">
+                <span className="text-muted-foreground">Khẩn khi {k.toUpperCase()} ≥</span>
+                <div className="flex items-center gap-1">
+                  <Input
+                    key={`${k}:${cfg[k]}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={30}
+                    max={99}
+                    defaultValue={cfg[k]}
+                    aria-label={`Ngưỡng ${k.toUpperCase()} %`}
+                    className={cn("w-20 tabular", TOUCH)}
+                    onBlur={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n) && n !== cfg[k]) void save({ [k]: n });
+                    }}
+                  />
+                  <span className="text-muted-foreground">%</span>
+                </div>
+              </label>
+            ))}
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className={TOUCH} disabled={scanning} onClick={() => void rescan(true)}>
+                {scanning ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <RadarIcon />}
+                {scanning ? "Đang quét…" : "Quét ngay"}
+              </Button>
+              <Button size="sm" className={TOUCH} disabled={urgent || !cfg.room || roomGone} onClick={() => void sendNow()}>
+                {urgent ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <SendIcon />}
+                Gửi urgent ngay
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs leading-snug text-muted-foreground tabular">
+            {roomGone ? "Phòng canh đã đóng: chọn phòng khác. " : !cfg.room ? "Chọn một phòng để bật. " : ""}
+            {st?.lastCheck ? `Quét định kỳ lúc ${hhmm(st.lastCheck)}` : cfg.on ? "Lần quét đầu trong vòng 2 phút" : ""}
+            {st?.nextCheck ? ` · lần tới ${hhmm(st.nextCheck)}` : ""}
+            {st?.lastSent ? ` · gửi lúc ${hhmm(st.lastSent.at)} (${SENT_KIND[st.lastSent.kind]}${st.lastSent.why ? `: ${st.lastSent.why}` : ""})` : ""}
+            {st?.note ? ` · ${st.note}` : ""}
+          </p>
+        </div>
+      )}
+      <div className="border-t pt-2.5">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <h3 className="text-xs font-semibold">Nghi vấn</h3>
+          {scan && (
+            <span className="text-xs text-muted-foreground tabular">
+              Quét lúc {hhmm(scan.at * 1000)} · {scan.procs} tiến trình · RAM {scan.ram ?? "?"}% · CPU {scan.cpu ?? "?"}%
+            </span>
+          )}
+        </div>
+        {scanError && !scan && <ErrorNote what="quét tiến trình" error={scanError} onRetry={() => void rescan(true)} />}
+        {!scan && !scanError && <Skeleton className="mt-2 h-16 rounded-md" />}
+        {scan && scan.suspects.length === 0 && <p className="pt-2 text-xs text-muted-foreground">Không có tiến trình mở trùng, spam, mồ côi hay ngốn bất thường.</p>}
+        {scan && scan.suspects.length > 0 && (
+          <ul className="divide-y">
+            {[...scan.suspects].sort((a, b) => Number(b.canKill && b.kill.length > 0) - Number(a.canKill && a.kill.length > 0)).map((s, i) => (
+              <SuspectRow key={`${s.kind}:${s.keep ?? s.procs[0]?.id ?? i}`} s={s} onKill={() => setKill(s)} />
+            ))}
+          </ul>
+        )}
+      </div>
+      {kill && (
+        <KillDialog
+          s={kill}
+          api={api}
+          onCancel={() => setKill(null)}
+          onDone={() => {
+            setKill(null);
+            void rescan(true);
+          }}
+        />
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Tab "Máy": the machine watch (room, cron, urgent, suspects), load, power, awake (with its switch), what the machine is, how big the projects have
  * grown (one-tap cleanup send) and the processes. `m` is the header chip's poll.
  */
 export function MachineView({ m, reload, api, rooms, active }: { m: MachineData | null; reload: () => void; api: Hq["api"]; rooms: Room[]; active: boolean }) {
@@ -743,6 +1074,7 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl space-y-4 px-4 pt-5 pb-10 sm:px-6">
         {m.heavy && m.heavy.length > 0 && <HeavyPanel heavy={m.heavy} api={api} onRestarted={reload} />}
+        <WatchPanel api={api} active={active} />
         <div className="gap-4 lg:columns-2 [&>*]:mb-4 [&>*]:break-inside-avoid [&>*:last-child]:mb-0">
           <Panel id="may-load" title="Tải máy">
             <div className="space-y-2">

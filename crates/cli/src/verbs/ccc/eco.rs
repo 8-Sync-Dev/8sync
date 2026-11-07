@@ -26,6 +26,7 @@
 //! `8sync ccc eco` alone prints what the machine uses now (RAM, CPU, GPU, watts, battery, what
 //! Claude Code / node hold); `run` loops every [`EVERY_S`]; `install` starts it at logon
 //! (Windows Scheduled Task, systemd --user, launchd). Settings: `~/.config/8sync/eco.json`.
+//! `scan` / `kill <pid:start>`: the suspects HQ's "Canh máy" hands a room, and the safe kill ([`super::watch`]).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -52,7 +53,7 @@ const TRIM_EVERY_S: u64 = 600;
 const ECO_KEEP: usize = 400;
 const MIB: u64 = 1024 * 1024;
 
-const USAGE: &str = "usage: 8sync ccc eco [status] [--json] | heavy [--json] | restart <rootPid> [--json] | tick [--json] | reap [--dry-run] [--json] | run | install | uninstall | set ram <50..95> | set cpu <30..95> | set battery on|off";
+const USAGE: &str = "usage: 8sync ccc eco [status] [--json] | heavy [--json] | restart <rootPid> [--json] | scan [--json] | kill <pid:start>… [--tree] [--json] | tick [--json] | reap [--dry-run] [--json] | run | install | uninstall | set ram <50..95> | set cpu <30..95> | set battery on|off";
 
 // ── battery ──────────────────────────────────────────────────────────────────────────────────
 
@@ -1119,6 +1120,30 @@ pub(super) fn run(rest: &[String], home: &Path) -> Result<()> {
         Some("restart") => {
             let pid: u32 = args.get(1).and_then(|s| s.parse().ok()).filter(|p| *p > 0).with_context(|| USAGE.to_string())?;
             restart(pid, json_out)
+        }
+        Some("scan") => {
+            let v = super::watch::scan();
+            println!("{}", if json_out { serde_json::to_string_pretty(&v)? } else { super::watch::scan_text(&v) });
+            Ok(())
+        }
+        Some("kill") => {
+            let ids: Vec<&str> = args[1..].iter().map(|s| s.as_str()).filter(|s| !s.starts_with("--")).collect();
+            if ids.is_empty() {
+                bail!("{USAGE}");
+            }
+            let rows = super::watch::kill(home, &ids, args.iter().any(|a| *a == "--tree"));
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&json!({ "results": rows }))?);
+            } else {
+                for r in &rows {
+                    println!("{} {}: {}", if r["ok"] == true { "✓" } else { "✗" }, r["id"].as_str().unwrap_or(""), r["error"].as_str().unwrap_or("đã kill"));
+                }
+            }
+            if rows.iter().all(|r| r["ok"] == true) {
+                Ok(())
+            } else {
+                bail!("có id chưa kill được")
+            }
         }
         Some("reap") => {
             let dry = args.iter().any(|a| *a == "--dry-run");
