@@ -5,6 +5,8 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.136.0] — 2026-11-07
+
 ### Added
 - Các phòng hiểu việc của nhau: `GET /api/brief` (và `hq.mjs brief`/`roster`) cho tóm tắt ngắn từng phòng (đang làm gì, chờ gì, lượt hỏi/đáp gần nhất, file vừa sửa). Tin phòng gửi phòng giờ kèm dòng `[từ phòng <tên> · <dự án> · đang: <việc>]`. Thêm Chief of Staff trong tab Máy: chọn một phòng làm trưởng nhóm, tin anh gửi qua `/api/chief/ask` kèm danh sách phòng để nó tự chia việc và chỉ báo lại khi cần anh quyết.
 - HQ có tab **Bots** mới, là màn hình đầu tiên khi mở HQ: mỗi phiên Claude Code hoặc omp đang chạy là một "bot" với mặt tròn riêng màu, trạng thái (Chờ anh, Lỗi, Đang làm, Rảnh), việc đang làm và giờ. Bot chờ anh luôn nằm trên cùng. Bấm một bot để mở cuộc trò chuyện riêng: tin anh gửi, các bước bot làm (gập gọn) và câu trả lời của bot; nhắn kèm file và `@file` ngay trong đó; mở Terminal, Thư mục, Nhật ký từ thanh trên. Trên điện thoại: danh sách → cuộc trò chuyện toàn màn hình, có nút quay lại và ô nhắn nằm trên bàn phím. Trên máy tính: danh sách bên trái, cuộc trò chuyện bên phải, kéo được, màn rộng có thêm Nhật ký bên phải.
