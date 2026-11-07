@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseAmbiguous, parseExplain, parseGraphify, parsePath, parseWhere, relationVi } from "@/lib/graphify-answer";
+import { fieldFromCard, parseAmbiguous, parseExplain, parseGraphify, parsePath, parseWhere, pickAsked, relationVi, symbolOf, typedField } from "@/lib/graphify-answer";
 
 // Real output of graphify 0.x on this repo (su-code), captured 2026-11-08: `graphify explain|path …` in the repo root.
 const sample = (name: string) => fs.readFileSync(path.join(__dirname, "fixtures", "graphify", name), "utf8");
@@ -126,5 +126,45 @@ describe("parseGraphify", () => {
     expect(relationVi("calls")).toBe("gọi");
     expect(relationVi("some_new")).toBe("some new");
     expect(relationVi("constructor")).toBe("constructor");
+  });
+});
+
+// The Giải thích / Đường đi inputs show labels; graphify gets the node id underneath when the label is not enough.
+describe("symbol fields (labels shown, ids sent)", () => {
+  const card = { name: "showToast()", id: "su_code_skills_impeccable_scripts_live_browser_showtoast" };
+
+  it("Tìm đường từ đây: the field shows the label; asked by that label (one node) → the label goes", () => {
+    const f = fieldFromCard(card, "showToast()");
+    expect(f).toEqual({ text: "showToast()", id: null });
+    expect(symbolOf(f)).toBe("showToast()");
+  });
+
+  it("Tìm đường từ đây on a card reached by an id (a pick among same-named nodes) → label shown, id sent", () => {
+    const f = fieldFromCard(card, card.id);
+    expect(f.text).toBe("showToast()");
+    expect(symbolOf(f)).toBe(card.id);
+    // A looser question ("showToast" matched "showToast()") also keeps the id: the label may name others.
+    expect(symbolOf(fieldFromCard(card, " showToast "))).toBe(card.id);
+    // No id in graphify's output: the label is all there is.
+    expect(fieldFromCard({ name: "auth.ts", id: null }, "auth")).toEqual({ text: "auth.ts", id: null });
+  });
+
+  it("typing drops the pinned id; text is trimmed", () => {
+    expect(symbolOf(typedField("  checkAuth() "))).toBe("checkAuth()");
+    expect(symbolOf({ text: "showToast()", id: null })).toBe("showToast()");
+  });
+
+  it("a pick from an ambiguous list fills the unresolved end with label + id", () => {
+    const explainAsk = { mode: "explain", a: typedField("open()"), b: typedField("") };
+    expect(pickAsked(explainAsk, "open()", "apps_hq_ui_lib_server_http_open")).toEqual({ mode: "explain", a: { text: "open()", id: "apps_hq_ui_lib_server_http_open" }, b: { text: "", id: null } });
+    const start = fieldFromCard(card, card.id);
+    const pathAsk = { mode: "path", a: start, b: typedField("open()") };
+    const picked = pickAsked(pathAsk, "open()", "apps_hq_ui_lib_server_http_open");
+    expect(picked).toEqual({ mode: "path", a: start, b: { text: "open()", id: "apps_hq_ui_lib_server_http_open" } });
+    // What graphify gets for that path: both ids; what the fields show: both labels.
+    expect([symbolOf(picked.a), symbolOf(picked.b)]).toEqual([card.id, "apps_hq_ui_lib_server_http_open"]);
+    expect([picked.a.text, picked.b.text]).toEqual(["showToast()", "open()"]);
+    // The start was the ambiguous one: it is replaced, the end stays.
+    expect(pickAsked({ mode: "path", a: typedField("open()"), b: typedField("safeEqual()") }, "open()", "x_open")).toMatchObject({ a: { text: "open()", id: "x_open" }, b: { text: "safeEqual()", id: null } });
   });
 });
