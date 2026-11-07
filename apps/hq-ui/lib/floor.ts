@@ -62,6 +62,11 @@ export const LABEL: Record<FloorState, string> = {
   meeting: "họp sprint",
 };
 
+/** Caption prefix of a quiet room with open work; any other "stalled" caption is an API error / usage limit (lib/server/observer.ts reads it). */
+export const STALL_QUIET = "Không tiến triển";
+/** Label of a room whose turn ended but whose background jobs still run (lib/server/observer.ts reads it). */
+export const BG_LABEL = "việc nền";
+
 export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now()): Derived {
   const status = ls?.status ?? (hq?.status === "running" ? "running" : "idle");
   const total = ls?.tasks_total ?? 0;
@@ -85,7 +90,7 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
   }
   // The room answered but its background subagents still run (omp "Waiting for N background jobs"): it is
   // working, and their results will come back into this room.
-  if (ls?.bg_jobs?.length) return make("running", `Chờ ${ls.bg_jobs.length} việc nền: ${ls.bg_jobs.join(", ")}`, "việc nền");
+  if (ls?.bg_jobs?.length) return make("running", `Chờ ${ls.bg_jobs.length} việc nền: ${ls.bg_jobs.join(", ")}`, BG_LABEL);
   // The transcript says the last turn ended: the agent answered and waits for a new prompt, even though
   // its process still holds the session ("running"). Its last step is history, not work in progress.
   if (ls?.turn_open === false) return total > 0 && doneN >= total ? make("done", text || `Xong ${progress}`) : make("idle", "Đang chờ prompt mới");
@@ -95,7 +100,7 @@ export function deriveFloor(ls: LsInput | null, hq: HqInput, nowMs = Date.now())
   const quiet = status === "running" && ageSecs !== null && ageSecs > STALL_SECS;
   const openWork = Boolean(ls?.current_task) || (total > 0 && doneN < total);
   if (quiet && openWork && hq?.status !== "idle") {
-    return make("stalled", `Không tiến triển ${Math.floor(ageSecs / 60)} phút${text ? `: ${text}` : ""}`);
+    return make("stalled", `${STALL_QUIET} ${Math.floor(ageSecs / 60)} phút${text ? `: ${text}` : ""}`);
   }
   if (quiet) return make("idle", "Đang chờ prompt mới");
   if (total > 0 && doneN >= total && status !== "running") return make("done", text || `Xong ${progress}`);

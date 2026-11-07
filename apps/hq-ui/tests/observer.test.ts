@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FloorRow } from "@/lib/floor";
+import { deriveFloor, type FloorRow } from "@/lib/floor";
 import { normWatch, OBSERVE_SKIP_MAX, WATCH_DEFAULT, watchStatus, watchTick, type WatchDeps } from "@/lib/server/machine-watch";
 import { SessionWaiting } from "@/lib/server/channel";
 import { nudgeText, OBSERVE_DEFAULT, observeStep, observeZero, pageText, type ObserveScope, type ObserveState } from "@/lib/server/observer";
@@ -34,9 +34,16 @@ describe("observer rules", () => {
     expect(step(observeZero(), [row(A, {}, 19)], T0).actions).toEqual([]);
     const r = step(observeZero(), [row(A, {}, 20)], T0);
     expect(r.actions).toEqual([expect.objectContaining({ room: A, signal: "stalled", level: "note", why: "đứng 20 phút" })]);
-    // deriveFloor's own "quiet with open work" stall counts too.
-    expect(step(observeZero(), [row(A, { state: "stalled", caption: "Không tiến triển 25 phút: x" }, 25)], T0).actions.map((a) => a.signal)).toEqual(["stalled"]);
-    expect(step(observeZero(), [row(A, { state: "running", label: "việc nền" }, 60)], T0).actions).toEqual([]);
+    // deriveFloor's own "quiet with open work" stall counts as a stall, its API-error stall as an error,
+    // and its background-jobs row never stalls: the captions come from deriveFloor itself, so a reword
+    // there cannot silently swap the signals.
+    const quiet = deriveFloor({ status: "running", last_active: Math.floor(T0 / 1000) - 25 * 60, current_task: "x" } as Parameters<typeof deriveFloor>[0], null, T0);
+    expect(quiet.state).toBe("stalled");
+    expect(step(observeZero(), [row(A, quiet, 25)], T0).actions.map((a) => a.signal)).toEqual(["stalled"]);
+    const err = deriveFloor({ status: "running", stalled_error: "usage limit" } as Parameters<typeof deriveFloor>[0], null, T0);
+    expect(step(observeZero(), [row(A, err, 0)], T0).actions.map((a) => a.signal)).toEqual(["error"]);
+    const bg = deriveFloor({ status: "running", last_active: Math.floor(T0 / 1000) - 60 * 60, bg_jobs: ["j"] } as Parameters<typeof deriveFloor>[0], null, T0);
+    expect(step(observeZero(), [row(A, bg, 60)], T0).actions).toEqual([]);
     expect(step(observeZero(), [row(A, { unmatched: true }, 60)], T0).actions).toEqual([]);
     expect(step(observeZero(), [row(A, { state: "idle" }, 600)], T0).actions).toEqual([]);
   });
