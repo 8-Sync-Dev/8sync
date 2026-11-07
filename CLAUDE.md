@@ -3,9 +3,9 @@
 <!-- 8sync:skills:begin -->
 ## 8sync harness
 
-**STEP 0 — code map trước (trail):** hỏi `trail` TRƯỚC grep/đọc cả file (tree-sitter local, không gọi model).
-- `trail ask "<câu hỏi>"` — định vị/giải thích code · `trail grep <pattern>` — tìm kèm ngữ cảnh symbol
-- `trail skeleton <file>` — khung file, không body · `trail callers <symbol>` (`--direction out` = callees) — impact trước khi sửa
+**STEP 0 — code map trước (graphify + trail):** mọi tìm kiếm code đi qua code map, không grep/đọc cả file (local, không gọi model, ~100–200 token mỗi lần).
+- Ai gọi X · X gọi gì · impact · đường A→B → env `GRAPHIFY_MAX_WORKERS=4` + `graphify update . --no-cluster` (đầu phiên + sau khi sửa), rồi `graphify explain <symbol|id>` / `graphify path "A()" "B()"` (bỏ `query`).
+- X ở đâu · tìm chữ kèm ngữ cảnh symbol · khung file → `trail ask "<câu hỏi>"` · `trail grep <pattern>` · `trail skeleton <file>` (`trail callers <symbol>` khi chưa có graphify).
 - Chỉ đọc raw file khi sắp sửa nó. Map cũ → `trail build`; repo chưa nối → `8sync trail`.
 
 **Quy tắc bất biến:**

@@ -1,18 +1,18 @@
 ---
 name: 8sync-code-intel-first
-description: Use when a search is really a code-structure question (where is a symbol defined, who calls it, what breaks if it changes) — route it to trail (CLI) first instead of grep or glob.
+description: Use when a search is really a code-structure question (where is a symbol defined, who calls it, what breaks if it changes) — route it to graphify/trail (CLI) first instead of grep or glob.
 condition: '(?i)\b(?:class|struct|enum|trait|impl|interface|fn|func|function|def|method|module|namespace|type)\s+[A-Za-z_]\w*'
 scope: "tool:grep(*), tool:glob(*)"
 interruptMode: tool-only
 ---
 
-That search is a **code-structure** query, not a text query. Structure goes through trail first — it answers in one call what grep needs five to approximate:
+That search is a **code-structure** query, not a text query. Structure goes through the code map first — it answers in one call what grep needs five to approximate:
 
 | Question | Exact call |
 |---|---|
 | where is `X` defined / what does the code do about `X` | `bash: trail ask "<question>"` (code inlined at file:line) · `trail grep "<pattern>"` |
 | shape of a file before editing | `trail skeleton <file>` (signatures only) |
-| who calls `X` / what `X` calls / impact | `trail callers <symbol>` · `trail callers <symbol> --direction out` |
+| who calls `X` / what `X` calls / impact / path A→B | `graphify explain <symbol>` · `graphify path "A()" "B()"` after `GRAPHIFY_MAX_WORKERS=4 graphify update . --no-cluster`; no graphify on PATH → `trail callers <symbol>` (`--direction out` = callees) |
 | architecture overview | `trail map` |
 
 Re-run the original `grep`/`glob` only after one of those returns nothing, and name the call you made. After learning something durable, `trail note "<fact>"`.

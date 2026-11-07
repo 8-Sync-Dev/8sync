@@ -5,6 +5,22 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.131.1] — 2026-11-07
+
+### Fixed
+- `/solo`, `/autopilot`, `/ship-loop`, `/ship-auto`, `/ship-tick` trong `~/.omp/agent/commands/` không còn đè file owner tự viết cùng tên: bản 8sync sinh có dòng `<!-- 8sync:kit-loop -->`, chỉ file có dòng đó (hoặc bản v0.131.0) mới được làm mới.
+- Luật TTSR `8sync-code-intel-first` chỉ câu "ai gọi X · impact · đường A→B" sang `graphify explain`/`path` (không có graphify → `trail callers`), khớp RULE #0 mới; khối harness của chính repo, doc `setup.rs`, AGENTS.md hết gọi graphify là "dự phòng"; `.gitignore` bỏ qua `graphify-out/`, `.trail/cache/`.
+
+## [0.131.0] — 2026-11-07
+
+### Added
+- omp có `/solo`, `/autopilot`, `/ship-loop`, `/ship-auto`, `/ship-tick` (trước chỉ Claude Code có, gõ `/solo` trong omp không thấy gợi ý): `8sync harness`/`up` sinh vào `~/.omp/agent/commands/` từ chính `SKILL.md` của kit (giữ `description` + `argument-hint`), kèm khối "Chạy trên omp" đổi cron → `engine_plan` run-to-done, `Task` → `task`, `AskUserQuestion` → `ask`, lệnh owner gõ = giấy phép merge/release.
+- HQ: ô soạn tin gợi ý cả skill Claude Code gọi được bằng `/tên` (`~/.claude/skills/<tên>/SKILL.md`, bỏ cái `user-invocable: false`), nên `/solo`, `/ship-loop`… hiện trong danh sách `/`.
+
+### Changed
+- `/solo` theo thiết kế DeepSeek Super-Agent (`deepseek-ai/dsh-superagent-prototype`, MIT): Router + Worker mỗi item (`worker-<slug>`, nhánh `solo/<slug>`), báo cáo theo trạng thái progress/waiting/ready/blocked/failed/dropped, Mandate explicit (issue owner, STATE Next) chạy luôn còn inferred chỉ ghi `would accept:` (`--accept observe|auto`, mặc định observe), tự merge chỉ khi diff ≤ `--merge-lines` (200), lỗi tạm 408/429/5xx thử lại 3 lần, bước "Khởi động lại" đọc thư mục/git/GitHub trước khi lặp hành động bên ngoài; `graphify explain`/`path` trước khi sửa, ghi `Impact:` vào PLAN.md, chỉ chạy song song khi Impact không chồng.
+- Tìm kiếm code đi hết qua code map: graphify thành tuyến chính cho "ai gọi X · X gọi gì · impact · đường A→B" (đo trên su-code: `graphify explain` 1,4 s ~170 token; `trail callers` 7,5 s ~92 token; đọc file ~23K token), trail cho "X ở đâu · chữ kèm ngữ cảnh · khung file". Đổi trong khối harness `AGENTS.md`/`CLAUDE.md`, `APPEND_SYSTEM.md`, `00-force-load.md`, `/eccx-core`, hint hook Grep/Glob của Claude Code. Vẫn bỏ `graphify query` (~2K token).
+
 ## [0.130.0] — 2026-11-07
 
 ### Added
