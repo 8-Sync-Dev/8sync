@@ -32,6 +32,11 @@ describe("roles", () => {
     expect(() => tmuxStartArgs("hq-x-1", "/r", { ...off, model: "claude-opus-4" })).toThrow();
     expect(() => tmuxStartArgs("hq-x-1", "/r", { ...off, role: "a;b" })).toThrow();
   });
+  it("tmux argv carries --effort (a CLAUDE_EFFORTS level only)", () => {
+    const a = tmuxStartArgs("hq-x-1", "/r", { ...off, model: "claude-opus-5-5", effort: "xhigh" });
+    expect(a.slice(a.indexOf("claude"))).toEqual(["claude", "--model", "claude-opus-5-5", "--effort", "xhigh"]);
+    expect(() => tmuxStartArgs("hq-x-1", "/r", { ...off, effort: "high; id" })).toThrow();
+  });
   it("a first prompt goes last, after --, so a leading dash is not a flag", () => {
     const a = tmuxStartArgs("hq-x-1", "/r", { ...off, prompt: "--help me" });
     expect(a.slice(-2)).toEqual(["--", "--help me"]);

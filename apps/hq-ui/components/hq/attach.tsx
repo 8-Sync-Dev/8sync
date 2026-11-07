@@ -164,7 +164,8 @@ export function AttachButton({ a, disabled, className, label = "Đính kèm" }: 
         type="button"
         size="sm"
         variant="ghost"
-        className={cn("h-7 text-xs", className)}
+        // ≥44 px to tap at ≤768 px (owner UAT 2026-11-08: it was 36×28); the desktop size stays.
+        className={cn("h-7 text-xs max-md:h-11 max-md:min-w-11", className)}
         disabled={disabled || a.full}
         title={`Ảnh, PDF hay file bất kỳ, tối đa ${a.slots} file, ${FILE_MAX_MB} MB mỗi file; dán ảnh thẳng vào ô cũng được. Phòng mở bằng Read.`}
         onClick={() => picker.current?.click()}

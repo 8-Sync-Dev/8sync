@@ -4,6 +4,9 @@
 // `pi.setModel` / `pi.setThinkingLevel` (this session only, config untouched) and writes what the
 // session now runs to `<state>/omp-model/<id>.json`.
 // Claude Code rooms: `/model <alias>` and `/effort <level>`, typed into the room's terminal.
+// A new bot ("Bot mới") picks its model + level at start: `claude --model <id> --effort <level>`, or
+// omp's `--model <provider>/<model>:<level>` (8sync ccc term --omp-new).
+import { MODELS, modelShort } from "./roles";
 
 /** One model the picker lists. `thinking`: the levels the model takes, without "off". */
 export type ModelChoice = { selector: string; provider: string; name: string; thinking: string[] };
@@ -31,8 +34,16 @@ export const CLAUDE_MODELS: ModelChoice[] = [
   { selector: "default", provider: "claude", name: "Mặc định của tài khoản", thinking: [...CLAUDE_EFFORTS] },
 ];
 
+/** The models a new Claude Code bot starts on (`claude --model`): the pinned ids roles and templates use. */
+export const CLAUDE_START_MODELS: ModelChoice[] = MODELS.map((id) => ({ selector: id, provider: "claude", name: modelShort(id), thinking: [...CLAUDE_EFFORTS] }));
+
+/** omp's `--model` for a new session: the selector, with the thinking level as its `:` suffix. */
+export const ompStartModel = (selector: string, thinking: string | null): string => (thinking ? `${selector}:${thinking}` : selector);
+
 /** `<provider>/<model>`: no colon (omp reads `:` as the thinking suffix), no spaces. */
 export const SELECTOR_RE = /^[A-Za-z0-9][\w.-]*\/[\w.@+/-]+$/;
+
+export const isClaudeEffort = (s: unknown): s is string => typeof s === "string" && (CLAUDE_EFFORTS as readonly string[]).includes(s);
 
 export const isThinking = (s: unknown): s is string => typeof s === "string" && (OMP_THINKING as readonly string[]).includes(s);
 

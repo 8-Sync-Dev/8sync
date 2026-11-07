@@ -7,6 +7,18 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ### Fixed
 - HQ › Bots › Bản đồ code: repo của bot chưa đăng ký trong HQ nhưng đã có bản đồ trên máy (`.trail/cache/.graph/wiring.json` hoặc `graphify-out/graph.json`, VD `core · su-code`) không còn hiện "chưa có bản đồ code" + "Tạo bản đồ code cho repo này". Tab ghi "su-code đã có bản đồ code trên máy", nút "Thêm vào HQ" chỉ đăng ký repo; làm mới vẫn là nút "Cập nhật graph" / "Index ngay" riêng. Server cũng vậy: `POST /api/codemap/enable` gặp repo đã có trail index hoặc graph thì chỉ đăng ký (`started: false`), không chạy `graphify update` hay `trail build`. `GET /api/codemap/enable?path=` (chỉ chủ, repo HQ đã biết) cho biết repo có gì trên máy.
+### Added
+- HQ › Bots › "Bot mới": chọn engine (Claude Code | omp) và model + mức suy nghĩ ngay dưới mẫu, mặc định theo mẫu, anh đổi được. Danh sách model omp lấy từ `omp models` (provider đã nối key/đăng nhập), Claude Code là Opus/Sonnet/Haiku 5.5; menu model dùng chung với chip model ở ô chat. Dòng "Chạy bằng …" hiện đúng lựa chọn (VD `omp · GLM-5.3 · suy nghĩ cao`). Mẫu riêng (JSON) nhận thêm `model` (omp: `<provider>/<model>`) và `thinking`.
+- HQ API: `POST /api/sessions` nhận `engine` (`claude` mặc định | `omp`) cùng `model`/`thinking`. Server kiểm hết: engine lạ → 400; Claude Code chỉ nhận model trong danh sách vai trò và mức `--effort` hợp lệ (422); omp chỉ nhận model có trong `omp models` và mức model đó hỗ trợ (422, 503 khi omp chưa trả danh sách), chạy bằng `--model <selector>:<level>`. Chỉ truyền argv, không qua shell. `GET /api/models?engine=omp` trả danh sách cho bot mới.
+- HQ › "Bot mới" › Của tôi: Tạo mới, Sửa, Nhân bản (cả mẫu có sẵn, bản sao thành mẫu của anh) và Xoá (hỏi lại ngay tại chỗ). Form có đủ trường: tên, emoji, màu, mục đích, engine + model + mức suy nghĩ, vai trò, lời dặn (đếm dòng /6), skill, thư mục hay làm, tin nhắn đầu. Khung xem trước hiện thẻ mẫu và đúng nguyên văn tin nhắn đầu bot nhận. Lỗi hiện theo từng trường (VD "Lời dặn: tối đa 6 dòng.").
+- HQ › Của tôi: "Tạo bằng AI" (một câu → một mẫu) và "Viết lại bằng AI" (một lời dặn → mẫu đang sửa được viết lại). Chạy một lần `claude -p` (Sonnet 5.5, không tool, không lưu phiên, tối đa 60 giây, chỉ argv). Kết quả phải qua kiểm tra mẫu, sai thì báo lỗi và không lưu; đúng thì điền vào form để anh xem rồi mới Lưu, có Hoàn tác.
+- HQ API: `POST/PUT/DELETE /api/templates` và `POST /api/templates/ai`, chỉ chủ HQ gọi được từ trang HQ (phòng/bot → 403). Ghi file atomic (tmp + rename), tối đa 100 mẫu, id trùng (mẫu có sẵn, mẫu riêng, cả file hỏng) thì thêm `-2`, `-3`; PUT chỉ sửa mẫu riêng, không đè mẫu có sẵn.
+
+### Changed
+- HQ › mẫu bot có sẵn chỉ còn mẫu chung (Trống, Dev fullstack, Reviewer, Tester, Nghiên cứu, Lập kế hoạch), không còn mẫu gắn thương hiệu hay dự án riêng. 6 mẫu cũ (cpa-full, research-mkt, course-writer, news-curator, zus-release, tia-release) được xuất thành JSON ở `~/.cache/8sync/uat/newbot/owner-templates/`, chép vào `~/.config/8sync/hq/templates/` nếu cần dùng lại.
+
+### Fixed
+- HQ › ô chat trên điện thoại: nút "Đính kèm" (trước 36×28 px) và nút + của ô soạn workspace và nút X đóng "Bot mới" (trước 28 px) có vùng bấm ≥44 px ở màn ≤768 px; máy tính giữ nguyên.
 
 ## [0.139.0] — 2026-11-07
 ### Added
