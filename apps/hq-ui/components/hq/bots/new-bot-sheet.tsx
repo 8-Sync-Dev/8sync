@@ -242,13 +242,13 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
               Chưa có mẫu riêng. Thêm file JSON vào <code className="font-mono text-xs">~/.config/8sync/hq/templates/</code>, mỗi file một mẫu.
             </p>
           ) : (
-            // Phones: two rows that scroll sideways, so the folder step stays near; wider: a 3-column grid.
+            // A card gallery (owner 2026-11-07, Grok Bot style): two columns on a phone, three from 640 px.
             <div
               ref={gridRef}
               role="radiogroup"
               aria-labelledby={`${uid}-tpl`}
               onKeyDown={radioKeys}
-              className="-mx-4 grid snap-x snap-mandatory auto-cols-[44%] grid-flow-col grid-rows-2 gap-2 overflow-x-auto scroll-px-4 px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-3 sm:grid-rows-none sm:overflow-visible sm:px-0 sm:pb-0"
+              className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:grid-cols-3"
             >
               {shownTemplates.map((t) => {
                 const on = t.id === template?.id;
@@ -264,7 +264,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
                       setFolder(null);
                     }}
                     className={cn(
-                      "group relative flex min-h-[5.5rem] snap-start flex-col items-start gap-1.5 rounded-xl border bg-card p-3 text-left outline-none transition-[border-color,box-shadow] duration-150 hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
+                      "group relative flex min-h-[5.5rem] flex-col items-start gap-1.5 rounded-xl border bg-card p-3 text-left outline-none transition-[border-color,box-shadow] duration-150 hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
                       on && "border-foreground/70 ring-1 ring-foreground/70",
                     )}
                   >

@@ -15,8 +15,8 @@ const ARCHIVE_KEY = "hq.tree.archive";
 const UNREAD_KEY = "hq.tree.unread";
 const ORDER_KEY = "hq.tree.order";
 
-/** One localStorage value as an external store, so the sidebar and the mobile drawer agree. */
-function localValue<T>(key: string, parse: (raw: string | null) => T, fallback: T) {
+/** One localStorage value as an external store, so every view showing it agrees (sidebar, pages, other tabs). */
+export function localValue<T>(key: string, parse: (raw: string | null) => T, fallback: T) {
   let cur: T | null = null;
   let raw: string | null = null;
   const subs = new Set<() => void>();

@@ -20,8 +20,9 @@ type DigestView = { room: string; last: { text: string; at: number | null } | nu
  * what a bot proposed with `hq.mjs fact`), the last "ai đang làm gì" digest this bot received
  * (lib/server/digest.ts), and the owner's switch for it. Reads GET /api/facts and /api/digest again when the
  * bot's office row moves; writes are the owner's page only (PUT, the server answers 403 to a room).
+ * `page`: the bot page's "Đang biết gì" tab (open, full height) instead of a folding block.
  */
-export function BotKnows({ hq, bot }: { hq: Hq; bot: Bot<Room> }) {
+export function BotKnows({ hq, bot, page = false }: { hq: Hq; bot: Bot<Room>; page?: boolean }) {
   const api = hq.api;
   const room = bot.room.name;
   const [facts, setFacts] = useState<Facts | null>(null);
@@ -68,21 +69,8 @@ export function BotKnows({ hq, bot }: { hq: Hq; bot: Bot<Room> }) {
     if (t && (await put("/api/facts", { facts: [...list.map((f) => f.text), t] }))) setDraft("");
   };
 
-  return (
-    <Collapsible open={open ?? pending.length > 0} onOpenChange={setOpen} className="shrink-0 border-b">
-      <CollapsibleTrigger className="group/knows flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left text-sm font-medium outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60">
-        <ChevronRightIcon aria-hidden className="size-4 text-muted-foreground transition-transform group-data-[state=open]/knows:rotate-90 motion-reduce:transition-none" />
-        <BrainIcon aria-hidden className="size-4 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">Bot này đang biết gì</span>
-        {pending.length > 0 && (
-          <span title={`${pending.length} đề xuất chờ anh duyệt`} className="shrink-0 rounded-full bg-primary px-2 py-0.5 text-[11px] text-primary-foreground tabular">
-            {pending.length}
-            <span className="sr-only"> đề xuất chờ duyệt</span>
-          </span>
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="max-h-[55vh] space-y-4 overflow-y-auto px-4 pb-4 text-sm">
+  const body = (
+    <div className={cn("space-y-4 text-sm", page ? "px-4 py-4 sm:px-6" : "max-h-[55vh] overflow-y-auto px-4 pb-4")}>
           <section aria-labelledby={`knows-digest-${bot.key}`} className="space-y-2">
             <div className="flex items-center gap-3">
               <h3 id={`knows-digest-${bot.key}`} className="flex-1 text-xs font-medium text-muted-foreground">
@@ -179,8 +167,24 @@ export function BotKnows({ hq, bot }: { hq: Hq; bot: Bot<Room> }) {
               </ul>
             </section>
           )}
-        </div>
-      </CollapsibleContent>
+    </div>
+  );
+  if (page) return <div className="mx-auto w-full max-w-2xl">{body}</div>;
+
+  return (
+    <Collapsible open={open ?? pending.length > 0} onOpenChange={setOpen} className="shrink-0 border-b">
+      <CollapsibleTrigger className="group/knows flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left text-sm font-medium outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60">
+        <ChevronRightIcon aria-hidden className="size-4 text-muted-foreground transition-transform group-data-[state=open]/knows:rotate-90 motion-reduce:transition-none" />
+        <BrainIcon aria-hidden className="size-4 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">Bot này đang biết gì</span>
+        {pending.length > 0 && (
+          <span title={`${pending.length} đề xuất chờ anh duyệt`} className="shrink-0 rounded-full bg-primary px-2 py-0.5 text-[11px] text-primary-foreground tabular">
+            {pending.length}
+            <span className="sr-only"> đề xuất chờ duyệt</span>
+          </span>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>{body}</CollapsibleContent>
     </Collapsible>
   );
 }

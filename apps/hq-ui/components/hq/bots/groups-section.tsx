@@ -15,8 +15,8 @@ import { BotAvatar } from "./bot-avatar";
 import { GroupAvatar } from "./group-avatar";
 
 /**
- * "Nhóm" above the bot list: one row per group (stacked faces, name, who is in it) and "Nhóm mới".
- * A row opens the group's thread (components/hq/bots/group-thread.tsx).
+ * "Nhóm" (under the bot roster, and the Nhóm page): one row per group (stacked faces, name, who is
+ * in it) and "Nhóm mới". A row opens the group's thread (components/hq/bots/group-thread.tsx).
  */
 export function GroupsSection({
   groups,
@@ -33,7 +33,7 @@ export function GroupsSection({
 }) {
   const byId = new Map(all.map((b) => [b.room.name, b]));
   return (
-    <section aria-label="Nhóm bot" className="border-b py-1">
+    <section aria-label="Nhóm bot" className="py-1">
       <div className="flex items-center justify-between px-3 pt-1.5 pb-1">
         <h3 className="text-xs font-medium text-muted-foreground">Nhóm</h3>
         <Button type="button" size="sm" variant="ghost" onClick={onNew} className="h-7 px-2 text-xs max-md:h-11">
@@ -44,7 +44,7 @@ export function GroupsSection({
         <ul aria-label="Nhóm">
           {groups.map((g) => {
             const faces = g.members.map((id) => ({ key: byId.get(id)?.key ?? id, status: byId.get(id)?.status ?? ("idle" as const) }));
-            const names = g.members.map((id) => byId.get(id)?.name ?? "ngủ").join(", ");
+            const names = g.members.map((id) => byId.get(id)?.display ?? "ngủ").join(", ");
             return (
               <li key={g.id}>
                 <button
@@ -136,8 +136,7 @@ export function NewGroupDialog({ hq, open, onOpenChange, all, onCreated }: { hq:
                         {on && <CheckIcon className="size-3" />}
                       </span>
                       <BotAvatar id={b.key} status={b.status} size={24} />
-                      <span className="font-medium">{b.name}</span>
-                      <span className="min-w-0 truncate text-xs text-muted-foreground">{b.qualifier ?? b.project}</span>
+                      <span className="min-w-0 truncate font-medium">{b.display}</span>
                     </label>
                   </li>
                 );
