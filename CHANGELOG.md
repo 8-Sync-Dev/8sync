@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- HQ › Bản đồ code: nút "Cập nhật graph" chạy `graphify update` trong dự án chưa từng `8sync harness init` từng để lại thư mục `graphify-out/` chưa track, và một lần `git add -A` sau đó có thể commit nó. Giờ cập nhật xong, nếu git chưa bỏ qua `graphify-out/` (qua `.gitignore` hay exclude sẵn có), HQ thêm một dòng `graphify-out/` vào `info/exclude` của git common dir (dùng chung cho mọi worktree, không đổi file nào được track). Thư mục không phải repo git thì bỏ qua; lỗi ở bước này không làm hỏng kết quả cập nhật.
+
 ## [0.137.0] — 2026-11-07
 
 ### Added

@@ -2,9 +2,11 @@
 // (`graphify update . --no-cluster`) and ask it (`explain`, `path`; never `query`, which calls a model).
 // Runs through trail.ts runTrail: argv only, no shell, hard timeout, output cap, in the root of a
 // project HQ knows (resolved server-side, never a path from the browser). Tested in tests/graphify.test.ts.
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { stripAnsi } from "@/lib/codemap";
+import { childEnv } from "./child-env";
 import { OUTPUT_CAP, runTrail, type Project, type Refusal, type TrailCommand, type TrailOut } from "./trail";
 
 export const UPDATE_TIMEOUT_MS = 180_000;
@@ -108,11 +110,45 @@ export function startUpdate(p: Project, o: { run?: typeof runTrail; command?: Tr
     job.error = no?.error ?? null;
     job.tail = tail(seen);
     job.endedAt = now();
+    if (!no) void excludeGraphifyOut(p.root).catch((e) => console.warn("[hq] graphify-out exclude:", e));
   });
   return job;
 }
 
 const tail = (s: string) => clean(s).split("\n").filter((l) => l.trim()).slice(-8).join("\n");
+
+function gitRun(args: string[]): Promise<{ code: number; out: string }> {
+  const { promise, resolve } = Promise.withResolvers<{ code: number; out: string }>();
+  execFile("git", args, { timeout: 10_000, windowsHide: true, maxBuffer: 1 << 20, env: { ...childEnv(), GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" } }, (err, out) =>
+    resolve({ code: err ? (typeof err.code === "number" ? err.code : -1) : 0, out: String(out ?? "") }),
+  );
+  return promise;
+}
+
+/**
+ * Keep `graphify-out/` out of `git add -A` in projects that never ran `8sync harness init` (only its
+ * seed_gitignore adds it): append `graphify-out/` to `<git-common-dir>/info/exclude` (local, shared by
+ * linked worktrees) unless git already ignores it. Not a git repo → nothing. Returns whether it wrote.
+ */
+export async function excludeGraphifyOut(root: string): Promise<boolean> {
+  const dir = await gitRun(["-C", root, "rev-parse", "--git-common-dir"]);
+  const common = dir.code === 0 ? dir.out.trim() : "";
+  if (!common) return false;
+  const ignored = await gitRun(["-C", root, "check-ignore", "-q", "graphify-out/graph.json"]);
+  if (ignored.code !== 1) return false; // 0 = already ignored, anything else = git error
+  const file = path.join(path.resolve(root, common), "info", "exclude");
+  let text = "";
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; // locked/denied: never clobber the user's exclude
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  }
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const sep = text && !text.endsWith("\n") ? eol : "";
+  fs.appendFileSync(file, `${sep}graphify-out/${eol}`);
+  return true;
+}
 
 /** `graphify explain|path` in the root: ASKS_MAX at once, 30 s, OUTPUT_CAP; the text it printed. */
 export async function graphifyAsk(root: string, args: string[], o: { run?: typeof runTrail; command?: TrailCommand | null } = {}): Promise<{ ok: true; text: string } | ({ ok: false } & Refusal)> {
