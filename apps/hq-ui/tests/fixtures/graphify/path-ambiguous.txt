@@ -1,0 +1,14 @@
+Ambiguous: 'open()' matches 6 nodes in different files.
+  apps/hq-ui/components/hq/machine-view.tsx
+    id: apps_hq_ui_components_hq_machine_view_powerpanel_open
+  apps/hq-ui/lib/server/http.ts
+    id: apps_hq_ui_lib_server_http_open
+  crates/cli/src/verbs/ccc.rs
+    id: crates_cli_src_verbs_ccc_open
+  crates/cli/src/verbs/ccc/danger.rs
+    id: crates_cli_src_verbs_ccc_danger_tok_open
+  crates/cli/src/verbs/hq_core/sampler.rs
+    id: crates_cli_src_verbs_hq_core_sampler_backend_open
+  su-code/ship/hq-team-alive/uat.mjs
+    id: su_code_ship_hq_team_alive_uat_open
+Retry with path::symbol using one of the paths above (e.g. <path>::open()) or the full node id.

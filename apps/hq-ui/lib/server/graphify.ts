@@ -76,12 +76,28 @@ export function graphifyRefusal(r: TrailOut, timeoutMs: number): Refusal | null 
   return null;
 }
 
-// One registry for the server (each route bundle has its own module copy): updates per root, asks in flight.
-const G = globalThis as { __hqGraphify?: { updates: Map<string, GraphifyUpdate>; asks: number } };
-const reg = (G.__hqGraphify ??= { updates: new Map(), asks: 0 });
+// One registry for the server (each route bundle has its own module copy): updates per root, asks in
+// flight, and recent answers (per root + argv, ASK_CACHE_MS, at most ASK_CACHE_MAX, dropped when the graph is rebuilt).
+type Cached = { at: number; text: string };
+const G = globalThis as { __hqGraphify?: { updates: Map<string, GraphifyUpdate>; asks: number; answers: Map<string, Cached> } };
+const reg = (G.__hqGraphify ??= { updates: new Map(), asks: 0, answers: new Map() });
 export const ASKS_MAX = 3;
+export const ASK_CACHE_MS = 60_000;
+export const ASK_CACHE_MAX = 64;
+/** graphify's exit codes for "several nodes match" (3) and "no node matches" (4): answers, not failures. */
+const ANSWER_CODES = new Set([3, 4]);
 
 export const updateState = (root: string): GraphifyUpdate | null => reg.updates.get(keyOf(root)) ?? null;
+
+/** Whether the root has a graph to ask (`graphify-out/graph.json`). */
+export const hasGraph = (root: string) => fs.existsSync(path.join(root, "graphify-out", "graph.json"));
+export const NO_GRAPH_TEXT = "repo này chưa có graph: bấm Tạo bản đồ code (hoặc Cập nhật graph) trước";
+
+/** Forget the cached answers of one root (its graph changed). */
+function dropAnswers(root: string): void {
+  const k = `${keyOf(root)}\0`;
+  for (const key of reg.answers.keys()) if (key.startsWith(k)) reg.answers.delete(key);
+}
 
 /** Start `graphify update . --no-cluster` (GRAPHIFY_MAX_WORKERS=4) unless one runs for this root already. */
 export function startUpdate(p: Project, o: { run?: typeof runTrail; command?: TrailCommand | null; now?: () => number } = {}): GraphifyUpdate | Refusal {
@@ -93,6 +109,7 @@ export function startUpdate(p: Project, o: { run?: typeof runTrail; command?: Tr
   if (reg.updates.get(k)?.state === "running") return { error: "graph của dự án này đang được cập nhật", status: 409 };
   const job: GraphifyUpdate = { state: "running", startedAt: now(), endedAt: null, tail: "", error: null };
   reg.updates.set(k, job);
+  dropAnswers(p.root);
   let seen = "";
   void run(updateArgs(), {
     cwd: p.root,
@@ -110,6 +127,7 @@ export function startUpdate(p: Project, o: { run?: typeof runTrail; command?: Tr
     job.error = no?.error ?? null;
     job.tail = tail(seen);
     job.endedAt = now();
+    dropAnswers(p.root);
     if (!no) void excludeGraphifyOut(p.root).catch((e) => console.warn("[hq] graphify-out exclude:", e));
   });
   return job;
@@ -150,23 +168,43 @@ export async function excludeGraphifyOut(root: string): Promise<boolean> {
   return true;
 }
 
-/** `graphify explain|path` in the root: ASKS_MAX at once, 30 s, OUTPUT_CAP; the text it printed. */
-export async function graphifyAsk(root: string, args: string[], o: { run?: typeof runTrail; command?: TrailCommand | null } = {}): Promise<{ ok: true; text: string } | ({ ok: false } & Refusal)> {
+/**
+ * `graphify explain|path` in the root: ASKS_MAX at once, 30 s, OUTPUT_CAP; the text it printed. Exit 3
+ * (ambiguous: the candidates, on stderr) and 4 (no such node) are answers too. A repeat of the same
+ * argv in the same root within ASK_CACHE_MS answers from memory (`cached`), without running graphify.
+ */
+export async function graphifyAsk(
+  root: string,
+  args: string[],
+  o: { run?: typeof runTrail; command?: TrailCommand | null; now?: () => number } = {},
+): Promise<{ ok: true; text: string; cached: boolean } | ({ ok: false } & Refusal)> {
+  const now = (o.now ?? Date.now)();
+  const key = `${keyOf(root)}\0${args.join("\0")}`;
+  const hit = reg.answers.get(key);
+  if (hit && now - hit.at < ASK_CACHE_MS) return { ok: true, text: hit.text, cached: true };
   const command = o.command === undefined ? graphifyCommand() : o.command;
   if (!command) return { ok: false, error: MISSING_TEXT, status: 503 };
   if (reg.asks >= ASKS_MAX) return { ok: false, error: "graphify đang chạy nhiều việc, thử lại sau vài giây", status: 429 };
   reg.asks++;
   try {
     const r = await (o.run ?? runTrail)(args, { cwd: root, timeoutMs: ASK_TIMEOUT_MS, cap: OUTPUT_CAP, command, env: { GRAPHIFY_MAX_WORKERS: GRAPHIFY_WORKERS } });
-    const no = graphifyRefusal(r, ASK_TIMEOUT_MS);
-    return no ? { ok: false, ...no } : { ok: true, text: clean(r.stdout) || "(graphify không in gì)" };
+    const answered = !r.ok && !r.timedOut && !r.capped && !r.missing && r.code != null && ANSWER_CODES.has(r.code);
+    const no = answered ? null : graphifyRefusal(r, ASK_TIMEOUT_MS);
+    if (no) return { ok: false, ...no };
+    const text = clean(r.stdout || (answered ? r.stderr : "")) || "(graphify không in gì)";
+    reg.answers.delete(key);
+    reg.answers.set(key, { at: now, text });
+    // A Map keeps insertion order: the first key is the oldest answer.
+    while (reg.answers.size > ASK_CACHE_MAX) reg.answers.delete(reg.answers.keys().next().value!);
+    return { ok: true, text, cached: false };
   } finally {
     reg.asks--;
   }
 }
 
-/** Tests: forget updates and asks. */
+/** Tests: forget updates, asks and cached answers. */
 export function resetGraphify(): void {
   reg.updates.clear();
+  reg.answers.clear();
   reg.asks = 0;
 }

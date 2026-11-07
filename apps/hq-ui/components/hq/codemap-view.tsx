@@ -14,6 +14,7 @@ import { agoVi } from "@/lib/now";
 import { rootKey } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./bits";
+import { EnablePrompt, GraphifyPanel, Problem } from "./codemap-graphify";
 import { makeApi, type Api } from "./use-hq";
 import { usePoll } from "./use-poll";
 import type { Project } from "./types";
@@ -123,6 +124,43 @@ export function CodemapView({
     }
   };
 
+  // "Tạo bản đồ code cho repo này": register the repo if needed, then graphify update + trail build (owner only).
+  const [enabling, setEnabling] = useState(false);
+  const enable = async (target: { path: string } | { project: number }) => {
+    setEnabling(true);
+    try {
+      const r = await api<{ project: { id: number; name: string }; notes: string[]; started: boolean }>("/api/codemap/enable", { method: "POST", body: target });
+      await onAdded();
+      setPick(r.project.id);
+      status.reload();
+      if (r.started) {
+        setFast(true);
+        toast.success(`Đang tạo bản đồ code cho ${r.project.name}`);
+      } else toast.success(`Đã thêm ${r.project.name} vào HQ, dùng bản đồ code có sẵn trên máy`);
+      for (const note of r.notes) toast.warning(note);
+    } catch (e) {
+      toast.error(`Tạo bản đồ code: ${(e as Error).message}`);
+    } finally {
+      setEnabling(false);
+    }
+  };
+  // A bot's repo HQ has not registered yet, or a registered one with neither a trail index nor a graph.
+  const pending = id == null && repo ? addable.find((o) => rootKey(o.path) === rootKey(repo)) : undefined;
+  const bare = st != null && !st.index.indexed && !st.graph.dir && !building;
+  // Whether the unregistered repo already has a map on disk (then the tap only registers it). A failed
+  // check counts as "no map": the server still skips the rebuild when one is there.
+  const [disk, setDisk] = useState<{ path: string; has: boolean } | null>(null);
+  const pendingPath = pending?.path ?? null;
+  useEffect(() => {
+    if (!pendingPath) return;
+    const ac = new AbortController();
+    api<{ indexed: boolean; graph: boolean }>(`/api/codemap/enable?path=${encodeURIComponent(pendingPath)}`, { signal: ac.signal })
+      .then((d) => setDisk({ path: pendingPath, has: d.indexed || d.graph }))
+      .catch(() => !ac.signal.aborted && setDisk({ path: pendingPath, has: false }));
+    return () => ac.abort();
+  }, [api, pendingPath]);
+  const pendingHas = disk && disk.path === pendingPath ? disk.has : null;
+
   if (!live.length && !addable.length) {
     return (
       <EmptyState icon={<MapIcon />} title="Chưa có dự án nào trong HQ" className="h-full justify-center">
@@ -142,7 +180,7 @@ export function CodemapView({
         </h2>
         <div className="ml-auto flex items-center gap-2">
           <Select value={id != null ? String(id) : ""} onValueChange={(v) => void choose(v)} disabled={adding != null}>
-            <SelectTrigger size="sm" className="max-w-64 text-xs max-sm:h-10" aria-label="Dự án">
+            <SelectTrigger size="sm" className="max-w-64 min-w-0 text-xs max-sm:data-[size=sm]:h-11" aria-label="Dự án">
               <SelectValue placeholder={adding ? "Đang thêm…" : "Chọn dự án"} />
             </SelectTrigger>
             <SelectContent>
@@ -170,6 +208,7 @@ export function CodemapView({
             type="button"
             variant="ghost"
             size="icon-sm"
+            className="max-sm:size-11"
             onClick={() => {
               status.reload();
               setMapNonce((x) => x + 1);
@@ -187,17 +226,22 @@ export function CodemapView({
         <div className={cn("grid min-h-0 flex-1", sideNow && "lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)]")}>
           <div className={cn("min-h-0 overflow-y-auto", sideNow && "max-lg:hidden lg:border-r")}>
             <div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-4 sm:px-6">
-              {id == null ? (
+              {pending ? (
+                <EnablePrompt name={pending.name} root={pending.path} existing={pendingHas} busy={enabling} onEnable={() => void enable({ path: pending.path })} />
+              ) : id == null ? (
                 <p className="text-sm text-muted-foreground">Chọn một repo ở góc phải để thêm vào HQ và xem bản đồ code của nó.</p>
               ) : status.error && !st ? (
                 <Problem text={status.error} onRetry={status.reload} />
               ) : !st ? (
                 <Bone className="h-16 w-full" />
+              ) : bare ? (
+                <EnablePrompt name={st.project.name} root={st.project.root} existing={false} busy={enabling} onEnable={() => void enable({ project: st.project.id })} />
               ) : (
                 <StatusStrip st={st} now={status.at} totals={mapNow?.data?.totals ?? null} onBuild={build} />
               )}
               {/* Keyed per project so a switch resets them; the prefixes keep these siblings' keys apart. */}
               {st?.index.indexed && id != null && <SearchBox key={`search:${id}`} api={api} project={id} onOpen={openFile} />}
+              {id != null && st && !bare && <GraphifyPanel key={`graphify:${id}`} api={api} project={id} active={active} onUpdated={status.reload} onOpen={openFile} />}
               {st?.index.indexed &&
                 (mapNow?.error ? (
                   <Problem text={mapNow.error} onRetry={() => setMapNonce((x) => x + 1)} />
@@ -210,7 +254,6 @@ export function CodemapView({
                   <MapTree map={mapNow.data} onOpen={openFile} />
                 ))}
               {st?.graph.dir && <GraphNote st={st} now={status.at} onOpen={() => id != null && setSide({ kind: "graph", project: id })} />}
-              {id != null && <GraphifyPanel key={`graphify:${id}`} api={api} project={id} active={active} onUpdated={status.reload} />}
             </div>
           </div>
           {sideNow?.kind === "skeleton" && (
@@ -219,19 +262,6 @@ export function CodemapView({
             </div>
           )}
         </div>
-      )}
-    </div>
-  );
-}
-
-function Problem({ text, onRetry }: { text: string; onRetry?: () => void }) {
-  return (
-    <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-      <span className="min-w-0 flex-1 break-words">{text}</span>
-      {onRetry && (
-        <Button size="sm" variant="outline" onClick={onRetry}>
-          Thử lại
-        </Button>
       )}
     </div>
   );
@@ -260,7 +290,7 @@ function StatusStrip({ st, now, totals, onBuild }: { st: CodemapStatus; now: num
             {totals.languages.length > 0 && <span className="max-sm:hidden"> · {totals.languages.join(", ")}</span>}
           </span>
         )}
-        <Button type="button" size="sm" variant={st.index.indexed ? "outline" : "default"} className="ml-auto max-sm:h-10" disabled={running || !st.trail} onClick={onBuild}>
+        <Button type="button" size="sm" variant={st.index.indexed ? "outline" : "default"} className="ml-auto max-sm:h-11" disabled={running || !st.trail} onClick={onBuild}>
           {running ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <HammerIcon />}
           {running ? "Đang index…" : "Index ngay"}
         </Button>
@@ -333,7 +363,7 @@ function SearchBox({ api, project, onOpen }: { api: Api; project: number; onOpen
               role="radio"
               aria-checked={mode === m}
               onClick={() => setMode(m)}
-              className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 aria-checked:bg-muted aria-checked:text-foreground motion-reduce:transition-none max-sm:py-2"
+              className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 aria-checked:bg-muted aria-checked:text-foreground motion-reduce:transition-none max-sm:min-h-11 max-sm:px-4"
             >
               {label}
             </button>
@@ -345,9 +375,9 @@ function SearchBox({ api, project, onOpen }: { api: Api; project: number; onOpen
           maxLength={QUERY_MAX}
           placeholder={mode === "ask" ? "Hỏi bằng lời: chỗ nào xử lý đăng nhập?" : "Mẫu regex: childEnv|binFor"}
           aria-label={mode === "ask" ? "Câu hỏi cho trail ask" : "Mẫu cho trail grep"}
-          className={cn("h-8 min-w-48 flex-1 text-sm max-sm:h-10", mode === "grep" && "font-mono")}
+          className={cn("h-8 min-w-0 flex-1 basis-48 text-sm max-sm:h-11 max-sm:text-base", mode === "grep" && "font-mono")}
         />
-        <Button type="submit" size="sm" disabled={busy || !q.trim()} className="max-sm:h-10">
+        <Button type="submit" size="sm" disabled={busy || !q.trim()} className="max-sm:h-11">
           {busy ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <SearchIcon />}
           Tìm
         </Button>
@@ -398,7 +428,7 @@ function MapTree({ map, onOpen }: { map: CodeMap; onOpen: (file: string, line: n
     <section aria-label="Bản đồ module" className="space-y-3">
       {map.scopes.map((s, i) => (
         <details key={s.scope} open={i < 3} className="group rounded-lg border">
-          <summary className="flex cursor-pointer list-none items-baseline gap-2 rounded-lg px-3 py-2 outline-none select-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden">
+          <summary className="flex cursor-pointer list-none items-baseline gap-2 rounded-lg px-3 py-2 outline-none select-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11 max-sm:items-center [&::-webkit-details-marker]:hidden">
             <span aria-hidden className="text-[10px] text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none">
               ▶
             </span>
@@ -420,7 +450,7 @@ function MapTree({ map, onOpen }: { map: CodeMap; onOpen: (file: string, line: n
                 <li key={e.path} className="px-3 py-1.5">
                   <div className="flex min-w-0 items-center gap-2">
                     {e.isFile ? (
-                      <button type="button" onClick={() => onOpen(e.path, null)} className="flex min-w-0 items-center gap-1.5 rounded outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60" title={`Xem khung ${e.path}`}>
+                      <button type="button" onClick={() => onOpen(e.path, null)} className="flex min-w-0 items-center gap-1.5 rounded outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11" title={`Xem khung ${e.path}`}>
                         {name}
                       </button>
                     ) : (
@@ -471,7 +501,7 @@ function HubChip({ h, onOpen, withFile = false }: { h: MapHub; onOpen: (file: st
       type="button"
       onClick={() => onOpen(h.path, h.line)}
       title={`${h.kind} ${h.name} · ${h.path}${h.line != null ? `:${h.line}` : ""} · ${h.inDegree} nơi gọi`}
-      className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/30 px-1.5 py-0.5 font-mono text-[11px] outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:py-1.5"
+      className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/30 px-1.5 py-0.5 font-mono text-[11px] outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11 max-sm:px-2.5"
     >
       <span className="truncate">{h.name}</span>
       {withFile && <span className="truncate text-muted-foreground">{base}</span>}
@@ -500,7 +530,7 @@ function SkeletonPanel({ api, project, file, line, onClose }: { api: Api; projec
   return (
     <article aria-label={`Khung ${file}`} className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
-        <Button type="button" variant="ghost" size="icon-sm" className="-ml-1.5 shrink-0 lg:hidden max-sm:size-10" onClick={onClose} aria-label="Về bản đồ">
+        <Button type="button" variant="ghost" size="icon-sm" className="-ml-1.5 shrink-0 lg:hidden max-sm:size-11" onClick={onClose} aria-label="Về bản đồ">
           <ArrowLeftIcon />
         </Button>
         <div className="min-w-0 flex-1">
@@ -555,110 +585,13 @@ function GraphNote({ st, now, onOpen }: { st: CodemapStatus; now: number; onOpen
           <span className="text-xs text-muted-foreground tabular">
             graph.html · {bytes(h.size)} · {agoVi(h.mtime, now || h.mtime)}
           </span>
-          <Button type="button" size="sm" variant="outline" className="ml-auto max-sm:h-10" onClick={onOpen}>
+          <Button type="button" size="sm" variant="outline" className="ml-auto max-sm:h-11" onClick={onOpen}>
             Xem đồ thị
           </Button>
         </>
       ) : (
         <span className="text-xs text-muted-foreground">graphify-out/ có nhưng chưa có graph.html để xem.</span>
       )}
-    </section>
-  );
-}
-
-type GraphifyUpdate = { state: "running" | "done" | "failed"; startedAt: number; endedAt: number | null; tail: string; error: string | null };
-
-/** graphify on the server: "Cập nhật graph" (`graphify update . --no-cluster`), "Giải thích" (explain) and "Đường đi" (path). */
-function GraphifyPanel({ api, project, active, onUpdated }: { api: Api; project: number; active: boolean; onUpdated: () => void }) {
-  const [fast, setFast] = useState(false);
-  const st = usePoll<{ installed: boolean; update: GraphifyUpdate | null }>(api, `/api/codemap/graphify?project=${project}`, fast ? BUILD_POLL_MS : IDLE_POLL_MS, active);
-  const running = st.data?.update?.state === "running";
-  // Poll fast only while an update runs; when one ends, the status above re-reads graph.html.
-  if (st.data && running !== fast) setFast(running);
-  useEffect(() => {
-    if (!fast) onUpdated();
-  }, [fast, onUpdated]);
-  const [mode, setMode] = useState<"explain" | "path">("explain");
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<{ text: string | null; error: string | null } | null>(null);
-  const update = async () => {
-    try {
-      await api(`/api/codemap/graphify`, { method: "POST", body: { project, action: "update" } });
-      setFast(true);
-      st.reload();
-    } catch (e) {
-      toast.error(`graphify: ${(e as Error).message}`);
-    }
-  };
-  const ask = async (e: FormEvent) => {
-    e.preventDefault();
-    if (busy || !a.trim() || (mode === "path" && !b.trim())) return;
-    setBusy(true);
-    try {
-      const body = mode === "explain" ? { project, action: "explain", symbol: a } : { project, action: "path", a, b };
-      const r = await api<{ text: string }>(`/api/codemap/graphify`, { method: "POST", body });
-      setRes({ text: r.text, error: null });
-    } catch (err) {
-      setRes({ text: null, error: (err as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const u = st.data?.update;
-  return (
-    <section aria-label="graphify" className="space-y-2 rounded-lg border px-3 py-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <NetworkIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <span className="text-sm font-medium">graphify</span>
-        <span className="text-xs text-muted-foreground">
-          {st.data && !st.data.installed
-            ? "chưa cài graphify — chạy `8sync setup`"
-            : running
-              ? "đang cập nhật graph…"
-              : u?.state === "done"
-                ? `cập nhật xong ${agoVi(u.endedAt ?? u.startedAt, st.at || (u.endedAt ?? u.startedAt))}`
-                : u?.state === "failed"
-                  ? "cập nhật lỗi"
-                  : "graph từ cấu trúc repo, không gọi model"}
-        </span>
-        <Button type="button" size="sm" variant="outline" className="ml-auto max-sm:h-10" disabled={running || st.data?.installed === false} onClick={() => void update()}>
-          {running ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <RefreshCwIcon />}
-          Cập nhật graph
-        </Button>
-      </div>
-      {u?.error && <Problem text={u.error} />}
-      {u?.tail && <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 px-2 py-1.5 font-mono text-[11px] text-muted-foreground">{u.tail}</pre>}
-      <form onSubmit={ask} className="flex flex-wrap items-center gap-2">
-        <div role="radiogroup" aria-label="Hỏi graphify" className="inline-flex rounded-lg border p-0.5">
-          {(
-            [
-              ["explain", "Giải thích"],
-              ["path", "Đường đi"],
-            ] as const
-          ).map(([m, label]) => (
-            <button
-              key={m}
-              type="button"
-              role="radio"
-              aria-checked={mode === m}
-              onClick={() => setMode(m)}
-              className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 aria-checked:bg-muted aria-checked:text-foreground motion-reduce:transition-none max-sm:py-2"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <Input value={a} onChange={(e) => setA(e.target.value)} maxLength={200} placeholder={mode === "explain" ? "Ký hiệu: startBuild" : "Từ: A()"} aria-label={mode === "explain" ? "Ký hiệu cần giải thích" : "Điểm đầu"} className="h-8 min-w-36 flex-1 font-mono text-sm max-sm:h-10" />
-        {mode === "path" && <Input value={b} onChange={(e) => setB(e.target.value)} maxLength={200} placeholder="Đến: B()" aria-label="Điểm cuối" className="h-8 min-w-36 flex-1 font-mono text-sm max-sm:h-10" />}
-        <Button type="submit" size="sm" disabled={busy || !a.trim() || (mode === "path" && !b.trim())} className="max-sm:h-10">
-          {busy ? <LoaderIcon className="animate-spin motion-reduce:animate-none" /> : <SearchIcon />}
-          Hỏi
-        </Button>
-      </form>
-      {res?.error && <Problem text={res.error} />}
-      {res?.text && <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2 py-1.5 font-mono text-xs">{res.text}</pre>}
     </section>
   );
 }
@@ -684,7 +617,7 @@ function GraphFrame({ token, project, name, onClose }: { token: string; project:
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2 sm:px-6">
-        <Button type="button" variant="ghost" size="sm" className="-ml-2 max-sm:h-10" onClick={onClose}>
+        <Button type="button" variant="ghost" size="sm" className="-ml-2 max-sm:h-11" onClick={onClose}>
           <ArrowLeftIcon /> Về bản đồ
         </Button>
         <span className="min-w-0 truncate text-xs text-muted-foreground">graphify-out/graph.html · {name}</span>
