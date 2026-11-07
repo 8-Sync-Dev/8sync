@@ -1,0 +1,3 @@
+Shortest path (1 hops):
+  checkAuth() --calls [EXTRACTED]--> safeEqual()
+Path confidence: EXTRACTED (weakest hop 1: calls)

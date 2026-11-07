@@ -1,0 +1,17 @@
+Node: POST()
+  ID:        apps_hq_ui_app_api_projects_route_post
+  Source:    apps/hq-ui/app/api/projects/route.ts L19
+  Type:      code
+  Community: 
+  Degree:    9
+
+Connections (9):
+  --> open() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L20
+  --> json() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L40
+  --> bad() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L23
+  --> run() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L33
+  --> readBody() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L22
+  <-- projects/route.ts [contains] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L19
+  --> projectIdFor() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L53
+  --> validateProjectPath() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L36
+  --> validateNewProjectPath() [calls] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L26

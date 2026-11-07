@@ -3,6 +3,8 @@
 // output, and the checks on what the browser may ask for. Server side: lib/server/trail.ts.
 // Tested in tests/codemap.test.ts.
 
+import { rootKey } from "./preview";
+
 export type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /** A symbol many others point at: `trail map` hubs and hotspots. */
@@ -39,6 +41,27 @@ export type CodemapStatus = {
 
 export const QUERY_MAX = 300;
 export const FILE_MAX = 512;
+
+/**
+ * The registered project a bot's Bản đồ code shows: the one whose folder is one of the bot's folders
+ * (repo root, git top-level, cwd) or holds it, the deepest when several do. A `.claude/worktrees/<x>`
+ * folder counts as its repo; `\` vs `/`, case and Rust's `\\?\` do not matter (rootKey). Missing
+ * folders never match, and a project inside the bot's folder is not its repo. None: null.
+ */
+export function repoProject<P extends { path: string; missing?: boolean }>(projects: readonly P[], dirs: readonly (string | null | undefined)[]): P | null {
+  const keys = dirs.filter((d): d is string => !!d).map(rootKey);
+  let best: P | null = null;
+  let depth = -1;
+  for (const p of projects) {
+    if (p.missing) continue;
+    const k = rootKey(p.path);
+    if (k && k.length > depth && keys.some((d) => d === k || d.startsWith(`${k}/`))) {
+      best = p;
+      depth = k.length;
+    }
+  }
+  return best;
+}
 
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);

@@ -1,11 +1,11 @@
 "use client";
 
-// "Bot mới" (su-code/research/hq-bots-groups.md §1): one sheet, top to bottom — template → folder → name →
-// first message — then "Tạo và gửi" or "Chỉ tạo". A Claude Code template starts an hq-* session
-// (POST /api/sessions, role from the template); an omp one creates an omp session (POST /api/omp/sessions)
-// and opens its terminal once on the server so it runs. Rules and request bodies: lib/templates.ts.
-import { CheckIcon, FolderGit2Icon, FolderOpenIcon, Loader2Icon, SparklesIcon } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+// "Bot mới" (su-code/research/hq-bots-groups.md §1): one sheet, top to bottom — template (+ engine and model,
+// the template's by default) → folder → name → first message — then "Tạo và gửi" or "Chỉ tạo". Both engines
+// go through POST /api/sessions: Claude Code starts an hq-* session (role from the template); omp creates an
+// omp session and opens its terminal once on the server so it runs. Rules and request bodies: lib/templates.ts.
+import { CheckIcon, CopyIcon, FolderGit2Icon, FolderOpenIcon, Loader2Icon, PencilIcon, PlusIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,50 +17,28 @@ import {
   BLANK_TEMPLATE_ID,
   BUILT_IN_TEMPLATES,
   botKeyOf,
+  copyDraft,
   createRequest,
   nameProblem,
   orderFolders,
+  runForEngine,
   suggestName,
+  templateRun,
+  type BotEngine,
+  type BotRun,
   type BotTemplate,
-  type TemplateColor,
 } from "@/lib/templates";
 import { cn } from "@/lib/utils";
+import { EFFORT_LABEL, modelChipLabel } from "../model-picker";
 import type { Hq } from "../use-hq";
 import { ProjectPicker } from "../workspace-launcher";
-
-/** Static classes per template color (Tailwind only ships what it sees written out). */
-export const TEMPLATE_TINT: Record<TemplateColor, string> = {
-  slate: "bg-slate-500/12 ring-slate-500/25",
-  sky: "bg-sky-500/12 ring-sky-500/25",
-  amber: "bg-amber-500/12 ring-amber-500/25",
-  lime: "bg-lime-500/12 ring-lime-500/25",
-  violet: "bg-violet-500/12 ring-violet-500/25",
-  indigo: "bg-indigo-500/12 ring-indigo-500/25",
-  rose: "bg-rose-500/12 ring-rose-500/25",
-  orange: "bg-orange-500/12 ring-orange-500/25",
-  emerald: "bg-emerald-500/12 ring-emerald-500/25",
-  cyan: "bg-cyan-500/12 ring-cyan-500/25",
-  fuchsia: "bg-fuchsia-500/12 ring-fuchsia-500/25",
-  teal: "bg-teal-500/12 ring-teal-500/25",
-};
+import { ENGINE_LABEL, RunRow, TemplateFace, radioKeys, useStartModels } from "./template-bits";
+import { TemplateEditor, type EditorTarget } from "./template-editor";
 
 /** Folders shown before "Xem tất cả". */
 const FOLDERS_SHOWN = 6;
 
 type Folder = { path: string; name: string; id: number | null; lastUsed: number | null };
-
-/** Arrow keys move between the radios of a group (one tab stop per group), as a native radio group does. */
-function radioKeys(e: KeyboardEvent<HTMLElement>) {
-  const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
-  if (!step) return;
-  const radios = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')];
-  const i = radios.indexOf(document.activeElement as HTMLElement);
-  const next = radios[(i + step + radios.length) % radios.length];
-  if (!next) return;
-  e.preventDefault();
-  next.focus();
-  next.click();
-}
 
 export function NewBotSheet({
   hq,
@@ -81,9 +59,9 @@ export function NewBotSheet({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        className="flex h-[min(46rem,92dvh)] flex-col gap-0 p-0 sm:max-w-2xl max-sm:inset-0 max-sm:h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:ring-0"
+        className="flex h-[min(46rem,92dvh)] flex-col gap-0 p-0 sm:max-w-2xl max-md:[&>[data-slot=dialog-close]]:size-11 max-sm:inset-0 max-sm:h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:ring-0"
       >
-        {/* Mounted only while open: every opening starts fresh. */}
+        {/* Mounted only while open: every opening starts fresh. The X is 44 px to tap at ≤768 px (header leaves room). */}
         {open && <NewBotForm hq={hq} initialTemplate={initialTemplate ?? null} onDone={(key) => {
           onOpenChange(false);
           onCreated(key);
@@ -116,6 +94,8 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
   }, []);
 
   const api = hq.api;
+  // Bumped after a save or a delete: the list is read again (a deleted copy may uncover a built-in).
+  const [loaded, setLoaded] = useState(0);
   useEffect(() => {
     let live = true;
     api<{ templates: BotTemplate[] }>("/api/templates")
@@ -126,11 +106,46 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
     return () => {
       live = false;
     };
-  }, [api]);
+  }, [api, loaded]);
 
   const mine = templates.filter((t) => !t.builtIn);
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
   const shownTemplates = tab === "mine" ? mine : templates.filter((t) => t.builtIn);
+
+  // Engine + model + level: the template's until the owner picks another (a pick holds for that template only).
+  const [pickedRun, setPickedRun] = useState<{ tpl: string; run: BotRun } | null>(null);
+  // "Của tôi": the editor (new, AI, copy, edit) and the delete confirmation.
+  const [editor, setEditor] = useState<EditorTarget | null>(null);
+  const [deleting, setDeleting] = useState<null | "ask" | "busy">(null);
+  function saved(t: BotTemplate) {
+    setEditor(null);
+    setTemplates((list) => [...list.filter((x) => x.id !== t.id), t]);
+    setLoaded((n) => n + 1);
+    setTab("mine");
+    setTemplateId(t.id);
+    setPickedRun(null);
+  }
+  async function remove(t: BotTemplate) {
+    setDeleting("busy");
+    try {
+      await api(`/api/templates?id=${encodeURIComponent(t.id)}`, { method: "DELETE" });
+      toast.success(`Đã xoá mẫu ${t.name}`);
+      setTemplates((list) => list.filter((x) => x.id !== t.id));
+      setLoaded((n) => n + 1);
+      setTemplateId(BLANK_TEMPLATE_ID);
+    } catch (x) {
+      toast.error(`Chưa xoá được: ${(x as Error).message}`);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  const run: BotRun | null = template ? (pickedRun?.tpl === template.id ? pickedRun.run : templateRun(template)) : null;
+  const setRun = (r: BotRun) => {
+    if (template) setPickedRun({ tpl: template.id, run: r });
+  };
+  const engine: BotEngine = run?.engine ?? "claude";
+  const models = useStartModels(api, engine);
 
   // Registered projects (most recently used first), the known repos that match the hint, and a folder picked by hand.
   const sessions = hq.sessions.data;
@@ -156,7 +171,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
   const taken = useMemo(() => sessions.filter((s) => s.status !== "ended").flatMap((s) => [s.name.replace(/^hq-/, ""), s.label]), [sessions]);
   const suggested = template && chosen ? suggestName(template.id, chosen.name, taken) : "";
   const botName = nameTouched ? name : suggested;
-  const problem = template ? nameProblem(botName, template.engine, taken) : null;
+  const problem = template ? nameProblem(botName, engine, taken) : null;
   const pickerList: WsProject[] = useMemo(
     () => [...hq.projects.data.map((p) => ({ path: p.path, name: p.name })), ...hq.knownProjects.map((k) => ({ path: k.path, name: k.name }))],
     [hq.projects.data, hq.knownProjects],
@@ -177,16 +192,16 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
     try {
       let id = chosen.id;
       // Claude Code runs only in a registered project: a folder picked by hand is registered first.
-      if (template.engine === "claude" && id == null) {
+      if (engine === "claude" && id == null) {
         const r = await hq.api<{ project: { id: number } }>("/api/projects", { method: "POST", body: { path: chosen.path } });
         id = r.project.id;
         void hq.reload.projects();
       }
-      const req = createRequest({ template, name: botName, project: { id, path: chosen.path }, message, send, worktree });
+      const req = createRequest({ template, run: run ?? undefined, name: botName, project: { id, path: chosen.path }, message, send, worktree });
       const res = await hq.api<{ id?: string; session?: { name?: string } }>(req.url, { method: "POST", body: req.body });
       const key = botKeyOf(req, res);
       // An omp session runs once its terminal opens: open it once here (it keeps running after this poll).
-      if (req.url === "/api/omp/sessions" && key) {
+      if (req.body.engine === "omp" && key) {
         await hq.api(`/api/sessions/${encodeURIComponent(key)}/term?cols=120&rows=32&gen=-1&since=0`).catch((x: Error) => {
           toast.error(`Đã tạo ${req.body.name} nhưng chưa mở được: ${x.message}. Mở nó trong Không gian.`);
         });
@@ -201,12 +216,15 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
     }
   }
 
-  const engineLabel = template?.engine === "omp" ? "omp" : `Claude Code${template?.role ? ` · ${roleOf(template.role)?.labelVi ?? template.role}` : ""}`;
+  const role = engine === "claude" && template?.engine === "claude" && template.role ? (roleOf(template.role)?.labelVi ?? template.role) : null;
+  const engineLabel = [ENGINE_LABEL[engine], role, modelChipLabel(engine, run?.model, "model mặc định"), run?.thinking ? `suy nghĩ ${EFFORT_LABEL[run.thinking] ?? run.thinking}` : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <>
     <form onSubmit={(e) => create(true, e)} className="flex min-h-0 flex-1 flex-col" aria-busy={busy != null}>
-      <DialogHeader className="shrink-0 border-b px-5 pt-5 pb-4 max-sm:px-4 max-sm:pt-[max(1rem,env(safe-area-inset-top))]">
+      <DialogHeader className="shrink-0 border-b px-5 pt-5 pb-4 max-md:pr-14 max-sm:px-4 max-sm:pr-14 max-sm:pt-[max(1rem,env(safe-area-inset-top))]">
         <DialogTitle className="text-base">Bot mới</DialogTitle>
         <DialogDescription className="text-pretty">Mỗi bot là một phiên làm việc trong một thư mục. Chọn mẫu, chọn thư mục, rồi giao việc đầu tiên.</DialogDescription>
       </DialogHeader>
@@ -230,16 +248,28 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
                   type="button"
                   aria-pressed={tab === v}
                   onClick={() => setTab(v)}
-                  className="h-7 rounded-md px-3 text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm motion-reduce:transition-none max-md:h-9"
+                  className="h-7 rounded-md px-3 text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm motion-reduce:transition-none max-md:h-11"
                 >
                   {label}
                 </button>
               ))}
             </div>
           </div>
+          {tab === "mine" && (
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" className="max-md:h-11" onClick={() => setEditor({ kind: "new" })}>
+                <PlusIcon aria-hidden />
+                Tạo mới
+              </Button>
+              <Button type="button" size="sm" variant="outline" className="max-md:h-11" onClick={() => setEditor({ kind: "new", ai: true })}>
+                <SparklesIcon aria-hidden />
+                Tạo bằng AI
+              </Button>
+            </div>
+          )}
           {shownTemplates.length === 0 ? (
             <p className="rounded-lg border border-dashed px-4 py-5 text-sm text-pretty text-muted-foreground">
-              Chưa có mẫu riêng. Thêm file JSON vào <code className="font-mono text-xs">~/.config/8sync/hq/templates/</code>, mỗi file một mẫu.
+              Chưa có mẫu riêng. Tạo mới, nhờ AI viết từ một câu, hoặc chọn một mẫu có sẵn rồi bấm Nhân bản.
             </p>
           ) : (
             // A card gallery (owner 2026-11-07, Grok Bot style): two columns on a phone, three from 640 px.
@@ -262,17 +292,14 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
                     onClick={() => {
                       setTemplateId(t.id);
                       setFolder(null);
+                      setDeleting(null);
                     }}
                     className={cn(
                       "group relative flex min-h-[5.5rem] flex-col items-start gap-1.5 rounded-xl border bg-card p-3 text-left outline-none transition-[border-color,box-shadow] duration-150 hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
                       on && "border-foreground/70 ring-1 ring-foreground/70",
                     )}
                   >
-                    <span aria-hidden className={cn("grid size-8 place-items-center rounded-lg text-base ring-1", TEMPLATE_TINT[t.color])}>
-                      {t.emoji}
-                    </span>
-                    <span className="text-sm leading-tight font-medium">{t.name}</span>
-                    <span className="line-clamp-2 text-xs leading-snug text-pretty text-muted-foreground">{t.purpose}</span>
+                    <TemplateFace t={t} />
                     {on && <CheckIcon aria-hidden className="absolute top-2.5 right-2.5 size-4" />}
                   </button>
                 );
@@ -280,10 +307,44 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
             </div>
           )}
           {template && (
-            <p className="text-xs text-muted-foreground">
-              Chạy bằng <span className="font-medium text-foreground">{engineLabel}</span>
-              {template.skills.length > 0 && <> · nhắc nạp {template.skills.join(", ")}</>}
-            </p>
+            <div className="flex flex-wrap items-center gap-2" aria-label={`Mẫu ${template.name}`} role="group">
+              {!template.builtIn && (
+                <Button type="button" size="sm" variant="ghost" className="max-md:h-11" onClick={() => setEditor({ kind: "edit", template })}>
+                  <PencilIcon aria-hidden />
+                  Sửa
+                </Button>
+              )}
+              <Button type="button" size="sm" variant="ghost" className="max-md:h-11" onClick={() => setEditor({ kind: "new", draft: copyDraft(template) })}>
+                <CopyIcon aria-hidden />
+                {template.builtIn ? "Nhân bản thành mẫu của tôi" : "Nhân bản"}
+              </Button>
+              {!template.builtIn &&
+                (deleting ? (
+                  <span className="inline-flex flex-wrap items-center gap-2 text-xs" role="alert">
+                    Xoá mẫu “{template.name}”?
+                    <Button type="button" size="sm" variant="destructive" className="max-md:h-11" disabled={deleting === "busy"} onClick={() => void remove(template)}>
+                      Xoá
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="max-md:h-11" disabled={deleting === "busy"} onClick={() => setDeleting(null)}>
+                      Không
+                    </Button>
+                  </span>
+                ) : (
+                  <Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive max-md:h-11" onClick={() => setDeleting("ask")}>
+                    <Trash2Icon aria-hidden />
+                    Xoá
+                  </Button>
+                ))}
+            </div>
+          )}
+          {template && run && (
+            <>
+              <RunRow run={run} models={models} onChange={setRun} onEngine={(e) => setRun(runForEngine(template, e))} />
+              <p className="text-xs text-pretty text-muted-foreground" aria-live="polite">
+                Chạy bằng <span className="font-medium text-foreground">{engineLabel}</span>
+                {template.skills.length > 0 && <> · nhắc nạp {template.skills.join(", ")}</>}
+              </p>
+            </>
           )}
         </section>
 
@@ -354,7 +415,7 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
               </div>
             </>
           )}
-          {template?.engine === "omp" && (
+          {engine === "omp" && (
             <label className="flex w-fit cursor-pointer items-center gap-2 text-sm max-md:min-h-11">
               <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} className="size-4 accent-foreground" />
               Worktree riêng <span className="text-xs text-muted-foreground">(nhánh git riêng cho bot)</span>
@@ -450,6 +511,8 @@ function NewBotForm({ hq, initialTemplate, onDone }: { hq: Hq; initialTemplate: 
           />
         </DialogContent>
       </Dialog>
+      {/* Outside the form too: the editor is its own form. */}
+      <TemplateEditor hq={hq} target={editor} onClose={() => setEditor(null)} onSaved={saved} />
     </>
   );
 }

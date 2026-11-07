@@ -1,0 +1,51 @@
+Node: open()
+  ID:        apps_hq_ui_lib_server_http_open
+  Source:    apps/hq-ui/lib/server/http.ts L16
+  Type:      code
+  Community: 
+  Degree:    104
+
+Connections (104):
+  --> bad() [calls] [EXTRACTED] apps/hq-ui/lib/server/http.ts:L30
+  <-- http.ts [contains] [EXTRACTED] apps/hq-ui/lib/server/http.ts:L16
+  <-- messages/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/messages/route.ts:L1
+  <-- term/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/sessions/[name]/term/route.ts:L4
+  <-- api/sessions/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/sessions/route.ts:L2
+  <-- omp/sessions/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/omp/sessions/route.ts:L4
+  --> getToken() [calls] [EXTRACTED] apps/hq-ui/lib/server/http.ts:L26
+  <-- shell/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/shell/route.ts:L3
+  <-- auth.test.ts [imports] [EXTRACTED] apps/hq-ui/tests/auth.test.ts:L7
+  <-- projects/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/projects/route.ts:L3
+  <-- POST() [calls] [EXTRACTED] apps/hq-ui/app/api/messages/route.ts:L34
+  --> getDb() [calls] [EXTRACTED] apps/hq-ui/lib/server/http.ts:L31
+  <-- machine/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/machine/route.ts:L2
+  --> ingest() [calls] [EXTRACTED] apps/hq-ui/lib/server/http.ts:L33
+  <-- reply/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/channel/reply/route.ts:L3
+  <-- answer/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/sessions/[name]/answer/route.ts:L4
+  <-- POST() [calls] [EXTRACTED] apps/hq-ui/app/api/omp/sessions/route.ts:L38
+  <-- worktree/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/projects/worktree/route.ts:L1
+  <-- inbox/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/channel/inbox/route.ts:L2
+  <-- play/route.ts [imports] [EXTRACTED] apps/hq-ui/app/api/play/route.ts:L1
+  ... and 84 more (--all lists all 104)
+  Grouped by file:
+    --> apps/hq-ui/lib/server/http.ts: 4 connections
+    <-- apps/hq-ui/app/api/machine/disk/route.ts: 3 connections
+    <-- apps/hq-ui/app/api/projects/sidebar/route.ts: 3 connections
+    <-- apps/hq-ui/app/api/sessions/[name]/orca/route.ts: 3 connections
+    <-- apps/hq-ui/app/api/sessions/[name]/term/route.ts: 3 connections
+    <-- apps/hq-ui/app/api/sessions/route.ts: 3 connections
+    <-- apps/hq-ui/app/api/shell/route.ts: 3 connections
+    <-- apps/hq-ui/app/api/channel/heartbeat/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/commands/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/floor/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/fs/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/know/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/loops/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/machine/awake/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/machine/clean/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/machine/power/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/machine/restart/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/office/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/play/route.ts: 2 connections
+    <-- apps/hq-ui/app/api/preview/file/route.ts: 2 connections
+    ... and 21 more files
