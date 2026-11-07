@@ -3,10 +3,13 @@
 // ~/.config/8sync/hq/templates/ (lib/server/templates.ts reads them through `parseTemplate`) and replace a
 // built-in one with the same id. Text only: never a token, never client or CRM data. Pure and client-safe:
 // the request builders below are what the sheet sends. Tested in tests/templates.test.ts.
-import { isModelId, isRoleId, type ModelId, type RoleId } from "./roles";
+import { isModelId, isRoleId, roleOf, type RoleId } from "./roles";
+import { effortsFor, isClaudeEffort, isThinking, SELECTOR_RE, type ModelChoice } from "./room-model";
 import { isOmpSessionName } from "./omp-workspace";
 
 export type BotEngine = "claude" | "omp";
+export const BOT_ENGINES: readonly BotEngine[] = ["claude", "omp"];
+export const isBotEngine = (v: unknown): v is BotEngine => v === "claude" || v === "omp";
 
 /** The accent a template card gets; the sheet maps each one to static Tailwind classes. */
 export const TEMPLATE_COLORS = ["slate", "sky", "amber", "lime", "violet", "indigo", "rose", "orange", "emerald", "cyan", "fuchsia", "teal"] as const;
@@ -20,9 +23,12 @@ export type BotTemplate = {
   /** One line, Vietnamese. */
   purpose: string;
   engine: BotEngine;
-  /** Claude Code only (lib/roles.ts ROLES): the session's role and model. */
+  /** Claude Code only (lib/roles.ts ROLES): the session's role. */
   role?: RoleId;
-  model?: ModelId;
+  /** Claude Code: a lib/roles.ts model id (else the role's); omp: `<provider>/<model>` (else omp's default). */
+  model?: string;
+  /** Claude Code: `--effort` level; omp: thinking level (needs `model`). Else the model's default. */
+  thinking?: string;
   /** ≤6 lines, put in front of the first message. */
   instructions: string;
   /** Skill names the bot is reminded to load; never a skill's content. */
@@ -35,7 +41,7 @@ export type BotTemplate = {
 };
 
 /** Caps on a template file's fields (custom templates are typed by hand). */
-export const TEMPLATE_LIMITS = { name: 40, emoji: 16, purpose: 140, instructions: 1200, instructionLines: 6, skills: 12, skill: 64, folderHint: 200, firstMessage: 600 } as const;
+export const TEMPLATE_LIMITS = { name: 40, emoji: 16, purpose: 140, instructions: 1200, instructionLines: 6, skills: 12, skill: 64, folderHint: 200, firstMessage: 600, model: 128 } as const;
 /** A template id: the same shape as a session name, so `<id>-<project>` stays a valid one. */
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const SKILL_RE = /^[a-z0-9][a-z0-9:._-]*$/;
@@ -49,37 +55,58 @@ const clean = (s: string, newlines = false) => !(newlines ? /[\0-\x09\x0b-\x1f\x
 
 /** A template from a file (or anything else), checked field by field; null when any field is wrong. Never `builtIn`. */
 export function parseTemplate(raw: unknown): BotTemplate | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = checkTemplate(raw);
+  return r.ok ? r.template : null;
+}
+
+/** parseTemplate with the reason (Vietnamese, one field) when a field is wrong: the editor and the API show it. */
+export function checkTemplate(raw: unknown): { ok: true; template: BotTemplate } | { ok: false; error: string } {
+  const no = (error: string) => ({ ok: false as const, error });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return no("Mẫu phải là một object JSON.");
   const t = raw as Record<string, unknown>;
   const L = TEMPLATE_LIMITS;
-  if (typeof t.id !== "string" || !ID_RE.test(t.id)) return null;
-  if (!ok(t.name, L.name) || !clean(t.name) || !ok(t.emoji, L.emoji) || !clean(t.emoji) || !ok(t.purpose, L.purpose) || !clean(t.purpose)) return null;
-  if (!(TEMPLATE_COLORS as readonly unknown[]).includes(t.color)) return null;
-  if (t.engine !== "claude" && t.engine !== "omp") return null;
-  if (t.role !== undefined && !isRoleId(t.role)) return null;
-  if (t.model !== undefined && !isModelId(t.model)) return null;
-  if (t.engine === "omp" && (t.role !== undefined || t.model !== undefined)) return null;
+  if (typeof t.id !== "string" || !ID_RE.test(t.id)) return no("Mã mẫu: chữ thường, số, gạch nối, tối đa 32 ký tự.");
+  if (!ok(t.name, L.name) || !clean(t.name)) return no(`Tên: 1 đến ${L.name} ký tự, một dòng.`);
+  if (!ok(t.emoji, L.emoji) || !clean(t.emoji)) return no("Emoji: chọn một emoji.");
+  if (!ok(t.purpose, L.purpose) || !clean(t.purpose)) return no(`Mục đích: 1 đến ${L.purpose} ký tự, một dòng.`);
+  if (!(TEMPLATE_COLORS as readonly unknown[]).includes(t.color)) return no("Màu: chọn một màu trong danh sách.");
+  if (t.engine !== "claude" && t.engine !== "omp") return no("Engine: claude hoặc omp.");
+  if (t.role !== undefined && (t.engine === "omp" || !isRoleId(t.role))) return no("Vai trò: chỉ Claude Code có, chọn trong danh sách.");
+  if (t.model !== undefined && (t.engine === "claude" ? !isModelId(t.model) : typeof t.model !== "string" || t.model.length > L.model || !SELECTOR_RE.test(t.model))) {
+    return no(t.engine === "claude" ? "Model: chọn một model Claude trong danh sách." : "Model omp: dạng <provider>/<model>.");
+  }
+  if (t.thinking !== undefined && (t.engine === "claude" ? !isClaudeEffort(t.thinking) : !isThinking(t.thinking) || t.model === undefined)) {
+    return no(t.engine === "omp" && t.model === undefined ? "Mức suy nghĩ của omp cần một model." : "Mức suy nghĩ không hợp lệ.");
+  }
   const instructions = t.instructions ?? "";
-  if (typeof instructions !== "string" || instructions.length > L.instructions || !clean(instructions, true)) return null;
-  if (instructions.split("\n").length > L.instructionLines) return null;
+  if (typeof instructions !== "string" || instructions.length > L.instructions || !clean(instructions, true)) return no(`Lời dặn: tối đa ${L.instructions} ký tự.`);
+  if (instructions.split("\n").length > L.instructionLines) return no(`Lời dặn: tối đa ${L.instructionLines} dòng.`);
   const skills = t.skills ?? [];
-  if (!Array.isArray(skills) || skills.length > L.skills || !skills.every((s) => typeof s === "string" && s.length <= L.skill && SKILL_RE.test(s))) return null;
-  if (!optional(t.folderHint, L.folderHint) || (typeof t.folderHint === "string" && t.folderHint !== "" && !HINT_RE.test(t.folderHint))) return null;
-  if (!optional(t.firstMessage, L.firstMessage) || (typeof t.firstMessage === "string" && !clean(t.firstMessage))) return null;
+  if (!Array.isArray(skills) || skills.length > L.skills || !skills.every((s) => typeof s === "string" && s.length <= L.skill && SKILL_RE.test(s))) {
+    return no(`Skill: tối đa ${L.skills} tên, chữ thường, số và . _ : -`);
+  }
+  if (!optional(t.folderHint, L.folderHint) || (typeof t.folderHint === "string" && t.folderHint !== "" && !HINT_RE.test(t.folderHint))) {
+    return no("Thư mục hay làm: đường dẫn tương đối, không có '..'.");
+  }
+  if (!optional(t.firstMessage, L.firstMessage) || (typeof t.firstMessage === "string" && !clean(t.firstMessage))) return no(`Tin nhắn đầu: một dòng, tối đa ${L.firstMessage} ký tự.`);
   return {
-    id: t.id,
-    name: t.name.trim(),
-    emoji: t.emoji.trim(),
-    color: t.color as TemplateColor,
-    purpose: t.purpose.trim(),
-    engine: t.engine,
-    ...(t.role !== undefined ? { role: t.role as RoleId } : {}),
-    ...(t.model !== undefined ? { model: t.model as ModelId } : {}),
-    instructions: instructions.trim(),
-    skills: [...new Set(skills as string[])],
-    ...(typeof t.folderHint === "string" && t.folderHint ? { folderHint: t.folderHint.trim() } : {}),
-    ...(typeof t.firstMessage === "string" && t.firstMessage ? { firstMessage: t.firstMessage.trim() } : {}),
-    builtIn: false,
+    ok: true,
+    template: {
+      id: t.id,
+      name: t.name.trim(),
+      emoji: t.emoji.trim(),
+      color: t.color as TemplateColor,
+      purpose: t.purpose.trim(),
+      engine: t.engine,
+      ...(t.role !== undefined ? { role: t.role as RoleId } : {}),
+      ...(t.model !== undefined ? { model: t.model as string } : {}),
+      ...(t.thinking !== undefined ? { thinking: t.thinking as string } : {}),
+      instructions: instructions.trim(),
+      skills: [...new Set(skills as string[])],
+      ...(typeof t.folderHint === "string" && t.folderHint ? { folderHint: t.folderHint.trim() } : {}),
+      ...(typeof t.firstMessage === "string" && t.firstMessage ? { firstMessage: t.firstMessage.trim() } : {}),
+      builtIn: false,
+    },
   };
 }
 
@@ -140,9 +167,8 @@ export const BUILT_IN_TEMPLATES: readonly BotTemplate[] = (
       color: "violet",
       purpose: "Báo cáo có trích nguồn",
       engine: "omp",
-      instructions: "Mỗi nhận định phải có URL nguồn. Ghi 'chưa kiểm' khi chưa đọc được nguồn chính thức.\nGhi báo cáo vào su-code/research/. Không sửa code.",
+      instructions: "Mỗi nhận định phải có URL nguồn. Ghi 'chưa kiểm' khi chưa đọc được nguồn chính thức.\nGhi báo cáo thành file Markdown trong thư mục research/ của dự án. Không sửa code.",
       skills: ["deep-research-web", "last30days"],
-      folderHint: "su-code",
       firstMessage: "Nghiên cứu giúp anh: …",
     },
     {
@@ -157,89 +183,75 @@ export const BUILT_IN_TEMPLATES: readonly BotTemplate[] = (
       skills: ["full-flow", "feature"],
       firstMessage: "Lên kế hoạch cho: …",
     },
-    // 8 Sync.
-    {
-      id: "cpa-full",
-      name: "Content full ngày",
-      emoji: "🎬",
-      color: "rose",
-      purpose: "Làm trọn bộ nội dung hằng ngày qua app Content AI",
-      engine: "omp",
-      instructions:
-        "Làm bộ nội dung hôm nay qua app (bài học, infographic trend, ASMR, MKT). UAT file xuất (ffprobe, meta.json).\nLedger chỉ được đổi ordered → drafted → checked, không ghi đè approved/published/rejected. Theme sáng.\nKhông đăng khi owner chưa duyệt. Báo bằng tiếng Việt.",
-      skills: ["cpa-ops-cli", "cpa-app-attach", "brand-8sync"],
-      folderHint: "tools/content-post-agency",
-      firstMessage: "Làm bộ nội dung hôm nay",
-    },
-    {
-      id: "research-mkt",
-      name: "Research marketing",
-      emoji: "📈",
-      color: "orange",
-      purpose: "Tìm xu hướng và đối thủ, đề xuất góc nội dung cho 8 Sync",
-      engine: "omp",
-      instructions:
-        "Mỗi nhận định phải có URL. Số liệu traction chỉ lấy từ Vercel/Cloudflare Web Analytics và ghi rõ nguồn.\nKhông bịa khách hàng hay đối tác. Không đụng dữ liệu CRM/AcoLeads.\nKết quả là 3 góc nội dung kèm hook.",
-      skills: ["market-research", "deep-research-web", "last30days", "brand-voice"],
-      folderHint: "su-code",
-      firstMessage: "Tuần này dev Việt đang quan tâm gì?",
-    },
-    {
-      id: "course-writer",
-      name: "Viết khóa học",
-      emoji: "🎓",
-      color: "emerald",
-      purpose: "Soạn bài và bài tập cho 8 Sync Courses",
-      engine: "claude",
-      role: "fullstack",
-      instructions: "Tinh thần 'We teach you to learn, not to copy': mỗi bài có mục tiêu, giải thích, bài tập tự làm và gợi ý, không đưa sẵn lời giải.\nThuật ngữ giữ tiếng Anh.",
-      skills: ["article-writing", "brand-voice"],
-      folderHint: "8sync/platform",
-      firstMessage: "Soạn bài: …",
-    },
-    {
-      id: "news-curator",
-      name: "Biên tập tin",
-      emoji: "📰",
-      color: "cyan",
-      purpose: "Chọn và tóm tắt tin AI/dev cho 8 Sync News",
-      engine: "omp",
-      instructions: "Chọn ≤5 tin trong 24–48 giờ từ nguồn gốc, mỗi tin 3 dòng kèm link. Ghi 'chưa kiểm' khi chưa đọc nguồn gốc.\nKhông đăng, chỉ gửi bản nháp.",
-      skills: ["last30days", "deep-research-web", "article-writing"],
-      folderHint: "8sync/platform",
-      firstMessage: "Tin AI/dev đáng chú ý hôm nay",
-    },
-    {
-      id: "zus-release",
-      name: "Phát hành ZUS",
-      emoji: "🚀",
-      color: "fuchsia",
-      purpose: "Chuẩn bị bản phát hành ZUS: gate, changelog, build Tauri",
-      engine: "claude",
-      role: "fullstack",
-      instructions: "ZUS là local-first: không đề xuất đưa dữ liệu user lên server. Chạy gate/test trước khi kết luận.\nCập nhật CHANGELOG. Không push/merge/release khi chưa có lệnh của owner.",
-      skills: ["tauri-v2", "encore-deploy", "verification-loop"],
-      folderHint: "zus/ide",
-      firstMessage: "Kiểm xem đã sẵn sàng phát hành chưa",
-    },
-    {
-      id: "tia-release",
-      name: "Phát hành TIA",
-      emoji: "🧠",
-      color: "teal",
-      purpose: "Kiểm và phát hành TIA (decision API)",
-      engine: "claude",
-      role: "fullstack",
-      instructions: "Chạy encore test từ thư mục service, kiểm /healthz sau deploy. Không in secret.\nRelease chỉ chạy khi owner ra lệnh.",
-      skills: ["encore-deploy", "verification-loop"],
-      folderHint: "ml/tia-platform",
-      firstMessage: "Kiểm TIA trước khi phát hành",
-    },
   ] satisfies Omit<BotTemplate, "builtIn">[]
 ).map((t) => ({ ...t, builtIn: true }));
 
 /** The three cards the empty Bots list suggests. */
-export const SUGGESTED_TEMPLATE_IDS = ["fullstack", "research-mkt", "cpa-full"] as const;
+export const SUGGESTED_TEMPLATE_IDS = ["fullstack", "researcher", "reviewer"] as const;
+
+// ── the editor ("Của tôi") ───────────────────────────────────────────────────
+
+/** What the template editor edits: every field as typed (skills as "a, b"), engine + model + level as a run. */
+export type TemplateDraft = {
+  name: string;
+  emoji: string;
+  color: TemplateColor;
+  purpose: string;
+  run: BotRun;
+  /** Claude Code only; "" = none. */
+  role: RoleId | "";
+  instructions: string;
+  skills: string;
+  folderHint: string;
+  firstMessage: string;
+};
+
+export const BLANK_DRAFT: TemplateDraft = { name: "", emoji: "🤖", color: "sky", purpose: "", run: { engine: "claude", model: null, thinking: null }, role: "quick", instructions: "", skills: "", folderHint: "", firstMessage: "" };
+
+/** A template as an editor draft. */
+export function draftOf(t: BotTemplate): TemplateDraft {
+  return {
+    name: t.name,
+    emoji: t.emoji,
+    color: t.color,
+    purpose: t.purpose,
+    run: { engine: t.engine, model: t.model ?? null, thinking: t.thinking ?? null },
+    role: t.role ?? "",
+    instructions: t.instructions,
+    skills: t.skills.join(", "),
+    folderHint: t.folderHint ?? "",
+    firstMessage: t.firstMessage ?? "",
+  };
+}
+
+/** "Nhân bản": the same template under "<tên> (bản sao)", ≤40 chars; saving gives it a free id of its own. */
+export function copyDraft(t: BotTemplate): TemplateDraft {
+  const tail = " (bản sao)";
+  return { ...draftOf(t), name: `${t.name.slice(0, TEMPLATE_LIMITS.name - tail.length).trimEnd()}${tail}` };
+}
+
+/** The raw template a draft makes (checkTemplate says if it is valid). `id`: the edited one's, else from the name. */
+export function templateOfDraft(d: TemplateDraft, id?: string): Omit<BotTemplate, "builtIn"> {
+  const claude = d.run.engine === "claude";
+  return {
+    id: id ?? (slugify(d.name).slice(0, 32).replace(/-+$/, "") || "mau-moi"),
+    name: d.name,
+    emoji: d.emoji,
+    color: d.color,
+    purpose: d.purpose,
+    engine: d.run.engine,
+    ...(claude && d.role ? { role: d.role } : {}),
+    ...(d.run.model ? { model: d.run.model } : {}),
+    ...(d.run.thinking ? { thinking: d.run.thinking } : {}),
+    instructions: d.instructions,
+    skills: d.skills
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+    ...(d.folderHint.trim() ? { folderHint: d.folderHint.trim() } : {}),
+    ...(d.firstMessage.trim() ? { firstMessage: d.firstMessage.trim() } : {}),
+  };
+}
 
 // ── folders ──────────────────────────────────────────────────────────────────
 
@@ -308,8 +320,39 @@ export function firstPrompt(t: Pick<BotTemplate, "instructions" | "skills">, mes
   return text || null;
 }
 
+/** How a bot runs: its engine, model (null = the engine's default) and thinking/effort level (null = the model's). */
+export type BotRun = { engine: BotEngine; model: string | null; thinking: string | null };
+
+/** What the template starts a bot on: its engine; its model, else (Claude Code) its role's; its level. */
+export function templateRun(t: BotTemplate): BotRun {
+  return { engine: t.engine, model: t.model ?? (t.engine === "claude" ? (roleOf(t.role)?.model ?? null) : null), thinking: t.thinking ?? null };
+}
+
+/**
+ * The run after the owner switches the engine: the template's own run when it is that engine, else the
+ * engine's default (no model, no level).
+ */
+export function runForEngine(t: BotTemplate, engine: BotEngine): BotRun {
+  return t.engine === engine ? templateRun(t) : { engine, model: null, thinking: null };
+}
+
+/** Picking a level: the same one again clears it (the model's default). omp takes a level only with a model. */
+export function withThinking(run: BotRun, t: string): BotRun {
+  if (run.engine === "omp" && run.model === null) return run;
+  return { ...run, thinking: t === run.thinking ? null : t };
+}
+
+/** Picking a model (null = the engine's default): the level stays when the new model takes it, else it clears. */
+export function withModel(run: BotRun, model: string | null, choices: readonly ModelChoice[]): BotRun {
+  if (run.engine === "claude" || run.thinking === null) return { ...run, model };
+  const choice = choices.find((c) => c.selector === model);
+  return { ...run, model, thinking: model !== null && effortsFor("omp", choice).includes(run.thinking) ? run.thinking : null };
+}
+
 export type CreateInput = {
   template: BotTemplate;
+  /** Engine/model/level the owner picked; the template's (templateRun) when absent. */
+  run?: BotRun;
   name: string;
   /** The folder; `id` is its registered project (Claude Code needs one). */
   project: { id: number | null; path: string };
@@ -320,27 +363,33 @@ export type CreateInput = {
   worktree?: boolean;
 };
 
-export type CreateRequest =
-  | { url: "/api/sessions"; body: { name: string; project: number; role?: RoleId; model?: ModelId; prompt?: string } }
-  | { url: "/api/omp/sessions"; body: { cwd: string; name: string; worktree?: true; prompt?: string } };
+type RunFields = { model?: string; thinking?: string };
+export type CreateRequest = {
+  url: "/api/sessions";
+  body:
+    | ({ engine: "claude"; name: string; project: number; role?: RoleId; prompt?: string } & RunFields)
+    | ({ engine: "omp"; cwd: string; name: string; worktree?: true; prompt?: string } & RunFields);
+};
 
 /**
- * The POST that creates the bot. Claude Code: `POST /api/sessions` (a registered project, role/model from the
- * template, the prompt passed to `claude` at start). omp: `POST /api/omp/sessions` (the folder; the prompt queued
- * in its inbox). Throws when Claude Code has no project id.
+ * The POST that creates the bot: `POST /api/sessions` with the engine. Claude Code: a registered project, the
+ * template's role, `--model`/`--effort`, the prompt passed to `claude` at start. omp: the folder, `--model
+ * <selector>:<level>`, the prompt queued in its inbox. Throws when Claude Code has no project id.
  */
 export function createRequest(i: CreateInput): CreateRequest {
   const name = i.name.trim();
   const prompt = firstPrompt(i.template, i.send ? i.message : "");
-  if (i.template.engine === "omp") {
-    return { url: "/api/omp/sessions", body: { cwd: i.project.path, name, ...(i.worktree ? { worktree: true as const } : {}), ...(prompt ? { prompt } : {}) } };
+  const run = i.run ?? templateRun(i.template);
+  const fields: RunFields = { ...(run.model ? { model: run.model } : {}), ...(run.thinking ? { thinking: run.thinking } : {}) };
+  if (run.engine === "omp") {
+    return { url: "/api/sessions", body: { engine: "omp", cwd: i.project.path, name, ...fields, ...(i.worktree ? { worktree: true as const } : {}), ...(prompt ? { prompt } : {}) } };
   }
   if (i.project.id == null) throw new Error("Claude Code cần một dự án đã đăng ký");
-  const t = i.template;
-  return { url: "/api/sessions", body: { name, project: i.project.id, ...(t.role ? { role: t.role } : {}), ...(t.model ? { model: t.model } : {}), ...(prompt ? { prompt } : {}) } };
+  const role = i.template.engine === "claude" ? i.template.role : undefined;
+  return { url: "/api/sessions", body: { engine: "claude", name, project: i.project.id, ...(role ? { role } : {}), ...fields, ...(prompt ? { prompt } : {}) } };
 }
 
 /** The new bot's key in the Bots list (lib/server/office.ts: a room's key is its session name). */
 export function botKeyOf(req: CreateRequest, res: { id?: string; session?: { name?: string } }): string | null {
-  return req.url === "/api/omp/sessions" ? (res.id ?? null) : (res.session?.name ?? `hq-${req.body.name}`);
+  return req.body.engine === "omp" ? (res.id ?? null) : (res.session?.name ?? `hq-${req.body.name}`);
 }

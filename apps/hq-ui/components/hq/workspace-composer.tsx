@@ -134,7 +134,7 @@ export function WorkspaceComposer({
             />
             <button
               type="button"
-              className="grid size-8 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 motion-reduce:transition-none max-md:size-10"
+              className="grid size-8 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 motion-reduce:transition-none max-md:size-11"
               aria-label={`Đính kèm file (tối đa ${FILES_MAX}, ${FILE_MAX_MB} MB mỗi file)`}
               title={`Đính kèm file (tối đa ${FILES_MAX}, ${FILE_MAX_MB} MB mỗi file; dán ảnh cũng được)`}
               disabled={att.full}

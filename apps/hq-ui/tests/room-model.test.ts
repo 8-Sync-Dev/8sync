@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { claudeCommands, effortsFor, findChoice, ompControl, type ModelChoice } from "@/lib/room-model";
+import { claudeCommands, effortsFor, findChoice, OMP_THINKING, ompControl, type ModelChoice } from "@/lib/room-model";
 import { getToken } from "@/lib/server/auth";
 import { inboxFile } from "@/lib/server/inbox";
 import { modelStateFile, parseOmpModels, readRoomModel } from "@/lib/server/models";
@@ -141,6 +141,10 @@ describe("/api/models", () => {
     expect(await (await GET(req(`/api/models?session=${uuid}`, { token }))).json()).toMatchObject({ engine: "claude", apply: null });
     expect((await post({ session: uuid, model: "opus" })).status).toBe(422);
     expect((await post({ session: "hq-a", model: "gpt-5" })).status).toBe(422);
+  });
+  it("?engine=omp without a session: the list a new omp bot picks from", async () => {
+    const g = await (await GET(req("/api/models?engine=omp", { token }))).json();
+    expect(g).toEqual({ engine: "omp", models: LIST, efforts: [...OMP_THINKING], current: null, apply: null });
   });
   it("is owner only", async () => {
     expect((await GET(req(`/api/models?session=${ROOM}`))).status).toBe(401);

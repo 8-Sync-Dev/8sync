@@ -1,7 +1,7 @@
 "use client";
 
 import { BrainIcon, CheckIcon, ChevronDownIcon, Loader2Icon, SearchIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { modelShort, ompModelLabel } from "@/lib/roles";
@@ -10,8 +10,12 @@ import { cn } from "@/lib/utils";
 import type { Api } from "./use-hq";
 
 /** Effort words the owner reads; the level itself is still shown in the chip's title. */
-const EFFORT_LABEL: Record<string, string> = { off: "tắt", minimal: "tối thiểu", low: "thấp", medium: "vừa", high: "cao", xhigh: "rất cao", max: "tối đa" };
+export const EFFORT_LABEL: Record<string, string> = { off: "tắt", minimal: "tối thiểu", low: "thấp", medium: "vừa", high: "cao", xhigh: "rất cao", max: "tối đa" };
 const LIST_MAX = 120;
+
+/** The chip's model words: an omp selector or a Claude id, else the engine's default. */
+export const modelChipLabel = (engine: "omp" | "claude", model: string | null | undefined, none = "Model") =>
+  model ? (engine === "omp" ? ompModelLabel(model) : modelShort(model)) : engine === "omp" ? "omp mặc định" : none;
 
 /**
  * The composer's model + effort switch for one room: a chip showing what the room runs, a popover with
@@ -20,7 +24,6 @@ const LIST_MAX = 120;
  */
 export function ModelPicker({ api, session, engine, model, className }: { api: Api; session: string; engine: "omp" | "claude"; model: string | null | undefined; className?: string }) {
   const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   // Sent and not yet seen on the room: the chip shows it with a spinner until the room reports it.
@@ -52,26 +55,11 @@ export function ModelPicker({ api, session, engine, model, className }: { api: A
     };
   }, [open, api, session]);
 
-  // Open on the room's model, not the top of a 300-model list. Scroll the list only: `scrollIntoView`
-  // would also scroll the page.
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const list = listRef.current;
-    const el = open && data ? list?.querySelector("[aria-selected='true']") : null;
-    if (!list || !el) return;
-    const top = el.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
-    list.scrollTop = top - list.clientHeight / 2;
-  }, [open, data]);
-
   const shownModel = pending?.model ?? curModel;
   const shownThinking = pending?.thinking ?? curThinking;
   const models = useMemo(() => data?.models ?? [], [data]);
-  const chosen = findChoice(models, shownModel);
-  const efforts = effortsFor(engine, chosen);
-  const list = useMemo(() => filterModels(models, q), [models, q]);
-  const groups = useMemo(() => byProvider(list.slice(0, LIST_MAX)), [list]);
   const canApply = data ? data.apply !== null : true;
-  const label = shownModel ? (engine === "omp" ? ompModelLabel(shownModel) : modelShort(shownModel)) : engine === "omp" ? "omp mặc định" : "Model";
+  const label = modelChipLabel(engine, shownModel);
 
   async function apply(change: { model?: string; thinking?: string }) {
     if (busy) return;
@@ -120,88 +108,170 @@ export function ModelPicker({ api, session, engine, model, className }: { api: A
             Lần đổi trước chưa áp dụng: {data.current.error}
           </p>
         )}
-        <div className="space-y-2 border-b p-3">
-          <p className="text-xs font-medium">Mức suy nghĩ</p>
-          <div role="radiogroup" aria-label="Mức suy nghĩ" className="flex flex-wrap gap-1.5">
-            {efforts.map((t) => {
-              const on = t === shownThinking;
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  title={t}
-                  disabled={busy || !canApply}
-                  onClick={() => void apply({ thinking: t })}
-                  className={cn(
-                    "h-7 rounded-full border px-2.5 text-xs transition-colors disabled:opacity-50 max-sm:h-9",
-                    on ? "border-primary bg-primary text-primary-foreground" : "bg-background hover:bg-muted",
-                  )}
-                >
-                  {EFFORT_LABEL[t] ?? t}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        {data && !canApply ? (
-          <p className="p-3 text-xs text-muted-foreground">
-            {engine === "omp"
-              ? "Phòng omp này mở trước bản 8sync-inbox biết đổi model: chạy 8sync up, thoát rồi mở lại phòng (hoặc gõ /model ngay trong omp)."
-              : "Phiên Claude Code này mở ngoài HQ (nhận tin qua inbox): đổi trong terminal của nó bằng /model và /effort."}
-          </p>
-        ) : (
-          <>
-            <label className="flex items-center gap-2 border-b px-3">
-              <SearchIcon className="size-3.5 text-muted-foreground" aria-hidden />
-              <span className="sr-only">Tìm model</span>
-              <input
-                ref={search}
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder={engine === "omp" ? "Tìm model: opus, glm, gpt…" : "Tìm model"}
-                className="h-9 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              />
-            </label>
-            <div ref={listRef} role="listbox" aria-label="Model" className="max-h-72 overflow-y-auto overscroll-contain p-1">
-              {!data && (
-                <p className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
-                  <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> Đang tải model…
-                </p>
-              )}
-              {data && list.length === 0 && <p className="p-2 text-xs text-muted-foreground">{models.length === 0 ? "omp chưa trả danh sách model (chạy `omp models` để xem lỗi)." : "Không có model khớp."}</p>}
-              {groups.map(([provider, ms]) => (
-                <div key={provider} role="group" aria-label={provider}>
-                  <p className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{provider}</p>
-                  {ms.map((m) => {
-                    const on = m.selector === chosen?.selector;
-                    return (
-                      <button
-                        key={m.selector}
-                        type="button"
-                        role="option"
-                        aria-selected={on}
-                        disabled={busy}
-                        onClick={() => (on ? setOpen(false) : void apply({ model: m.selector }))}
-                        className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50 max-sm:py-2.5", on && "bg-muted")}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate">{m.name}</span>
-                          <span className="block truncate font-mono text-[10px] text-muted-foreground">{m.selector}</span>
-                        </span>
-                        {on && <CheckIcon className="size-3.5 shrink-0" aria-hidden />}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-              {list.length > LIST_MAX && <p className="p-2 text-[11px] text-muted-foreground">Còn {list.length - LIST_MAX} model nữa: gõ để lọc.</p>}
-            </div>
-          </>
-        )}
+        <ModelMenu
+          engine={engine}
+          models={data ? models : null}
+          model={shownModel}
+          thinking={shownThinking}
+          disabled={busy}
+          searchRef={search}
+          notice={
+            data && !canApply
+              ? engine === "omp"
+                ? "Phòng omp này mở trước bản 8sync-inbox biết đổi model: chạy 8sync up, thoát rồi mở lại phòng (hoặc gõ /model ngay trong omp)."
+                : "Phiên Claude Code này mở ngoài HQ (nhận tin qua inbox): đổi trong terminal của nó bằng /model và /effort."
+              : null
+          }
+          onThinking={(t) => void apply({ thinking: t })}
+          onModel={(sel) => (sel === null || sel === findChoice(models, shownModel)?.selector ? setOpen(false) : void apply({ model: sel }))}
+        />
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * The picker's body: effort bubbles, then the model list (search, by provider). `models` null = still
+ * loading. `notice` replaces the list and locks the effort row. `defaultLabel` adds a first row for the
+ * engine's own default (`onModel(null)`). Shared by the composer chip and "Bot mới" (new-bot-sheet.tsx).
+ */
+export function ModelMenu({
+  engine,
+  models,
+  model,
+  thinking,
+  disabled = false,
+  notice = null,
+  defaultLabel,
+  effortsLocked,
+  searchRef,
+  onThinking,
+  onModel,
+}: {
+  engine: "omp" | "claude";
+  models: ModelChoice[] | null;
+  model: string | null;
+  thinking: string | null;
+  disabled?: boolean;
+  notice?: ReactNode;
+  defaultLabel?: string;
+  /** Why the effort row is locked (shown under it). */
+  effortsLocked?: string;
+  searchRef?: Ref<HTMLInputElement>;
+  onThinking: (t: string) => void;
+  onModel: (selector: string | null) => void;
+}) {
+  const [q, setQ] = useState("");
+  const all = useMemo(() => models ?? [], [models]);
+  const chosen = findChoice(all, model);
+  const efforts = effortsFor(engine, chosen);
+  const list = useMemo(() => filterModels(all, q), [all, q]);
+  const groups = useMemo(() => byProvider(list.slice(0, LIST_MAX)), [list]);
+
+  // Open on the current model, not the top of a 300-model list. Scroll the list only: `scrollIntoView`
+  // would also scroll the page.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = listRef.current;
+    const el = models ? box?.querySelector("[aria-selected='true']") : null;
+    if (!box || !el) return;
+    const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    box.scrollTop = top - box.clientHeight / 2;
+  }, [models]);
+
+  return (
+    <>
+      <div className="space-y-2 border-b p-3">
+        <p className="text-xs font-medium">Mức suy nghĩ</p>
+        <div role="radiogroup" aria-label="Mức suy nghĩ" className="flex flex-wrap gap-1.5">
+          {efforts.map((t) => {
+            const on = t === thinking;
+            return (
+              <button
+                key={t}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                title={t}
+                disabled={disabled || !!notice || !!effortsLocked}
+                onClick={() => onThinking(t)}
+                className={cn(
+                  "h-7 rounded-full border px-2.5 text-xs transition-colors disabled:opacity-50 max-sm:h-9",
+                  on ? "border-primary bg-primary text-primary-foreground" : "bg-background hover:bg-muted",
+                )}
+              >
+                {EFFORT_LABEL[t] ?? t}
+              </button>
+            );
+          })}
+        </div>
+        {effortsLocked && <p className="text-[11px] text-muted-foreground">{effortsLocked}</p>}
+      </div>
+      {notice ? (
+        <p className="p-3 text-xs text-muted-foreground">{notice}</p>
+      ) : (
+        <>
+          <label className="flex items-center gap-2 border-b px-3">
+            <SearchIcon className="size-3.5 text-muted-foreground" aria-hidden />
+            <span className="sr-only">Tìm model</span>
+            <input
+              ref={searchRef}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={engine === "omp" ? "Tìm model: opus, glm, gpt…" : "Tìm model"}
+              className="h-9 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground max-sm:h-11 max-sm:text-base"
+            />
+          </label>
+          <div ref={listRef} role="listbox" aria-label="Model" className="max-h-72 overflow-y-auto overscroll-contain p-1">
+            {defaultLabel && !q.trim() && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={model === null}
+                disabled={disabled}
+                onClick={() => onModel(null)}
+                className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50 max-sm:py-2.5", model === null && "bg-muted")}
+              >
+                <span className="min-w-0 flex-1 truncate">{defaultLabel}</span>
+                {model === null && <CheckIcon className="size-3.5 shrink-0" aria-hidden />}
+              </button>
+            )}
+            {!models && (
+              <p className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
+                <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> Đang tải model…
+              </p>
+            )}
+            {models && list.length === 0 && <p className="p-2 text-xs text-muted-foreground">{all.length === 0 ? "omp chưa trả danh sách model (chạy `omp models` để xem lỗi)." : "Không có model khớp."}</p>}
+            {groups.map(([provider, ms]) => (
+              <div key={provider} role="group" aria-label={provider}>
+                <p className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{provider}</p>
+                {ms.map((m) => {
+                  const on = m.selector === chosen?.selector;
+                  return (
+                    <button
+                      key={m.selector}
+                      type="button"
+                      role="option"
+                      aria-selected={on}
+                      disabled={disabled}
+                      onClick={() => onModel(m.selector)}
+                      className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50 max-sm:py-2.5", on && "bg-muted")}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{m.name}</span>
+                        <span className="block truncate font-mono text-[10px] text-muted-foreground">{m.selector}</span>
+                      </span>
+                      {on && <CheckIcon className="size-3.5 shrink-0" aria-hidden />}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {list.length > LIST_MAX && <p className="p-2 text-[11px] text-muted-foreground">Còn {list.length - LIST_MAX} model nữa: gõ để lọc.</p>}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
