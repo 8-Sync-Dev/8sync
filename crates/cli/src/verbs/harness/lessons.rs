@@ -13,6 +13,10 @@
 //!    summing counters;
 //! 4. moves entries with harmful > helpful out (to su-code/archive/).
 //!
+//! Opt-in (AGENTS.md §8 "Default KHÔNG ĐÈ"): a file with no `[k-<n>]` entry and
+//! no `used:` line is left byte-identical unless `force` (`harness up --curate`)
+//! is set; that first forced pass assigns ids, which opts the repo in for good.
+//!
 //! Entry text is never rewritten. Removed blocks keep their id in the archive, and
 //! new ids start above every id in the archive, so an id is never reused.
 use std::collections::{hash_map::Entry as Slot, HashMap};
@@ -129,7 +133,7 @@ pub(crate) fn archived_max_id(dir: &Path) -> u32 {
 
 /// Pure curator pass. `floor` (ids already burned, e.g. in the archive) is
 /// only consulted when an entry needs a new id.
-pub(crate) fn curate(src: &str, floor: impl FnOnce() -> u32) -> Curated {
+pub(crate) fn curate(src: &str, force: bool, floor: impl FnOnce() -> u32) -> Curated {
     let lines: Vec<&str> = src.split_inclusive('\n').collect();
     let mut drop = vec![false; lines.len()];
     let mut head_of: Vec<Option<usize>> = vec![None; lines.len()];
@@ -158,6 +162,9 @@ pub(crate) fn curate(src: &str, floor: impl FnOnce() -> u32) -> Curated {
             head_of[i] = Some(ents.len());
             ents.push(Entry { id, h, x, head: i, end: i + 1, rest, gone: false });
         }
+    }
+    if !force && used.is_empty() && ents.iter().all(|e| e.id == 0) {
+        return Curated { text: src.to_string(), ..Curated::default() };
     }
 
     let mut out = Curated::default();
@@ -251,8 +258,54 @@ pub(crate) fn curate(src: &str, floor: impl FnOnce() -> u32) -> Curated {
 mod tests {
     use super::*;
 
+    /// Forced pass (`--curate`), so the rules below are tested without the gate.
     fn run(src: &str) -> Curated {
-        curate(src, || 0)
+        curate(src, true, || 0)
+    }
+
+    /// AGENTS.md §8: a repo that never opted in is left byte-identical; a
+    /// `[k-N]` entry, a `used:` line, or `--curate` opts it in.
+    #[test]
+    fn not_opted_in_is_a_no_op_until_ids_used_or_forced() {
+        let src = "## Learnings\n- validated: a\n- validated: a\n- failure: b\n";
+        let c = curate(src, false, || 0);
+        assert_eq!(c.text, src);
+        assert!(c.archived.is_empty() && c.assigned + c.merged == 0);
+        let forced = curate(src, true, || 0);
+        assert_eq!(forced.text, "## Learnings\n- [k-1] (+0/-0) validated: a\n- [k-3] (+0/-0) failure: b\n");
+        assert_eq!(curate(&forced.text, false, || 0).text, forced.text, "ids keep it opted in, nothing left to do");
+        let used_only = curate("- validated: x\nused: k-1+\n", false, || 0);
+        assert_eq!(used_only.text, "- [k-1] (+1/-0) validated: x\n", "a used: line opts in");
+        let with_id = curate("- [k-3] validated: y\n- failure: z\n", false, || 0);
+        assert_eq!(with_id.text, "- [k-3] (+0/-0) validated: y\n- [k-4] (+0/-0) failure: z\n");
+    }
+
+    /// End to end: no ids → `consolidate_learnings` writes nothing (no archive
+    /// dir either); `force` assigns ids; an agent's concurrent append wins.
+    #[test]
+    fn consolidate_respects_opt_in_and_skips_on_concurrent_change() {
+        let d = std::env::temp_dir().join(format!("8sync-know-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("su-code")).unwrap();
+        let know = d.join("su-code/KNOWLEDGE.md");
+        let src = "# K\r\n\r\n## Learnings\r\n- validated: a\r\n- validated: a\r\n";
+        std::fs::write(&know, src).unwrap();
+        crate::verbs::harness::memory::consolidate_learnings(&d, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&know).unwrap(), src);
+        assert!(!d.join("su-code/archive").exists(), "no archive for a repo that never opted in");
+        crate::verbs::harness::memory::consolidate_learnings(&d, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&know).unwrap(), "# K\r\n\r\n## Learnings\r\n- [k-1] (+0/-0) validated: a\r\n");
+
+        let appended = "# K\r\n\r\n## Learnings\r\n- [k-1] (+0/-0) validated: a\r\n- failure: new\r\n";
+        std::fs::write(&know, appended).unwrap();
+        let arch = d.join("su-code/archive/x.md");
+        let wrote = crate::verbs::harness::memory::write_if_unchanged(&know, src, "clobber", &[(arch.clone(), "a".into())]).unwrap();
+        assert!(!wrote);
+        assert_eq!(std::fs::read_to_string(&know).unwrap(), appended);
+        assert!(!arch.exists(), "no archive when the main write is skipped");
+        assert!(crate::verbs::harness::memory::write_if_unchanged(&know, appended, "ok", &[(arch.clone(), "a".into())]).unwrap());
+        assert!(arch.exists() && std::fs::read_to_string(&know).unwrap() == "ok");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -268,7 +321,7 @@ mod tests {
         assert!(c.text.contains("- [k-9] (+0/-0) **failure: c**\n"));
         assert!(c.text.contains("- [k-3] (+0/-0) failure: no counter\n"));
         // The archive floor wins over the file's own max, so archived ids stay burned.
-        assert!(curate("- validated: z\n", || 40).text.starts_with("- [k-41] (+0/-0) "));
+        assert!(curate("- validated: z\n", true, || 40).text.starts_with("- [k-41] (+0/-0) "));
     }
 
     #[test]
@@ -307,7 +360,7 @@ used: k-1+ k-1+ k-2- k-99+ k-99-\n- used: k-2+\nused: maybe later\n";
         }
         let know = d.join("su-code/KNOWLEDGE.md");
         std::fs::write(&know, &src).unwrap();
-        crate::verbs::harness::memory::consolidate_learnings(&d).unwrap();
+        crate::verbs::harness::memory::consolidate_learnings(&d, false).unwrap();
         let after = std::fs::read_to_string(&know).unwrap();
         assert!(!after.contains("bad advice") && !after.contains("used:"));
         assert!(after.contains("- [k-235] (+0/-0) validated: lesson 204\r\n"), "ids start above the archive max");
@@ -322,7 +375,7 @@ used: k-1+ k-1+ k-2- k-99+ k-99-\n- used: k-2+\nused: maybe later\n";
             .expect("curated archive written");
         assert!(curated.contains("- [k-2] (+0/-2) failure: bad advice\r\n"));
         let n = archives();
-        crate::verbs::harness::memory::consolidate_learnings(&d).unwrap();
+        crate::verbs::harness::memory::consolidate_learnings(&d, false).unwrap();
         assert_eq!(std::fs::read_to_string(&know).unwrap(), after);
         assert_eq!(archives(), n, "second run archives nothing");
         let _ = std::fs::remove_dir_all(&d);

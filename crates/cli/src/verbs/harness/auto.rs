@@ -41,7 +41,7 @@ pub(crate) fn harness_auto(env: &env_detect::Env) -> Result<()> {
     let _ = deploy::ensure_engine(&env.home, Some(&root));
     let _ = deploy::ensure_rules(&env.home, Some(&root));
     let _ = deploy::cleanup_legacy_gs(&env.home, Some(&root));
-    let _ = consolidate_learnings(&root);
+    let _ = consolidate_learnings(&root, false);
 
     ui::ok(&format!("harness ready → {}", root.display()));
     ui::info("background loop: `8sync harness up --timer 30m` · full rebuild: `8sync harness init`");

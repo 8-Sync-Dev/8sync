@@ -24,6 +24,7 @@ pub(crate) fn harness_up(
     timer: Option<&str>,
     pull: bool,
     commit: bool,
+    curate: bool,
 ) -> Result<()> {
     if let Some(spec) = timer {
         return manage_timer(spec);
@@ -33,16 +34,16 @@ pub(crate) fn harness_up(
         ui::header(&format!("8sync harness up --loop ({}s interval)", secs));
         ui::info("Ctrl-C to stop. Each pass re-injects rules + refreshes memory + rebuilds the trail map.");
         loop {
-            let _ = refresh_once(env, pull, commit);
+            let _ = refresh_once(env, pull, commit, curate);
             ui::step(&format!("sleeping {}s …", secs));
             std::thread::sleep(Duration::from_secs(secs));
         }
     }
     ui::header("8sync harness up");
-    refresh_once(env, pull, commit)
+    refresh_once(env, pull, commit, curate)
 }
 
-fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool) -> Result<()> {
+fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool, curate: bool) -> Result<()> {
     if pull {
         ui::step("re-pull ECC (→ omp skills + /ecc-* commands) and registered skills (--pull)");
         super::ecc::global_layer(&env.home, super::ecc::Fetch::Now);
@@ -65,7 +66,7 @@ fn refresh_once(env: &env_detect::Env, pull: bool, commit: bool) -> Result<()> {
     let _ = crate::verbs::skill::deploy::cleanup_legacy_gs(&env.home, Some(&root));
     super::ecc::project_layer(&env.home, &root, super::ecc::Fetch::IfDue);
     seed_harness_memory(&root)?;
-    let _ = consolidate_learnings(&root);
+    let _ = consolidate_learnings(&root, curate);
     seed_gitleaks_hook(&root);
     super::trail::refresh(&root);
     if commit {
