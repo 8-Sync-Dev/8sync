@@ -5,6 +5,11 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.135.1] — 2026-11-07
+
+### Changed
+- AGENTS.md ghi cách HQ tự cập nhật (10 phút, `8sync up`, cách tắt). Bản này được phát hành để kiểm thật: HQ live đang chạy v0.135.0 phải tự lên v0.135.1 mà không ai gõ `8sync up`.
+
 ## [0.135.0] — 2026-11-07
 
 ### Added
