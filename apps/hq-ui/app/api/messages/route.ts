@@ -12,7 +12,7 @@ import { loadFloor, ompSessions } from "@/lib/server/floor";
 import { projectOf, type Room } from "@/lib/server/office";
 import { FILES_PER_TASK, isUploadId, placeUploads, withFiles } from "@/lib/server/uploads";
 import { senderOf } from "@/lib/server/sender";
-import { liveRooms, senderRoomOf } from "@/lib/server/brief";
+import { callerIds, liveRooms, senderRoomOf } from "@/lib/server/brief";
 import { roomProject } from "@/lib/labels";
 import { withContext } from "@/lib/room-context";
 import type { DatabaseSync } from "node:sqlite";
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
   }
   if (sender.by !== "room") return deliverReply(await deliverOrWaiting(o.db, session, text.value, sender));
   const rooms = await liveRooms(o.db).catch(() => []);
-  const ctx = senderContext(rooms, text.value, body, session);
+  const ctx = senderContext(rooms, text.value, { ids: await callerIds(o.db, body), cwd: body.from_cwd }, session);
   const to = rooms.find((r) => r.name === session || r.session_id === session)?.name ?? session;
   // A room answering a group turn (or carrying a hop line past its max) is counted per turn; any other
   // room message, the Chief of Staff's routing included, goes as before under the per-pair guard
@@ -116,13 +116,12 @@ async function roomRoot(db: DatabaseSync, session: string): Promise<string | nul
 
 /**
  * A room's message with its context line on top (lib/room-context.ts: label, project, current step) when
- * hq.mjs named where it runs (`from_session`: its CLAUDE_CODE_SESSION_ID, `from_cwd`: its folder) and
- * that is one live room; as sent otherwise, or when the line would push it past the message limit.
+ * hq.mjs named where it runs (its ids, see brief.ts callerIds, or its folder) and that is one live room;
+ * as sent otherwise, or when the line would push it past the message limit.
  * `from`: that room's address (the group loop guard counts by it), null when HQ cannot tell.
  */
-function senderContext(rooms: Room[], text: string, body: Record<string, unknown>, to: string): { text: string; from: string | null } {
-  if (body.from_session == null && body.from_cwd == null) return { text, from: null };
-  const from = senderRoomOf(rooms, { session: body.from_session, cwd: body.from_cwd }, to);
+function senderContext(rooms: Room[], text: string, caller: { ids: unknown[]; cwd: unknown }, to: string): { text: string; from: string | null } {
+  const from = senderRoomOf(rooms, caller, to);
   if (!from) return { text, from: null };
   const out = withContext(text, { label: from.label, project: roomProject(from.project?.root ?? from.cwd), doing: from.doing });
   return { text: [...out].length <= TEXT_MAX ? out : text, from: from.name };

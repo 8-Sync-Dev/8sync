@@ -245,6 +245,21 @@ export async function ompTranscript(db: DatabaseSync, id: string): Promise<strin
   return cache?.transcripts.get(id) ?? null;
 }
 
+/**
+ * The omp room whose session dir holds `file`: omp's `PI_SESSION_FILE`, `<dir>/<ts>_<id>.jsonl` for the
+ * room's own agent, `<dir>/<ts>_<id>/<agent>.jsonl` for a subagent (its `PI_SESSION_ID` is its own, so
+ * the id alone names no room). Matched against the transcripts `8sync ls` lists (never read); null
+ * when no room's dir, or more than one, holds it.
+ */
+export async function ompRoomOfSessionFile(db: DatabaseSync, file: string): Promise<string | null> {
+  if (!path.isAbsolute(file)) return null;
+  await loadFloor(db);
+  const key = (p: string) => path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
+  const f = key(file);
+  const hits = [...(cache?.transcripts ?? [])].filter(([, t]) => f.startsWith(key(path.dirname(t)) + path.sep));
+  return hits.length === 1 ? hits[0][0] : null;
+}
+
 /** The omp room `id` as `8sync ls` lists it (any status: its terminal can start it), or null. `cwd`: its repo folder (see ompRepoDir). */
 export async function ompRoom(db: DatabaseSync, id: string): Promise<{ cwd: string | null } | null> {
   if (!isOmpRoomId(id)) return null;

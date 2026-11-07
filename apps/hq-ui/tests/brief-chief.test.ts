@@ -150,7 +150,7 @@ describe("brief", () => {
     expect(findRoom(rooms, "5d1c9f2e-1a2b-4c3d-8e9f-0123456789ab")?.name).toBe("hq-core");
     expect(findRoom(rooms, "CORE")?.name).toBe("hq-core");
     expect(findRoom(rooms, "web"), "two rooms called web").toBeUndefined();
-    expect(senderRoomOf(rooms, { session: "5d1c9f2e-1a2b-4c3d-8e9f-0123456789ab" }, "hq-web")?.name).toBe("hq-core");
+    expect(senderRoomOf(rooms, { ids: ["5d1c9f2e-1a2b-4c3d-8e9f-0123456789ab"] }, "hq-web")?.name).toBe("hq-core");
     expect(senderRoomOf(rooms, { cwd: "/r/shop/" }, "hq-core")?.name).toBe("hq-web");
     expect(senderRoomOf(rooms, { cwd: "/r/shop" }, "hq-web"), "never the recipient").toBeNull();
     expect(senderRoomOf(rooms, { cwd: "/nowhere" }, "hq-core")).toBeNull();
