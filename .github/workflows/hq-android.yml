@@ -11,6 +11,7 @@ name: hq-android
 on:
   push:
     tags: ["v*"]
+    branches: ["solo/apk"] # TEMP: registers the workflow before it reaches main
   workflow_dispatch:
 
 permissions:
