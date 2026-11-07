@@ -1,6 +1,6 @@
 # STATE — su-code
 
-Updated: 2026-11-08 · phase boundary: release 0.140.0 (Bản đồ code, Bot mới chọn model, mẫu của chủ + AI, skill tự làm mới)
+Updated: 2026-11-08 · phase boundary: release 0.140.1 (sửa lệch UAT 0.140.0)
 
 ## Goal
 HQ thiết kế quanh Bot (brief chủ `8sync-startup/outputs/hq-grok-bot/BRIEF.md`): roster Bot, nhóm + @bot, các phòng hiểu session của nhau, mobile-first, UAT thật trên Tailscale.
@@ -12,11 +12,13 @@ HQ thiết kế quanh Bot (brief chủ `8sync-startup/outputs/hq-grok-bot/BRIEF.
 - [x] #384 Bản đồ code: explain/path trong HQ, tự chọn repo của bot, đã có map → chỉ đăng ký (không rebuild), bật 1 chạm (chỉ chủ), ≥44px
 - [x] #385 Bot mới chọn engine + model; mẫu có sẵn bỏ thương hiệu; Của tôi: Tạo/Sửa/Nhân bản/Xoá + xem trước; Tạo/Viết lại bằng AI (`claude -p`, chỉ chủ); Đính kèm + X ≥44px
 - [x] #386 `hq.mjs` nhận ra phòng omp (`EIGHTSYNC_ROOM_ID`/`PI_SESSION_FILE`, mơ hồ → 422); `8sync up` làm mới skill bundled (manifest hash, giữ bản chủ sửa)
-- [ ] 0.140.0 released → HQ tự cập nhật → UAT Tailscale 1280/390/360
+- [x] 0.140.0 released, HQ tự cập nhật; UAT Tailscale (core + phòng coding, chỉ xem) PASS; digest omp: có id → đúng phòng, id lạ → 422, không id ở thư mục nhiều phòng → 422
+- [x] #388 menu model phân biệt tên trùng (· provider / · id) + X bỏ file 44px · #389 "Tìm đường từ đây" điền tên, gửi id bên dưới
+- [ ] 0.140.1 released → HQ tự cập nhật → phòng coding đo lại X bỏ file + ô Điểm đầu
 - [ ] Live nhóm/@bot/hop-limit: chờ chủ tạo nhóm thử coding + su-code-demo trong HQ (API script bị 403 đúng thiết kế, không giả danh chủ)
 
 ## Current
-Release 0.140.0. 6 mẫu thương hiệu đã chép vào `~/.config/8sync/hq/templates/` (mẫu của chủ). Engine 9/10 (còn s6 ship).
+Release 0.140.1 (#388, #389). Engine 10/10. Ghi mẫu / Tạo bằng AI / Thêm vào HQ chưa kiểm live (ghi dữ liệu chủ).
 
 ## Next
 1. UAT Tailscale trên 0.140.0: Bot mới chọn engine/model (body request đúng), Của tôi Sửa/Xem trước/Xoá, Tạo bằng AI (cần `claude` đăng nhập trên máy HQ), Bản đồ code `core · su-code` → "đã có bản đồ" + Thêm vào HQ, 390/360 không cuộn ngang; `hq.mjs digest` không id từ phòng omp trả đúng phòng.
