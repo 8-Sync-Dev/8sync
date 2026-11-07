@@ -499,3 +499,31 @@
     transform: translateY(-2px);
   }
 }
+
+/* A working bot's eyes glance left and right (bots/bot-avatar); reduced motion runs it once and stops. */
+@keyframes hq-bot-look {
+  0%,
+  18%,
+  100% {
+    transform: none;
+  }
+  30%,
+  48% {
+    transform: translateX(-1.6px);
+  }
+  62%,
+  82% {
+    transform: translateX(1.6px);
+  }
+}
+
+/* A waiting bot's badge breathes once a second and a half, so the owner's eye finds it. */
+@keyframes hq-bot-call {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--st-needs) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 5px color-mix(in oklch, var(--st-needs) 0%, transparent);
+  }
+}

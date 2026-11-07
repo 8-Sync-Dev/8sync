@@ -7,6 +7,8 @@ import { ChevronDownIcon, CircleHelpIcon, MenuIcon, SquareTerminalIcon } from "l
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNarrow } from "@/hooks/use-narrow";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { botStatus, botSummary } from "@/lib/bots";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -56,6 +58,8 @@ function ViewLoading() {
 }
 // Every tab but the first screen loads its own chunk on first open (Radix unmounts hidden tabs, so they also stop working).
 const OverviewView = dynamic(() => import("./overview-view").then((m) => m.OverviewView), { loading: ViewLoading });
+// Client only: its layout reads localStorage and the screen width (list beside the thread, or one at a time).
+const BotsView = dynamic(() => import("./bots/bots-view").then((m) => m.BotsView), { ssr: false, loading: ViewLoading });
 const OfficeView = dynamic(() => import("./office-view").then((m) => m.OfficeView), { loading: ViewLoading });
 const TeamThread = dynamic(() => import("./team-thread").then((m) => m.TeamThread), { loading: ViewLoading });
 const TeamView = dynamic(() => import("./team-view").then((m) => m.TeamView), { loading: ViewLoading });
@@ -72,7 +76,7 @@ const ArtifactsView = dynamic(() => import("./artifacts-view").then((m) => m.Art
 const CodemapView = dynamic(() => import("./codemap-view").then((m) => m.CodemapView), { loading: ViewLoading });
 
 /** workspace: folders → omp sessions → windows · office: every session is a room · group: all rooms talking · room: one room's chat · may: this machine · usage: plan limits and tokens · artifacts: files rooms posted. */
-type Tab = "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "codemap" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
+type Tab = "bots" | "workspace" | "overview" | "office" | "group" | "room" | "preview" | "artifacts" | "codemap" | "loops" | "report" | "usage" | "may" | "know" | "content" | "sessions" | "activity";
 const PREVIEW_POLL_MS = 15_000;
 const LOOPS_POLL_MS = 30_000;
 /** The header chip and the Máy tab share one poll. */
@@ -88,10 +92,14 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   const [scope, setScope] = useState<Scope>({ project: null, session: null });
   // The repo the owner opened from the sidebar: Tổng quan shows that project's block only.
   const [repo, setRepo] = useState<{ root: string; name: string } | null>(null);
-  // null until the owner picks a tab: Không gian is the first screen on every width (owner 2026-11-02, omp-first).
+  // null until the owner picks a tab: Bots is the first screen on every width (owner 2026-11-07, "giống Grok Bot").
   const [picked, setTab] = useState<Tab | null>(null);
   const narrow = useNarrow();
-  const tab: Tab = picked ?? "workspace";
+  const mobile = useIsMobile();
+  const tab: Tab = picked ?? "bots";
+  // The bot whose thread is open in Bots (a room key); a phone shows it full screen, without HQ's header.
+  const [bot, setBot] = useState<string | null>(null);
+  const botThread = tab === "bots" && mobile && bot != null;
   const [target, setTarget] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   // The session whose live terminal is open in the right drawer (hq-* tmux sessions only).
@@ -200,8 +208,11 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
   // Không gian titles the window on screen (or the composer), like Claude Code Desktop.
   const pane = tab === "workspace" && !ws.composer ? ws.ws.panes.find((p) => p.id === ws.ws.active) : undefined;
   const paneSession = pane ? tree.sessions.find((s) => s.ompId === pane.id) : undefined;
+  const liveRoomsNow = officeRooms.filter((r) => r.status !== "ended");
   const title =
-    tab === "workspace"
+    tab === "bots"
+      ? "Bots"
+      : tab === "workspace"
       ? pane
         ? (paneSession?.title ?? pane.name)
         : "Phiên mới"
@@ -213,7 +224,11 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
           ? project.name
           : (repo?.name ?? "Tất cả phòng");
   const subtitle =
-    tab === "workspace"
+    tab === "bots"
+      ? office.office
+        ? botSummary(liveRoomsNow.map((r) => ({ status: botStatus(r) }))) || "Chưa có bot nào đang chạy"
+        : ""
+      : tab === "workspace"
       ? (pane?.cwd ?? ws.folder ?? "")
       : scope.session
         ? (view.sessions[0]?.cwd ?? project?.path ?? "")
@@ -387,7 +402,8 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
 
         {/* The composers end at the bottom edge: keep them above a phone's home indicator. */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-col gap-0 pb-[env(safe-area-inset-bottom)]">
-          <header className="shrink-0 border-b bg-background/90 pt-[env(safe-area-inset-top)]">
+          {/* A phone's open bot thread is a full screen of its own (back arrow, safe area): no HQ header over it. */}
+          <header className={cn("shrink-0 border-b bg-background/90 pt-[env(safe-area-inset-top)]", botThread && "hidden")}>
             {/* Phones: 44 px targets; px-3 and gap-2 leave the title room at 360 px. */}
             <div className="flex items-center gap-2 px-3 pt-2 sm:gap-3 sm:px-6 sm:pt-3">
               <Button size="icon-sm" variant="ghost" className="-ml-1 max-sm:size-11 md:hidden" onClick={() => setNavOpen(true)} aria-label="Mở danh sách phiên">
@@ -461,6 +477,7 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
                 variant="line"
                 className="hq-fade-x relative h-9 min-w-0 flex-1 snap-x snap-proximity scroll-px-4 justify-start gap-4 overflow-x-auto px-4 [scrollbar-width:none] max-sm:gap-5 max-sm:group-data-horizontal/tabs:h-[50px] max-sm:*:data-[slot=tabs-trigger]:h-11 max-sm:*:data-[slot=tabs-trigger]:snap-start max-sm:*:data-[slot=tabs-trigger]:after:bottom-0 sm:px-6"
               >
+                <TabsTrigger value="bots" className="flex-none px-0">Bots</TabsTrigger>
                 <TabsTrigger value="workspace" className="flex-none px-0">Không gian</TabsTrigger>
                 <TabsTrigger value="overview" className="flex-none px-0">Tổng quan</TabsTrigger>
                 <TabsTrigger value="office" className="flex-none px-0">Văn phòng</TabsTrigger>
@@ -503,8 +520,12 @@ export function HqApp({ token, ui }: { token: string; ui: string | null }) {
               )}
             </div>
           </header>
-          <PinnedAsks office={office.office} token={token} onOpenRoom={openRoom} />
+          {/* Bots lists the waiting bots first and shows each one's question in its thread. */}
+          {tab !== "bots" && <PinnedAsks office={office.office} token={token} onOpenRoom={openRoom} />}
           <main className="min-h-0 flex-1">
+            <TabsContent value="bots" className="h-full">
+              <BotsView hq={hq} office={office} selected={bot} onSelect={setBot} onDrawer={setDrawer} onNew={() => newSession(null)} />
+            </TabsContent>
             <TabsContent value="workspace" className="h-full">
               <WorkspaceView token={token} projects={wsProjects} sessions={tree.sessions} />
             </TabsContent>

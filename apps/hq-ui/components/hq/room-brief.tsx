@@ -91,7 +91,7 @@ export function RoomBrief({ room, n, now, token, onTerminal }: { room: Room; n: 
  * (`claude attach`) or an omp room (its omp, kept running by a host) opens inside HQ. `open` is null
  * when there is no way in (no session id). An interactive session (the owner's own window) only says so.
  */
-function useOpenTerminal(room: Room, tmux: boolean, _token: string, onTerminal: () => void) {
+export function useOpenTerminal(room: Room, tmux: boolean, _token: string, onTerminal: () => void) {
   const id = room.session_id;
   if (tmux) return { busy: false, open: onTerminal, title: undefined };
   if (!id) return { busy: false, open: null, title: undefined };

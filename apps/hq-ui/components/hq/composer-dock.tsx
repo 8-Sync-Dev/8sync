@@ -41,9 +41,10 @@ function useKeyboardInset(active: boolean) {
 /**
  * A composer that, on a phone (< sm), folds into a floating send button at the bottom right and
  * opens as a bottom sheet (the textarea gets focus; a send or a tap outside closes it). From `sm`
- * up the children render in place, unchanged.
+ * up the children render in place, unchanged. `inline` (a messenger thread): always in place, and on
+ * a phone lifted by the on-screen keyboard's height while it is up (iOS leaves it under the keyboard).
  */
-export function ComposerDock({ id, draft, label, children }: { id: string; draft: boolean; label: string; children: (ctx: { close: () => void }) => ReactNode }) {
+export function ComposerDock({ id, draft, label, inline = false, children }: { id: string; draft: boolean; label: string; inline?: boolean; children: (ctx: { close: () => void }) => ReactNode }) {
   const narrow = useNarrow();
   // The server render has no sessionStorage: it starts closed, and the tab's own value lands after hydration.
   const open = useSyncExternalStore(
@@ -52,7 +53,7 @@ export function ComposerDock({ id, draft, label, children }: { id: string; draft
     () => false,
   );
   const box = useRef<HTMLDivElement>(null);
-  const inset = useKeyboardInset(narrow && open);
+  const inset = useKeyboardInset(narrow && (open || inline));
   const set = useCallback(
     (o: boolean) => {
       sessionStorage.setItem(KEY(id), o ? "1" : "0");
@@ -61,6 +62,7 @@ export function ComposerDock({ id, draft, label, children }: { id: string; draft
     [id],
   );
   const close = useCallback(() => set(false), [set]);
+  if (inline) return <div style={narrow && inset ? { paddingBottom: inset } : undefined}>{children({ close: () => {} })}</div>;
   if (!narrow) return <>{children({ close: () => {} })}</>;
   return (
     <>

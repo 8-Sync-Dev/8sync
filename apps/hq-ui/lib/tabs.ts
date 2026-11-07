@@ -5,8 +5,9 @@
 // Owner 2026-10-22 again ("nhiều chữ nhiều tab đang bị rối"): four in the bar; "room" (Chat phòng) only
 // while a room is open, Tri thức joins the menu.
 // Preview is back in the bar (owner 2026-10-22: "Tab preview rất quan trọng … ưu tiên xem được kết quả").
-// Không gian (owner 2026-11-02, omp-first): folders on the machine → omp sessions → several windows; first and the default tab.
-export const MAIN_TABS = ["workspace", "overview", "office", "preview", "group", "room"] as const;
+// Không gian (owner 2026-11-02, omp-first): folders on the machine → omp sessions → several windows.
+// Bots (owner 2026-11-07, "giống Grok Bot"): every live room as a teammate to message; first and the default tab.
+export const MAIN_TABS = ["bots", "workspace", "overview", "office", "preview", "group", "room"] as const;
 // Nội dung (2026-11-04): content-post-agency's registry; listed only while a content DB is configured.
 // Kết quả (2026-11-04): files a room registered for the owner (POST /api/artifacts), first in the menu.
 // Bản đồ code (2026-11-05): a registered project's trail code map (app/api/codemap).
