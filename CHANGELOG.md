@@ -5,6 +5,9 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Fixed
+- HQ › menu model ("Bot mới" và chip model ở ô chat): model trùng tên (cùng model ở hai provider, hoặc id có ngày) hiện thêm "· <provider>", trùng cả provider thì thêm "· <id model>", để phân biệt được. Tên không trùng giữ nguyên.
+
 ## [0.140.0] — 2026-11-08
 
 ### Added
