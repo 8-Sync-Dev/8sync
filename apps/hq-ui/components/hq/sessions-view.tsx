@@ -62,7 +62,9 @@ export function SessionsView({
   const shown = showEnded ? [...split.live, ...split.ended] : split.live;
   const { loading, error } = hq.sessions;
   const viewingSession = sessions.find((x) => x.name === viewing);
-  const projectName = (id: number | null) => projects.find((p) => p.id === id)?.name ?? "No project";
+  // omp rooms carry no project id: name them by their folder, as the office does.
+  const projectName = (id: number | null, cwd: string | null) =>
+    projects.find((p) => p.id === id)?.name ?? cwd?.split(/[\\/]/).filter(Boolean).pop() ?? "No project";
 
   return (
     <div className="h-full overflow-y-auto">
@@ -107,7 +109,7 @@ export function SessionsView({
                       </span>
                     </td>
                     <td className="max-w-40 truncate px-3 py-2 text-muted-foreground" title={s.cwd ?? undefined}>
-                      {projectName(s.project_id)}
+                      {projectName(s.project_id, s.cwd)}
                     </td>
                     <td className="px-3 py-2">
                       {s.waiting ? (
