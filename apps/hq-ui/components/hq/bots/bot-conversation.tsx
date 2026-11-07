@@ -78,7 +78,7 @@ export function BotConversation({ bot, messages, token, now: officeNow, footer }
                   <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">{g.day}</span>
                 </div>
                 <div className="space-y-4">
-                  {g.items.map((it) => (it.kind === "turn" ? <TurnItem key={it.key} it={it} bot={bot} token={token} rev={log?.rev ?? ""} /> : <MessageItem key={it.key} m={it.m} bot={bot} token={token} />))}
+                  {g.items.map((it) => (it.kind === "turn" ? <TurnItem key={it.key} it={it} bot={bot} token={token} rev={log?.rev ?? ""} /> : <MessageItem key={it.key} it={it} bot={bot} token={token} />))}
                 </div>
               </section>
             ))}
@@ -121,6 +121,19 @@ function Theirs({ id, status, who, at, children, actions }: { id: string; status
   );
 }
 
+/** Another bot's words to this one (its `[phòng X]` source line): on the left, never as the owner's. */
+function FromBot({ name, at, text }: { name: string; at: number | null; text: string }) {
+  return (
+    <div className="flex flex-col items-start gap-1 pl-9">
+      <span className="text-[11px] text-muted-foreground">
+        Từ bot <span className="font-medium text-foreground/80">{name}</span>
+        {at != null && <span className="tabular"> · {clock(at)}</span>}
+      </span>
+      <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-muted px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{text}</div>
+    </div>
+  );
+}
+
 const TurnItem = memo(function TurnItem({ it, bot, token, rev }: { it: Extract<ThreadItem<Message>, { kind: "turn" }>; bot: Bot; token: string; rev: string }) {
   const { turn, sent, prompt, from, steps } = it;
   const output = turn.output;
@@ -131,13 +144,7 @@ const TurnItem = memo(function TurnItem({ it, bot, token, rev }: { it: Extract<T
           <MessageText text={sent.text} token={token} className="whitespace-pre-wrap break-words" />
         </Mine>
       ) : prompt && from?.kind === "room" ? (
-        <div className="flex flex-col items-start gap-1 pl-9">
-          <span className="text-[11px] text-muted-foreground">
-            Từ bot <span className="font-medium text-foreground/80">{from.name}</span>
-            {turn.at != null && <span className="tabular"> · {clock(turn.at)}</span>}
-          </span>
-          <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-muted px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{prompt}</div>
-        </div>
+        <FromBot name={from.name} at={turn.at} text={prompt} />
       ) : prompt ? (
         <Mine at={turn.at} tag={from?.kind === "auto" ? <span>Tự động</span> : <span>Gõ trong terminal</span>}>
           <p className="whitespace-pre-wrap break-words">{prompt}</p>
@@ -208,11 +215,13 @@ function Steps({ steps, errors, live }: { steps: ActivityEvent[]; errors: number
   );
 }
 
-function MessageItem({ m, bot, token }: { m: Message; bot: Bot; token: string }) {
+function MessageItem({ it, bot, token }: { it: Extract<ThreadItem<Message>, { kind: "message" }>; bot: Bot; token: string }) {
+  const { m, from, body } = it;
+  if (m.kind === "owner_message" && from?.kind === "room") return <FromBot name={from.name} at={m.ts} text={body ?? ""} />;
   if (m.kind === "owner_message")
     return (
-      <Mine at={m.ts} tag={<DeliveryTag delivery={m.delivery} />}>
-        <MessageText text={m.text} token={token} className="whitespace-pre-wrap break-words" />
+      <Mine at={m.ts} tag={from?.kind === "auto" ? <span>Tự động</span> : <DeliveryTag delivery={m.delivery} />}>
+        {from?.kind === "auto" ? <p className="whitespace-pre-wrap break-words">{body}</p> : <MessageText text={m.text} token={token} className="whitespace-pre-wrap break-words" />}
       </Mine>
     );
   const own = m.from_ === bot.room.name || m.from_ === bot.room.session_id;

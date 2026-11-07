@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { recentFiles, type Bot } from "@/lib/bots";
 import { agoVi } from "@/lib/now";
 import { roomModelLabel } from "@/lib/roles";
+import type { Brief } from "@/lib/server/brief";
 import type { Room } from "@/lib/server/office";
 import { FileChips, useFileSpots } from "../path-open";
 import { RoomLog } from "../room-log";
@@ -11,18 +12,22 @@ import { useRoomLog } from "../room-outputs";
 import { BotAvatar, StatusPill } from "./bot-avatar";
 
 /**
- * The bot's detail pane: who it is and where it works, the files it wrote lately, then its Nhật ký
+ * The bot's detail pane: who it is and where it works, the files it wrote lately (its brief from GET /api/brief: waiting, doing, last ask and reply), then its Nhật ký
  * (results per turn, every step). Inside the thread's RoomLogProvider and PathOpenProvider.
  */
-export function BotBrief({ bot, now, onFull }: { bot: Bot<Room>; now: number; onFull?: () => void }) {
+export function BotBrief({ bot, brief = null, now, onFull }: { bot: Bot<Room>; brief?: Brief | null; now: number; onFull?: () => void }) {
   const r = bot.room;
   const ctx = useRoomLog();
-  const files = useMemo(() => recentFiles(ctx?.log?.events ?? []), [ctx?.log?.events]);
+  const logFiles = useMemo(() => recentFiles(ctx?.log?.events ?? []), [ctx?.log?.events]);
+  const files = logFiles.length ? logFiles : (brief?.files ?? []);
   const spots = useFileSpots(files, ctx?.log?.rev ?? "");
   const model = roomModelLabel(r);
   const rows: [string, string | null][] = [
-    ["Đang làm", bot.status === "working" || bot.status === "needs" ? r.doing : null],
-    ["Dự án", bot.project],
+    ["Chờ anh", brief?.waiting ?? null],
+    ["Đang làm", brief?.doing ?? (bot.status === "working" || bot.status === "needs" ? r.doing : null)],
+    ["Hỏi gần nhất", brief?.lastAsk ?? null],
+    ["Trả lời gần nhất", brief?.lastReply ?? null],
+    ["Dự án", brief?.project?.name ?? bot.project],
     ["Nhánh", bot.branch],
     ["Model", model],
     ["Engine", r.engine === "omp" ? "omp" : "Claude Code"],

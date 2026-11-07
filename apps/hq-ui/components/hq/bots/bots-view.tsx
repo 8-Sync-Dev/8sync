@@ -4,9 +4,11 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState, useSyncExt
 import { useDefaultLayout } from "react-resizable-panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { botList, filterBots, type BotFilter } from "@/lib/bots";
+import { botList, filterBots, pinChief, type BotFilter } from "@/lib/bots";
+import type { ChiefView } from "@/lib/server/chief";
 import type { OfficeState } from "../use-office";
 import type { Hq } from "../use-hq";
+import { usePoll } from "../use-poll";
 import { BotAvatar } from "./bot-avatar";
 import { BotList } from "./bot-list";
 import { BotThread } from "./bot-thread";
@@ -19,6 +21,8 @@ const subscribeWide = (on: () => void) => {
 };
 /** A history entry while a phone shows a thread: the system Back returns to the list. */
 const HISTORY_KEY = "hqBot";
+/** GET /api/chief, at the Chief of Staff panel's cadence (components/hq/chief-panel.tsx). */
+const CHIEF_POLL_MS = 30_000;
 
 /**
  * Bots: every live room as a teammate to message. A phone shows the list, then one thread full screen
@@ -49,7 +53,9 @@ export function BotsView({
   const now = office.office?.at ?? 0;
   const sessions = hq.sessions.data;
   const messages = hq.messages.data;
-  const all = useMemo(() => botList(rooms ?? [], sessions, messages), [rooms, sessions, messages]);
+  const chiefView = usePoll<ChiefView>(hq.api, "/api/chief", CHIEF_POLL_MS, true).data;
+  const chiefRoom = chiefView?.cfg.on && chiefView.live ? chiefView.cfg.room : null;
+  const { bots: all, chief } = useMemo(() => pinChief(botList(rooms ?? [], sessions, messages), chiefRoom), [rooms, sessions, messages, chiefRoom]);
   const shown = useMemo(() => filterBots(all, q, filter), [all, q, filter]);
   const layout = useDefaultLayout({ id: "hq-bots-columns", panelIds: ["list", "thread"] });
 
@@ -92,10 +98,11 @@ export function BotsView({
       error={office.error}
       onRetry={office.retry}
       onNew={onNew}
+      chief={chief}
     />
   );
   const thread = bot ? (
-    <BotThread key={bot.key} bot={bot} hq={hq} sessions={sessions} messages={messages} now={now} wide={wide} mobile={mobile} onBack={back} onDrawer={onDrawer} />
+    <BotThread key={bot.key} bot={bot} chief={bot.key === chief} hq={hq} sessions={sessions} messages={messages} now={now} wide={wide} mobile={mobile} onBack={back} onDrawer={onDrawer} />
   ) : (
     <div className="grid h-full place-items-center px-6 text-center">
       <div className="flex flex-col items-center gap-3">

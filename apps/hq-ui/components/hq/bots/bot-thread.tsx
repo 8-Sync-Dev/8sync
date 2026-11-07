@@ -21,6 +21,9 @@ import type { Hq } from "../use-hq";
 import { BotAvatar, StatusPill } from "./bot-avatar";
 import { BotBrief } from "./bot-brief";
 import { BotConversation } from "./bot-conversation";
+import { ChiefBadge } from "./bot-list";
+import { ChiefComposer } from "./chief-composer";
+import { useBotBrief } from "./use-bot-brief";
 
 const ICON_ONLY_PHONE = "[&_button]:max-md:size-11 [&_button]:max-md:gap-0 [&_button]:max-md:px-0 [&_button]:max-md:text-[0px]";
 
@@ -31,6 +34,7 @@ const ICON_ONLY_PHONE = "[&_button]:max-md:size-11 [&_button]:max-md:gap-0 [&_bu
  */
 export function BotThread({
   bot,
+  chief = false,
   hq,
   sessions,
   messages,
@@ -41,6 +45,8 @@ export function BotThread({
   onDrawer,
 }: {
   bot: Bot<Room>;
+  /** The Chief of Staff: its box posts to /api/chief/ask. */
+  chief?: boolean;
   hq: Hq;
   sessions: Session[];
   messages: Message[];
@@ -57,6 +63,8 @@ export function BotThread({
   const mine = useMemo(() => sessions.filter((s) => s.name === r.name || (r.session_id != null && s.session_id === r.session_id)), [sessions, r.name, r.session_id]);
   const own = useMemo(() => botMessages(r, sessions, messages), [r, sessions, messages]);
   const session = mine[0];
+  const brief = useBotBrief(hq.api, r);
+  const briefLine = brief?.waiting ?? brief?.doing ?? null;
   const term = useOpenTerminal(r, !!session?.tmux, token, () => session && onDrawer(session.name));
   const [pane, setPane] = useState(true);
   const [sheet, setSheet] = useState(false);
@@ -86,7 +94,9 @@ export function BotThread({
   const thread = (
     <div className="flex h-full min-h-0 flex-col">
       <BotConversation bot={bot} messages={own} token={token} now={now} footer={ask} />
-      {messageTargets(mine).length > 0 ? (
+      {chief ? (
+        <ChiefComposer hq={hq} name={bot.name} />
+      ) : messageTargets(mine).length > 0 ? (
         <Composer hq={hq} sessions={mine} target={session?.name ?? null} onTarget={() => {}} inline />
       ) : (
         <p className="shrink-0 border-t px-4 py-3 text-sm text-muted-foreground">{bot.name} không nhận tin từ HQ. Mở terminal của phiên này để nhắn trực tiếp.</p>
@@ -108,11 +118,18 @@ export function BotThread({
             <div className="min-w-0 flex-1">
               <h2 className="flex min-w-0 items-center gap-2">
                 <span className="truncate font-semibold tracking-tight">{bot.name}</span>
+                {chief && <ChiefBadge />}
                 <StatusPill status={bot.status} />
               </h2>
               <p className="truncate text-xs text-muted-foreground" title={r.cwd ?? undefined}>
                 {[bot.qualifier ?? bot.project, bot.branch, r.engine === "omp" ? "omp" : "Claude Code"].filter(Boolean).join(" · ")}
               </p>
+              {briefLine && (
+                <p className={cn("truncate text-xs", brief?.waiting ? "text-foreground" : "text-muted-foreground")} title={briefLine}>
+                  {brief?.waiting ? "Chờ anh: " : "Đang: "}
+                  {briefLine}
+                </p>
+              )}
             </div>
             <div className={cn("flex shrink-0 items-center gap-1", ICON_ONLY_PHONE)}>
               {term.open && (
@@ -135,7 +152,7 @@ export function BotThread({
                 </ResizablePanel>
                 <ResizableHandle withHandle aria-label="Kéo để chia chỗ giữa cuộc trò chuyện và Nhật ký" />
                 <ResizablePanel id="brief" defaultSize="34" minSize="24" maxSize="50" className="min-h-0 border-l bg-muted/20">
-                  <BotBrief bot={bot} now={now} />
+                  <BotBrief bot={bot} brief={brief} now={now} />
                 </ResizablePanel>
               </ResizablePanelGroup>
             ) : (
@@ -150,7 +167,7 @@ export function BotThread({
                 <SheetDescription>Chi tiết, file vừa sửa và từng bước bot đã làm.</SheetDescription>
               </SheetHeader>
               <div className="h-full min-h-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-                <BotBrief bot={bot} now={now} />
+                <BotBrief bot={bot} brief={brief} now={now} />
               </div>
             </SheetContent>
           </Sheet>

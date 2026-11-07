@@ -10,12 +10,13 @@
 // without PathOpenProvider a path stays plain code, so nothing here reaches the guest app.
 import { FileAudioIcon, FileCodeIcon, FileIcon, FileImageIcon, FileSearchIcon, FileTextIcon, FileVideoIcon, FileXIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { defaultComponents, defaultRemarkPlugins, type ExtraProps, type Streamdown } from "streamdown";
+import { defaultComponents, type ExtraProps, type Streamdown } from "streamdown";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { baseName, fileType } from "@/lib/artifacts";
 import { absFilePath, fileLinkPath, relFilePath, remarkFileLinks } from "@/lib/file-path";
+import { hqRemarkPlugins } from "@/lib/markdown";
 import { FILES_LOCATE_MAX, type FileKind, type FileSpot, type FileSpots } from "@/lib/files";
 import { cn } from "@/lib/utils";
 import { DISCARD, FileViewer, Note } from "./files-sheet";
@@ -283,5 +284,5 @@ type MdProps = ComponentProps<typeof Streamdown>;
  */
 export const pathMarkdown = {
   components: { inlineCode: PathCode, a: PathLink },
-  remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkFileLinks],
+  remarkPlugins: [...hqRemarkPlugins, remarkFileLinks],
 } satisfies Pick<MdProps, "components" | "remarkPlugins">;
