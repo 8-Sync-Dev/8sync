@@ -2,7 +2,7 @@
 // "Nội dung" approve+send (lib/server/content.ts `approveAndSend`) and the /solo controls.
 import type { DatabaseSync } from "node:sqlite";
 import { withSenderHeader, type Sender } from "../sender";
-import { deliverWatched } from "./channel";
+import { deliverWatched, SessionWaiting } from "./channel";
 import { inboxTarget } from "./floor";
 import { inboxLive, isInboxId, queueInbox } from "./inbox";
 import { capturePlain, sendKeys } from "./proc";
@@ -25,4 +25,14 @@ export async function deliverText(db: DatabaseSync, session: string, text: strin
   }
   const r = await deliverWatched(db, session, shown, { sendKeys, capture: capturePlain });
   return { message: r.message, delivery: r.delivery, error: r.error };
+}
+
+/** `deliverText`, a dialog open in the pane reported (`waiting`, the routes answer 409 session-waiting) instead of thrown. */
+export async function deliverOrWaiting(db: DatabaseSync, session: string, text: string, sender: Sender) {
+  try {
+    return { ...(await deliverText(db, session, text, sender)), waiting: false as const };
+  } catch (e) {
+    if (e instanceof SessionWaiting) return { delivery: "waiting", error: "session-waiting", dialog: e.dialog, waiting: true as const };
+    throw e;
+  }
 }
