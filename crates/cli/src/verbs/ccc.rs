@@ -29,6 +29,7 @@ pub(crate) mod eco;
 mod ecc_pick;
 mod fence;
 mod gate;
+mod grade;
 mod grant;
 mod guard;
 pub(crate) mod help;
@@ -74,6 +75,7 @@ mod verify;
       8sync ccc status               claude binary, login, kit, managed settings, MCP and sessions
       8sync ccc policy [--org-uuid <uuid>] [--out <file>] [--strict-hooks] [--lock-mcp]
                                      print a recommended managed-settings.json (never installs it)
+      8sync ccc grade --head solo/x --check \"cargo test\" --held-out \"...\"   grade a Worker branch in a clean temp worktree (PASS/FAIL/REJECTED/ERROR; -h)
       8sync ccc eco reap --dry-run   orphaned LSP/MCP helpers (no claude/omp/editor above, ≥ 2 min) eco would kill
       8sync ccc eco reap             kill them now (eco's logon loop does it every pass, max 20)
 
@@ -204,6 +206,7 @@ pub fn run(a: Args) -> Result<()> {
             Ok(())
         }
         "risk" => risk::run(rest, &std::env::current_dir().context("no cwd")?),
+        "grade" => grade::run(rest, &cwd),
         "term" => term::run(rest, &env),
         "awake" => {
             let o = awake::parse(rest)?;
