@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { findingsKey, normWatch, parseScan, SPIKE_GAP_MS, spikeStep, spikeZero, WATCH_DEFAULT, watchText, type Scan } from "@/lib/server/machine-watch";
+import type { FloorRow } from "@/lib/floor";
+import { findingsKey, normWatch, parseScan, SPIKE_GAP_MS, spikeStep, spikeZero, WATCH_DEFAULT, watchChanged, watchText, watchTick, type Levels, type Scan, type WatchDeps } from "@/lib/server/machine-watch";
 
 const scan = (over: Partial<Scan> = {}): Scan => ({
   at: 1,
@@ -64,5 +65,44 @@ describe("machine watch", () => {
     expect(parseScan(JSON.stringify(scan()))?.suspects).toHaveLength(2);
     expect(parseScan("{\"heavy\":[]}")).toBeNull();
     expect(parseScan("error: usage")).toBeNull();
+  });
+
+  it("a tick sends a routine pass once, holds back the same findings, and lets a spike through", async () => {
+    watchChanged();
+    const ROOM = "omp-0123456789abcdef";
+    const row = { id: "r", name: "core", title: "core", live: true, inbox_id: ROOM, engine: "omp", repo: "~/x" } as unknown as FloorRow;
+    const sent: string[] = [];
+    let lv: Levels = { cpu: 20, ram: 50, gpu: 5 };
+    let found = scan();
+    const deps: Partial<WatchDeps> = {
+      floor: async () => [row],
+      live: () => true,
+      scan: async () => found,
+      levels: async () => lv,
+      deliver: (_r, id, text) => sent.push(`${id}|${text}`),
+    };
+    const cfg = { ...WATCH_DEFAULT, on: true, room: ROOM };
+    const t0 = 1_800_000_000_000;
+    expect(await watchTick(t0, cfg, deps)).toEqual({ sent: "routine", session: ROOM });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/^omp-0123456789abcdef\|\[HQ Canh máy · định kỳ\]/);
+    // Inside the interval: nothing. Next interval, same killable findings: skipped, not sent.
+    expect(await watchTick(t0 + 60_000, cfg, deps)).toBeNull();
+    expect(await watchTick(t0 + 31 * 60_000, cfg, deps)).toEqual({ skipped: expect.stringContaining("không có gì mới") });
+    // Only protected findings: nothing to send either.
+    found = scan({ suspects: scan().suspects.slice(1) });
+    expect(await watchTick(t0 + 62 * 60_000, cfg, deps)).toEqual({ skipped: expect.stringContaining("không có gì kill được") });
+    expect(sent).toHaveLength(1);
+    // RAM held over the line for two ticks: urgent at once, whatever the interval.
+    lv = { cpu: 20, ram: 95, gpu: 5 };
+    expect(await watchTick(t0 + 63 * 60_000, cfg, deps)).toBeNull();
+    expect(await watchTick(t0 + 64 * 60_000, cfg, deps)).toEqual({ sent: "spike", session: ROOM });
+    expect(sent[1]).toContain("KHẨN: RAM 95% ≥ 90% suốt 2 phút");
+    // A room that is no longer live is skipped with a reason, not queued.
+    watchChanged();
+    expect(await watchTick(t0 + 200 * 60_000, cfg, { ...deps, live: () => false, scan: async () => scan({ suspects: [{ ...scan().suspects[0], kill: ["9:9"] }] }) })).toEqual({ skipped: expect.stringContaining("không live") });
+    expect(sent).toHaveLength(2);
+    // Off: no reads at all.
+    expect(await watchTick(t0 + 300 * 60_000, { ...cfg, on: false }, { ...deps, levels: async () => { throw new Error("read"); } })).toBeNull();
   });
 });

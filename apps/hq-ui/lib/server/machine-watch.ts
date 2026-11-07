@@ -7,7 +7,6 @@
 // spike sends nothing, so the room's context does not fill with "máy ổn".
 import fs from "node:fs";
 import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import type { FloorRow } from "../floor";
 import { AUTO, withSenderHeader } from "../sender";
 import { getDb } from "./db";
@@ -224,43 +223,63 @@ export function watchRooms(rows: readonly FloorRow[], live: (id: string) => bool
 
 export type Sent = { sent: SendKind; session: string } | { skipped: string };
 
-async function send(db: DatabaseSync, cfg: WatchConfig, kind: SendKind, why: string | null, now: number, scan: Scan | null): Promise<Sent> {
+/** What a tick reads and where it writes (the test swaps them). */
+export type WatchDeps = {
+  floor: () => Promise<FloorRow[]>;
+  live: (id: string) => boolean;
+  scan: () => Promise<Scan | null>;
+  levels: () => Promise<Levels>;
+  deliver: (room: FloorRow, id: string, text: string, now: number) => void;
+};
+
+function liveDeps(): WatchDeps {
+  return {
+    floor: () => loadFloor(getDb()),
+    live: inboxLive,
+    scan: () => scanNow(0),
+    levels: async () => levels(await machine(process.platform, undefined, false)),
+    deliver: (room, id, text, now) => {
+      queueInbox(id, text, AUTO, targetOf(room, id), now);
+      ownerMessage(getDb(), id, withSenderHeader(text, AUTO), "inbox");
+    },
+  };
+}
+
+async function send(d: WatchDeps, cfg: WatchConfig, kind: SendKind, why: string | null, now: number, scan: Scan | null): Promise<Sent> {
   if (!cfg.room) return { skipped: "Chưa chọn phòng canh máy" };
-  const room = (await loadFloor(db)).find((r) => r.inbox_id === cfg.room);
-  if (!room || !watchRooms([room]).length) return { skipped: "Phòng canh máy không live: mở lại phòng hoặc chọn phòng khác" };
-  const s = scan ?? (await scanNow(0));
+  const room = (await d.floor()).find((r) => r.inbox_id === cfg.room);
+  if (!room || !watchRooms([room], d.live).length) return { skipped: "Phòng canh máy không live: mở lại phòng hoặc chọn phòng khác" };
+  const s = scan ?? (await d.scan());
   if (!s) return { skipped: "8sync ccc eco scan không chạy được (8sync cũ? chạy 8sync up)" };
-  const text = watchText(kind, why, s, now);
-  queueInbox(cfg.room, text, AUTO, targetOf(room, cfg.room), now);
-  ownerMessage(db, cfg.room, withSenderHeader(text, AUTO), "inbox");
+  d.deliver(room, cfg.room, watchText(kind, why, s, now), now);
   S.lastSent = { at: now, kind, room: cfg.room, why };
   S.lastKey = findingsKey(s);
   return { sent: kind, session: cfg.room };
 }
 
 /** The owner's "Gửi urgent ngay". */
-export function sendUrgent(now = Date.now(), cfg = readWatch()): Promise<Sent> {
-  return send(getDb(), cfg, "owner", null, now, null);
+export function sendUrgent(now = Date.now(), cfg = readWatch(), deps: Partial<WatchDeps> = {}): Promise<Sent> {
+  return send({ ...liveDeps(), ...deps }, cfg, "owner", null, now, null);
 }
 
-/** One tick (the timer calls it every WATCH_TICK_MS). `lv`: the levels to judge (tests). */
-export async function watchTick(now = Date.now(), cfg = readWatch(), lv?: Levels): Promise<Sent | null> {
+/** One tick (the timer calls it every WATCH_TICK_MS). */
+export async function watchTick(now = Date.now(), cfg = readWatch(), deps: Partial<WatchDeps> = {}): Promise<Sent | null> {
   if (!cfg.on || !cfg.room) {
     S.spike = spikeZero();
     return null;
   }
-  const l = lv ?? levels(await machine(process.platform, undefined, false));
+  const d = { ...liveDeps(), ...deps };
+  const l = await d.levels();
   const { fire, next } = spikeStep(S.spike, l, cfg, now);
   S.spike = next;
-  const db = getDb();
   if (fire.length) {
-    const r = await send(db, cfg, "spike", spikeReason(fire, l, cfg), now, null);
+    const r = await send(d, cfg, "spike", spikeReason(fire, l, cfg), now, null);
     S.note = "skipped" in r ? r.skipped : null;
     return r;
   }
   if (now - S.lastCheck < cfg.everyMin * 60_000) return null;
   S.lastCheck = now;
-  const s = await scanNow(0);
+  const s = await d.scan();
   if (!s) {
     S.note = "8sync ccc eco scan không chạy được (8sync cũ? chạy 8sync up)";
     return { skipped: S.note };
@@ -270,7 +289,7 @@ export async function watchTick(now = Date.now(), cfg = readWatch(), lv?: Levels
     S.note = key ? "Định kỳ: không có gì mới so với lần gửi trước, không gửi" : "Định kỳ: không có gì kill được, không gửi";
     return { skipped: S.note };
   }
-  const r = await send(db, cfg, "routine", null, now, s);
+  const r = await send(d, cfg, "routine", null, now, s);
   S.note = "skipped" in r ? r.skipped : null;
   return r;
 }
