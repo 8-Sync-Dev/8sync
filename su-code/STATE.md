@@ -11,10 +11,12 @@ Owner 2026-11-07 `/solo` (auto, không hỏi): `/solo` mạnh nhất (research w
 - [x] APK `apps/hq-android/` + `hq-android.yml` (ký v2/v3, UAT emulator không chặn), roadmap `docs/hq-android.md`
 - [x] v0.133.0 (PR #351): released, APK gắn vào release, `8sync up` + UAT
 - [x] v0.133.1 (PR #352): phòng omp còn subagent chạy nền hiện đang làm
-- [ ] v0.134.0: HQ › Máy › Canh máy (phòng canh, cron mặc định 30 phút, khẩn khi tăng đột biến, Gửi urgent ngay, Nghi vấn + Kill) + `eco scan`/`eco kill <pid:start>`
+- [x] v0.134.0 (PR #353): HQ › Máy › Canh máy (phòng canh, cron mặc định 30 phút, khẩn khi tăng đột biến, Gửi urgent ngay, Nghi vấn + Kill) + `eco scan`/`eco kill <pid:start>`
+
+- [ ] v0.135.0: HQ tự cập nhật (10 phút, `8sync up`, Máy › Tự cập nhật); UAT thật bằng v0.135.1 mà không gõ `8sync up`
 
 ## Current
-Worktree `C:\Users\Projects\su-code-watch`, nhánh `feat/machine-watch`.
+Worktree `C:\Users\Projects\su-code-watch`, nhánh `feat/hq-auto-update`.
 
 ## Next
 - Sau khi bật Canh máy: tắt monitor PowerShell tạm của phòng Admin (`C:\Users\Admin\scratch\hqmon`, service `hq-machine-mon`). Việc tiếp theo cho Rust: chụp process một lần bằng `NtQuerySystemInformation` (+2 KB), lấy GPU theo process qua PDH (+11 KB).

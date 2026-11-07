@@ -5,6 +5,14 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.135.0] — 2026-11-07
+
+### Added
+- HQ tự cập nhật: cứ 10 phút HQ hỏi GitHub bản 8sync mới nhất (qua redirect `releases/latest`, không tốn hạn mức API). Có bản mới hơn binary đang cài thì HQ tự chạy `8sync up`; sau đó `8sync hq ui` tự đổi sang bản mới (`--public`/`--tailnet` chỉ đổi UI, link từ xa giữ nguyên) và trang đang mở tự tải lại. Như vậy web HQ luôn chạy bản mới nhất mà không cần ai gõ `8sync up`.
+  - Logic nằm trong node server của HQ chứ không nằm trong `8sync hq ui`, vì node là phần được thay ở mỗi lần cập nhật. Một tiến trình `--tailnet` chạy lâu ngày vẫn giữ code binary cũ của nó.
+  - HQ › Máy › **Tự cập nhật**: công tắc (mặc định bật), dòng "HQ x · 8sync y · mới nhất z", giờ kiểm và lần cài gần nhất, nút **Kiểm ngay**. `GET/PUT /api/update`, `POST /api/update/check`. Cấu hình lưu ở `~/.config/8sync/hq/auto-update.json`.
+  - Không bao giờ cập nhật khi HQ chạy từ mã nguồn (dev), khi bật `SUSYNC_NO_AUTO_UPDATE` hoặc `EIGHTSYNC_OFFLINE`. Hai yêu cầu cùng lúc chỉ chạy một lần `8sync up`. Cập nhật lỗi hoặc thiếu bước thì báo lỗi rõ, không báo thành công.
+
 ## [0.134.0] — 2026-11-07
 
 ### Added

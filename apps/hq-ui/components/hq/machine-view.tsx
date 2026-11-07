@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDownIcon, HardDriveIcon, Loader2Icon, RadarIcon, RotateCwIcon, SendIcon, ShieldCheckIcon, SkullIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, DownloadIcon, HardDriveIcon, Loader2Icon, RadarIcon, RotateCwIcon, SendIcon, ShieldCheckIcon, SkullIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import type { Awake } from "@/lib/server/awake";
 import type { DiskProject, DiskState } from "@/lib/server/disk";
 import type { Power, PowerSettings } from "@/lib/server/power";
 import type { Heavy, Restarted, Spec } from "@/lib/server/machine";
+import type { UpdateConfig, UpdateStatus } from "@/lib/server/auto-update";
 import type { KillRow, Scan, Suspect, WatchConfig } from "@/lib/server/machine-watch";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorNote } from "./bits";
@@ -1057,6 +1058,90 @@ function WatchPanel({ api, active }: { api: Hq["api"]; active: boolean }) {
  * Tab "Máy": the machine watch (room, cron, urgent, suspects), load, power, awake (with its switch), what the machine is, how big the projects have
  * grown (one-tap cleanup send) and the processes. `m` is the header chip's poll.
  */
+type UpdateView = { cfg: UpdateConfig; status: UpdateStatus };
+const UPDATE_POLL_MS = 60_000;
+
+/** Tự cập nhật: HQ installs a newer 8sync release on its own, then restarts on it (the page reloads). */
+function UpdatePanel({ api, active }: { api: Hq["api"]; active: boolean }) {
+  const u = usePoll<UpdateView>(api, "/api/update", UPDATE_POLL_MS, active);
+  const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const v = u.data;
+  const st = v?.status;
+
+  async function toggle(on: boolean) {
+    setSaving(true);
+    try {
+      await api("/api/update", { method: "PUT", body: { on } });
+      u.reload();
+    } catch (e) {
+      toast.error("Chưa lưu được", { description: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function checkNow() {
+    setChecking(true);
+    try {
+      const r = await api<UpdateView>("/api/update/check", { method: "POST" });
+      const s = r.status;
+      if (s.error) toast.error("Chưa cập nhật được", { description: s.error });
+      else if (s.lastUp?.ok && s.lastUp.to === s.binary && s.ui !== s.binary) toast.success(`Đã cài 8sync ${s.binary}`, { description: "HQ khởi động lại trên bản mới trong khoảng 30 giây, trang tự tải lại." });
+      else toast.success(`Đang ở bản mới nhất (${s.binary ?? "?"})`);
+      u.reload();
+    } catch (e) {
+      toast.error("Chưa kiểm được", { description: (e as Error).message });
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const waitingRestart = !!st?.binary && !!st.ui && st.binary !== st.ui;
+  return (
+    <Panel
+      id="may-update"
+      title="Tự cập nhật"
+      aside={
+        v && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{st?.blocked ? "Không áp dụng" : v.cfg.on ? "Đang bật · 10 phút" : "Đang tắt"}</span>
+            <Switch on={v.cfg.on && !st?.blocked} busy={saving} disabled={!!st?.blocked} label="Bật tự cập nhật" onChange={(on) => void toggle(on)} />
+          </div>
+        )
+      }
+    >
+      <p className="text-xs leading-snug text-muted-foreground">Cứ 10 phút HQ xem GitHub có bản 8sync mới không; có thì tự chạy 8sync up, HQ khởi động lại trên bản mới (link từ xa giữ nguyên) và trang tự tải lại.</p>
+      {u.error && !v && <ErrorNote what="tự cập nhật" error={u.error} onRetry={u.reload} />}
+      {!v && !u.error && <Skeleton className="h-12 rounded-md" />}
+      {st && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="space-y-0.5 text-xs">
+            <p>
+              HQ <span className="font-medium tabular-nums">{st.ui ?? "dev"}</span> · 8sync <span className="font-medium tabular-nums">{st.binary ?? "?"}</span> · mới nhất <span className="font-medium tabular-nums">{st.latest ?? "chưa kiểm"}</span>
+            </p>
+            <p className={cn("text-muted-foreground", (st.error || st.blocked) && "text-amber-700 dark:text-amber-400")} role={st.error ? "alert" : undefined}>
+              {st.blocked ??
+                st.error ??
+                (st.running
+                  ? "Đang kiểm / cài bản mới…"
+                  : waitingRestart
+                    ? `Đã cài 8sync ${st.binary}: HQ đổi sang bản này khi shell trong HQ đóng`
+                    : st.checkedAt
+                      ? `Kiểm lúc ${hhmm(st.checkedAt)}${st.lastUp ? ` · lần cài cuối ${hhmm(st.lastUp.at)}: ${st.lastUp.from ?? "?"} → ${st.lastUp.to}${st.lastUp.ok ? "" : " (lỗi)"}` : ""}`
+                      : "Lượt kiểm đầu chạy khoảng 3 phút sau khi HQ mở")}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className={TOUCH} disabled={checking || st.running || !!st.blocked} onClick={() => void checkNow()}>
+            {checking || st.running ? <Loader2Icon className="animate-spin motion-reduce:animate-none" /> : <DownloadIcon />}
+            Kiểm ngay
+          </Button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function MachineView({ m, reload, api, rooms, active }: { m: MachineData | null; reload: () => void; api: Hq["api"]; rooms: Room[]; active: boolean }) {
   if (!m) {
     return (
@@ -1075,6 +1160,7 @@ export function MachineView({ m, reload, api, rooms, active }: { m: MachineData 
       <div className="mx-auto w-full max-w-5xl space-y-4 px-4 pt-5 pb-10 sm:px-6">
         {m.heavy && m.heavy.length > 0 && <HeavyPanel heavy={m.heavy} api={api} onRestarted={reload} />}
         <WatchPanel api={api} active={active} />
+        <UpdatePanel api={api} active={active} />
         <div className="gap-4 lg:columns-2 [&>*]:mb-4 [&>*]:break-inside-avoid [&>*:last-child]:mb-0">
           <Panel id="may-load" title="Tải máy">
             <div className="space-y-2">
