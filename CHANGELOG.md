@@ -5,6 +5,12 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+## [0.133.0] — 2026-11-07
+
+### Added
+- **HQ Android (APK)**: app `8 Sync HQ` (Tauri 2, lõi Rust + WebView hệ thống, `apps/hq-android/`) mở HQ trên PC qua `--tailnet`/`--public`; màn hình kết nối light/dark, nhớ địa chỉ gần đây (chỉ origin, không lưu `?k=`), Back về màn hình kết nối; workflow `hq-android.yml` build + ký (v2/v3) + UAT emulator Pixel 6 API 34 (không chặn release), gắn `8sync-hq.apk` + `.sha256` vào mỗi release. Tải: https://github.com/8-Sync-Dev/8sync/releases/latest/download/8sync-hq.apk · roadmap P0–P4 (UI Rust thuần Slint/egui ở P2, theo số đo): `docs/hq-android.md`. README + site có link tải.
+- HQ: file nhắc tới trong Kết quả (chip, đường dẫn trong code, link markdown tới file máy) mở xem ngay trong HQ, cả trên điện thoại: video/audio tua được (Range 206/416), ảnh, PDF, markdown, text, loại khác thì Tải về; đường dẫn tuyệt đối, tương đối theo thư mục phòng/repo hoặc chỉ tên file đều tìm được (`POST /api/files/locate`, chỉ file thường trong dự án HQ biết, gồm phòng đã đóng; không bao giờ lấy home/ổ đĩa làm gốc; từ chối UNC trên mọi OS); file thiếu báo "không thấy", file bí mật (`.env`, key, `.p12`, `.session`…) báo "bị chặn".
+
 ### Changed
 - Site get.8syncdev.com và README: video demo 42 giây (1920x1080, H.264+AAC, 6 cảnh) thay video HQ 13 giây; gỡ `hq-demo.mp4`/`hq-demo-poster.webp`.
 

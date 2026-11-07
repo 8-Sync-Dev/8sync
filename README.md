@@ -50,6 +50,8 @@ cd my-app
 
 Each name is one conversation per repo, so `8sync . api` tomorrow continues today's thread. 8sync never opens a session or sends a prompt on its own: every session is one you open, in a terminal or from HQ.
 
+**HQ on Android:** [download 8sync-hq.apk](https://github.com/8-Sync-Dev/8sync/releases/latest/download/8sync-hq.apk). It is a small Rust (Tauri 2) app that opens your PC's HQ over `--tailnet` or `--public`, remembers recent addresses (never the `?k=` key) and brings you back to its connect screen with Back. Setup and roadmap: [docs/hq-android.md](docs/hq-android.md).
+
 ## Engines
 
 Pick the engine with `--mode`; set `SUSYNC_MODE` to change your default.
