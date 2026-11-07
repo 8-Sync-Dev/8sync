@@ -1,7 +1,7 @@
 "use client";
 
 import { PlusIcon, RotateCwIcon, SearchIcon, XIcon } from "lucide-react";
-import { useRef, type KeyboardEvent } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,6 +36,7 @@ export function BotList({
   onRetry,
   onNew,
   chief = null,
+  groups,
 }: {
   /** Every live bot (the counts); `bots` is what the search and filter leave. */
   all: Bot[];
@@ -54,6 +55,8 @@ export function BotList({
   onNew: (templateId?: string) => void;
   /** The Chief of Staff's bot key (pinned first by the caller), shown with a "Chief" badge. */
   chief?: string | null;
+  /** The groups section (components/hq/bots/groups-section.tsx), above the bots. */
+  groups?: ReactNode;
 }) {
   const list = useRef<HTMLUListElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -133,6 +136,7 @@ export function BotList({
       </div>
 
       <div ref={scroller} className="relative min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]">
+        {!loading && groups}
         {loading ? (
           <ListSkeleton />
         ) : error && !all.length ? (

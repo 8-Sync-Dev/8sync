@@ -1,7 +1,8 @@
 "use client";
 
 import { ArrowLeftIcon, PanelRightIcon, SquareTerminalIcon } from "lucide-react";
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
+import { toast } from "sonner";
 import { useDefaultLayout } from "react-resizable-panels";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
@@ -21,6 +22,8 @@ import type { Hq } from "../use-hq";
 import { BotAvatar, StatusPill } from "./bot-avatar";
 import { BotBrief } from "./bot-brief";
 import { BotConversation } from "./bot-conversation";
+import { ForwardCards } from "./forward-cards";
+import type { ComboBot } from "./mention-combobox";
 import { ChiefBadge } from "./bot-list";
 import { ChiefComposer } from "./chief-composer";
 import { useBotBrief } from "./use-bot-brief";
@@ -43,6 +46,8 @@ export function BotThread({
   mobile,
   onBack,
   onDrawer,
+  all = [],
+  mention = [],
 }: {
   bot: Bot<Room>;
   /** The Chief of Staff: its box posts to /api/chief/ask. */
@@ -57,6 +62,10 @@ export function BotThread({
   onBack: () => void;
   /** Opens a tmux session's live terminal in HQ's drawer. */
   onDrawer: (session: string) => void;
+  /** Every live bot: the "Trả lời từ B" cards find B here. */
+  all?: Bot<Room>[];
+  /** What "@" can name (components/hq/bots/mention-combobox.tsx); this bot itself is left out. */
+  mention?: ComboBot[];
 }) {
   const r = bot.room;
   const token = hq.token;
@@ -71,6 +80,31 @@ export function BotThread({
   const layout = useDefaultLayout({ id: "hq-bot-brief", panelIds: ["thread", "brief"] });
   const side = wide && pane;
   const toggleBrief = () => (wide ? setPane((p) => !p) : setSheet(true));
+
+  // "@B …" in this thread goes to B with this bot's context (POST /api/forward); the answer shows as a card.
+  const others = useMemo(() => mention.filter((b) => b.id !== r.name), [mention, r.name]);
+  const [forwarded, setForwarded] = useState(0);
+  const forward = useCallback(
+    async (to: string[], text: string) => {
+      let ok = 0;
+      for (const id of to) {
+        const name = others.find((b) => b.id === id)?.name ?? id;
+        try {
+          const res = await hq.api<{ delivery: string; error: string | null }>("/api/forward", { method: "POST", body: { from: r.name, to: id, text } });
+          if (res.delivery === "failed") toast.error(`Chưa tới ${name}: ${res.error}`);
+          else ok++;
+        } catch (e) {
+          toast.error(`${name}: ${(e as Error).message}`);
+        }
+      }
+      if (ok) {
+        toast.success(`Đã gửi cho ${to.map((id) => others.find((b) => b.id === id)?.name ?? id).join(", ")} kèm ngữ cảnh của ${bot.name}`);
+        setForwarded((n) => n + 1);
+      }
+      return ok > 0;
+    },
+    [hq, others, r.name, bot.name],
+  );
 
   const ask =
     bot.status === "needs" ? (
@@ -94,10 +128,11 @@ export function BotThread({
   const thread = (
     <div className="flex h-full min-h-0 flex-col">
       <BotConversation bot={bot} messages={own} token={token} now={now} footer={ask} />
+      {!chief && <ForwardCards hq={hq} bot={bot} all={all} now={now} nonce={forwarded} />}
       {chief ? (
         <ChiefComposer hq={hq} name={bot.name} />
       ) : messageTargets(mine).length > 0 ? (
-        <Composer hq={hq} sessions={mine} target={session?.name ?? null} onTarget={() => {}} inline />
+        <Composer hq={hq} sessions={mine} target={session?.name ?? null} onTarget={() => {}} inline bots={others} onForward={forward} />
       ) : (
         <p className="shrink-0 border-t px-4 py-3 text-sm text-muted-foreground">{bot.name} không nhận tin từ HQ. Mở terminal của phiên này để nhắn trực tiếp.</p>
       )}

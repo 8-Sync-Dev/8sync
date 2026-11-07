@@ -5,6 +5,10 @@ versioning theo [SemVer](https://semver.org). **8sync rule:** mỗi PR cập nh�
 
 ## [Unreleased]
 
+### Added
+- HQ › Bots: nhóm bot. "Nhóm mới" (tên + chọn bot) ở đầu danh sách; trong nhóm anh gõ `@` để chọn bot bằng phím (↑↓ Enter), chỉ bot được @ nhận tin. Bot nhắn nhau trong một lượt bị giới hạn 6 tin và 3 hop, tin lặp trong 60 giây bị bỏ; vượt giới hạn thì tin bị giữ và hiện băng "Cho thêm 3 lượt". Tin phòng→phòng ngoài nhóm và tin Chief vẫn đi như cũ. Nhóm lưu ở máy (`~/.config/8sync/hq/groups.json`), bộ đếm nằm trong bộ nhớ và reset khi HQ khởi động lại.
+- HQ › Bots: trong khung chat 1:1 của bot A gõ `@B …` thì tin tới B kèm ngữ cảnh của A; câu trả lời của B hiện ở thread A thành thẻ "Trả lời từ B" với nút [Gửi cho A], không tự chuyển về A.
+
 ## [0.138.0] — 2026-11-07
 ### Added
 - HQ › Bots: nút **Bot mới** ở đầu danh sách mở một sheet duy nhất: chọn mẫu (lưới thẻ emoji, tên, mục đích; tab "Mẫu" / "Của tôi") → chọn thư mục (dự án dùng gần đây lên đầu, thư mục khớp mẫu được ghim kèm nhãn "Gợi ý", "Thư mục khác…" để duyệt máy) → tên tự gợi ý `<mẫu>-<dự án>`, báo ngay khi sai luật hay trùng → tin nhắn đầu tùy chọn. "Tạo và gửi" hoặc "Chỉ tạo"; xong thì sheet đóng và thread của bot mới mở. Có 12 mẫu sẵn: 6 mẫu chung (Trống, Dev fullstack, Reviewer, Tester, Nghiên cứu, Lập kế hoạch) và 6 mẫu cho 8 Sync (Content full ngày, Research marketing, Viết khóa học, Biên tập tin, Phát hành ZUS, Phát hành TIA). Mẫu riêng của anh là file JSON trong `~/.config/8sync/hq/templates/`, chỉ nằm trên máy; file hỏng bị bỏ qua, mẫu trùng id thay mẫu có sẵn. Danh sách trống giờ gợi ý 3 mẫu để tạo bot đầu tiên. Điện thoại: sheet toàn màn hình, mẫu cuộn ngang hai hàng.

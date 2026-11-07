@@ -24,6 +24,7 @@ import { AttachButton, AttachList, useAttach } from "./attach";
 import { MessageText, ReplyMedia } from "./attachments";
 import { ComposerDock, openDock } from "./composer-dock";
 import { MentionTextarea } from "./mention-textarea";
+import type { ComboBot } from "./bots/mention-combobox";
 import { ModelPicker } from "./model-picker";
 import { TOUCH } from "./room-send";
 import { FilesPaneCtx, useFilesPaneState } from "./files-sheet";
@@ -31,6 +32,7 @@ import { TurnLink } from "./room-outputs";
 import { pathMarkdown } from "./path-open";
 import { addressOf, deliveryOf, inboxText, isOmpRoomId, messageTargets, sessionLabel, splitStale, targetLabel } from "@/lib/labels";
 import { withQuote } from "@/lib/ask-quote";
+import { parseMentions } from "@/lib/bot-mention";
 import { onAsk, takeAsk } from "@/lib/ask-store";
 import { cn } from "@/lib/utils";
 import { ChannelNotice, DeliveryTag, ErrorNote, ReplySource, STATUS_LABEL, StatusDot, WaitingBadge, clock, dayLabel, shortName } from "./bits";
@@ -426,6 +428,8 @@ export function Composer({
   wide = false,
   extra,
   inline = false,
+  bots,
+  onForward,
 }: {
   hq: Hq;
   sessions: Session[];
@@ -436,6 +440,13 @@ export function Composer({
   /** Right before Send in the box's bottom row (Chat phòng: the Báo cáo button). */
   extra?: ReactNode;
   inline?: boolean;
+  /** "@bot" in the box (a bot's thread): the other live bots it can name. */
+  bots?: ComboBot[];
+  /**
+   * A send that names one of `bots` goes to them instead (the bot thread's forward, POST /api/forward),
+   * not to `target`; true when sent, which clears the text (attachments stay for this bot).
+   */
+  onForward?: (to: string[], text: string) => Promise<boolean>;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -478,6 +489,20 @@ export function Composer({
   async function send() {
     const body = text.trim();
     if (!body || !current || busy || att.uploading > 0) return;
+    const named = bots && onForward ? parseMentions(body, bots).bots : [];
+    if (named.length && onForward) {
+      setBusy(true);
+      try {
+        if (await onForward(named, body)) {
+          setText("");
+          closeDock.current();
+          area.current?.focus();
+        }
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (current.waiting) {
       // Enter used to do nothing here, so a send looked lost: say why it is held.
       toast.error(`${targetLabel(current)} đang chờ anh trả lời trong terminal: trả lời trước (Mở terminal) rồi gửi lại`);
@@ -564,12 +589,13 @@ export function Composer({
                   onValueChange={setText}
                   base={current?.cwd ?? null}
                   api={hq.api}
+                  bots={bots}
                   onKeyDown={onKey}
                   onPaste={att.onPaste}
                   disabled={disabled}
                   rows={inline ? 1 : 2}
                   maxLength={4000}
-                  placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file` : "Message"}
+                  placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file${bots?.length ? " hoặc gọi bot khác" : ""}` : "Message"}
                   className={cn("max-h-[40dvh] resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent", inline ? "min-h-11 max-sm:max-h-[30dvh]" : "min-h-14")}
                 />
                 <AttachList a={att} token={hq.token} />

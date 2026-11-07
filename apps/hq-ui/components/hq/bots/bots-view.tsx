@@ -6,12 +6,16 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { useIsMobile } from "@/hooks/use-mobile";
 import { botList, filterBots, openBotKey, pinChief, threadHint, type BotFilter } from "@/lib/bots";
 import type { ChiefView } from "@/lib/server/chief";
+import type { GroupsView } from "@/lib/server/groups";
 import type { OfficeState } from "../use-office";
 import type { Hq } from "../use-hq";
 import { usePoll } from "../use-poll";
 import { BotAvatar } from "./bot-avatar";
 import { BotList } from "./bot-list";
 import { BotThread } from "./bot-thread";
+import { GroupThread } from "./group-thread";
+import { GroupsSection, NewGroupDialog } from "./groups-section";
+import { comboBots } from "./mention-combobox";
 import { NewBotSheet } from "./new-bot-sheet";
 
 const WIDE = "(min-width: 1280px)";
@@ -24,6 +28,8 @@ const subscribeWide = (on: () => void) => {
 const HISTORY_KEY = "hqBot";
 /** GET /api/chief, at the Chief of Staff panel's cadence (components/hq/chief-panel.tsx). */
 const CHIEF_POLL_MS = 30_000;
+/** GET /api/groups: the list changes only when the owner edits it, the held turns when bots talk. */
+const GROUPS_POLL_MS = 15_000;
 
 /**
  * Bots: every live room as a teammate to message. A phone shows the list, then one thread full screen
@@ -59,6 +65,12 @@ export function BotsView({
   const chiefRoom = chiefView?.cfg.on && chiefView.live ? chiefView.cfg.room : null;
   const { bots: all, chief } = useMemo(() => pinChief(botList(rooms ?? [], sessions, messages), chiefRoom), [rooms, sessions, messages, chiefRoom]);
   const shown = useMemo(() => filterBots(all, q, filter), [all, q, filter]);
+  const mention = useMemo(() => comboBots(rooms ?? [], all), [rooms, all]);
+  const groupsPoll = usePoll<GroupsView>(hq.api, "/api/groups", GROUPS_POLL_MS, true);
+  const groups = groupsPoll.data?.groups ?? [];
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [newGroup, setNewGroup] = useState(false);
+  const group = groups.find((g) => g.id === groupId) ?? null;
   const layout = useDefaultLayout({ id: "hq-bots-columns", panelIds: ["list", "thread"] });
 
   // The open bot by key (lib/bots openBotKey): the pick, else the one this view opened by itself, which
@@ -75,9 +87,17 @@ export function BotsView({
   const open = useCallback(
     (key: string) => {
       if (mobile && window.history.state?.[HISTORY_KEY] == null) window.history.pushState({ ...window.history.state, [HISTORY_KEY]: key }, "");
+      setGroupId(null);
       onSelect(key);
     },
     [mobile, onSelect],
+  );
+  const openGroup = useCallback(
+    (id: string) => {
+      if (mobile && window.history.state?.[HISTORY_KEY] == null) window.history.pushState({ ...window.history.state, [HISTORY_KEY]: `group:${id}` }, "");
+      setGroupId(id);
+    },
+    [mobile],
   );
   const back = useCallback(() => {
     if (mobile && window.history.state?.[HISTORY_KEY] != null) window.history.back();
@@ -86,7 +106,9 @@ export function BotsView({
   }, [mobile, onSelect, bot?.key]);
   useEffect(() => {
     const onPop = () => {
-      if (window.history.state?.[HISTORY_KEY] == null) onSelect(null);
+      if (window.history.state?.[HISTORY_KEY] != null) return;
+      setGroupId(null);
+      onSelect(null);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -109,10 +131,17 @@ export function BotsView({
       onRetry={office.retry}
       onNew={(template) => setNewBot({ template: template ?? null })}
       chief={chief}
+      groups={<GroupsSection groups={groups} all={all} selected={group?.id ?? null} onOpen={openGroup} onNew={() => setNewGroup(true)} />}
     />
   );
-  const thread = bot ? (
-    <BotThread key={bot.key} bot={bot} chief={bot.key === chief} hq={hq} sessions={sessions} messages={messages} now={now} wide={wide} mobile={mobile} onBack={back} onDrawer={onDrawer} />
+  const leaveGroup = () => {
+    if (mobile && window.history.state?.[HISTORY_KEY] != null) window.history.back();
+    else setGroupId(null);
+  };
+  const thread = group ? (
+    <GroupThread key={group.id} hq={hq} group={group} all={all} mention={mention} mobile={mobile} onBack={leaveGroup} onGroups={groupsPoll.reload} />
+  ) : bot ? (
+    <BotThread key={bot.key} bot={bot} chief={bot.key === chief} hq={hq} sessions={sessions} messages={messages} now={now} wide={wide} mobile={mobile} onBack={back} onDrawer={onDrawer} all={all} mention={mention} />
   ) : (
     <div className="grid h-full place-items-center px-6 text-center">
       <div className="flex flex-col items-center gap-3">
@@ -134,11 +163,25 @@ export function BotsView({
     />
   );
 
+  const dialog = (
+    <NewGroupDialog
+      hq={hq}
+      open={newGroup}
+      onOpenChange={setNewGroup}
+      all={all}
+      onCreated={(id) => {
+        groupsPoll.reload();
+        openGroup(id);
+      }}
+    />
+  );
+
   if (mobile)
     return (
       <div className="h-full min-h-0">
-        {bot ? thread : list}
+        {group || bot ? thread : list}
         {sheet}
+        {dialog}
       </div>
     );
   return (
@@ -153,6 +196,7 @@ export function BotsView({
       </ResizablePanel>
     </ResizablePanelGroup>
     {sheet}
+    {dialog}
     </>
   );
 }
