@@ -1,20 +1,52 @@
-// HQ's tab bar (owner 2026-10-22: "ui ux loạn quá"): 14 tabs did not fit and read as noise. The daily
-// daily ones stay in the bar; the rest sit under one "Thêm" menu whose label becomes the open tab's name.
-// Pure; components/hq/hq-app.tsx renders it. Tested in tests/tabs.test.ts.
+// HQ's navigation. Owner 2026-11-07 ("ui ux hoàn toàn mới … giống Grok Bot"): HQ is built around bots,
+// so the bar holds four places: Bots (the roster and a bot's page), Nhóm, Tìm and Thêm. Every other view
+// (Tổng quan, Văn phòng, Preview, Không gian, …) sits under Thêm; their tab ids stay as they were, so a
+// saved tab, a deep link or a keyboard shortcut still opens them. Pure; components/hq/hq-app.tsx,
+// sidebar.tsx and bottom-tabs.tsx render it. Tested in tests/tabs.test.ts.
 
-// Owner 2026-10-22 again ("nhiều chữ nhiều tab đang bị rối"): four in the bar; "room" (Chat phòng) only
-// while a room is open, Tri thức joins the menu.
-// Preview is back in the bar (owner 2026-10-22: "Tab preview rất quan trọng … ưu tiên xem được kết quả").
-// Không gian (owner 2026-11-02, omp-first): folders on the machine → omp sessions → several windows.
-// Bots (owner 2026-11-07, "giống Grok Bot"): every live room as a teammate to message; first and the default tab.
-export const MAIN_TABS = ["bots", "workspace", "overview", "office", "preview", "group", "room"] as const;
-// Nội dung (2026-11-04): content-post-agency's registry; listed only while a content DB is configured.
-// Kết quả (2026-11-04): files a room registered for the owner (POST /api/artifacts), first in the menu.
+export const NAV = ["bots", "groups", "search", "more"] as const;
+export type NavItem = (typeof NAV)[number];
+
+export const NAV_LABEL: Record<NavItem, string> = {
+  bots: "Bots",
+  groups: "Nhóm",
+  search: "Tìm",
+  more: "Thêm",
+};
+
+// Kết quả (2026-11-04): files a room registered for the owner (POST /api/artifacts).
 // Bản đồ code (2026-11-05): a registered project's trail code map (app/api/codemap).
-export const MORE_TABS = ["artifacts", "codemap", "know", "content", "loops", "report", "usage", "may", "sessions", "activity"] as const;
+// Nội dung (2026-11-04): content-post-agency's registry; listed only while a content DB is configured.
+// Chat phòng: only while a room is open. Phiên & dự án: the old session tree, worktrees included.
+export const MORE_TABS = [
+  "overview",
+  "office",
+  "preview",
+  "workspace",
+  "tree",
+  "group",
+  "room",
+  "artifacts",
+  "codemap",
+  "know",
+  "content",
+  "loops",
+  "report",
+  "usage",
+  "may",
+  "sessions",
+  "activity",
+] as const;
 export type MoreTab = (typeof MORE_TABS)[number];
 
 export const MORE_LABEL: Record<MoreTab, string> = {
+  overview: "Tổng quan",
+  office: "Văn phòng",
+  preview: "Preview",
+  workspace: "Không gian",
+  tree: "Phiên & dự án",
+  group: "Chat chung",
+  room: "Chat phòng",
   artifacts: "Kết quả",
   codemap: "Bản đồ code",
   know: "Tri thức",
@@ -30,19 +62,19 @@ export const MORE_LABEL: Record<MoreTab, string> = {
 
 export const isMore = (t: string): t is MoreTab => (MORE_TABS as readonly string[]).includes(t);
 
-/** The folded tabs on offer: "content" only while a content DB is configured (GET /api/content?probe=1). */
-export function moreTabs(contentOn: boolean): readonly MoreTab[] {
-  return contentOn ? MORE_TABS : MORE_TABS.filter((t) => t !== "content");
+/** Which of the four places a tab belongs to: Bots, Nhóm and Tìm are their own; every other view is under Thêm. */
+export function navOf(tab: string): NavItem {
+  return tab === "bots" || tab === "groups" || tab === "search" ? tab : "more";
 }
 
-/** The "Thêm" button's text: the open tab when it is one of the folded ones, else "Thêm". */
+/** Thêm's views on offer: "content" only while a content DB is configured, "room" only while a room is open. */
+export function moreTabs(contentOn: boolean, roomOpen: boolean): readonly MoreTab[] {
+  return MORE_TABS.filter((t) => (t !== "content" || contentOn) && (t !== "room" || roomOpen));
+}
+
+/** The "Thêm" item's text: the open view when it is one of Thêm's, else "Thêm". */
 export function moreLabel(tab: string): string {
-  return isMore(tab) ? MORE_LABEL[tab] : "Thêm";
-}
-
-/** The bar's tabs now: "room" only while a room is open (its chat). */
-export function barTabs(roomOpen: boolean): readonly string[] {
-  return roomOpen ? MAIN_TABS : MAIN_TABS.filter((t) => t !== "room");
+  return isMore(tab) ? MORE_LABEL[tab] : NAV_LABEL.more;
 }
 
 // The views that list rooms/projects keep the room/project header ("Tất cả phòng · 6 dự án · 11 phòng",
@@ -54,7 +86,7 @@ const REPO_VIEWS: readonly string[] = ["preview", "loops", "know", "artifacts", 
 /** The header of a view that is not a room/project list; null = the room/project header. */
 export function viewHeader(tab: string, repoName: string | null): { title: string; subtitle: string } | null {
   if (ROOM_VIEWS.includes(tab)) return null;
-  const title = tab === "preview" ? "Preview" : isMore(tab) ? MORE_LABEL[tab] : null;
+  const title = isMore(tab) ? MORE_LABEL[tab] : tab === "groups" || tab === "search" ? NAV_LABEL[tab] : null;
   if (title == null) return null;
   return { title, subtitle: repoName && REPO_VIEWS.includes(tab) ? repoName : "" };
 }

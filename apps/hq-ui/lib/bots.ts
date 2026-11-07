@@ -91,24 +91,31 @@ export function botProject(r: Pick<BotRoom, "project" | "cwd">): string | null {
 /**
  * The name each bot goes by: its room label ("core", "learn"). Several rooms share a label (four `core`
  * rooms in four repos): each of those gets its project as a qualifier, and a short id when even that repeats.
+ * `display` is the one string a reader sees ("core · su-code"); no two rooms share it (case folded): a
+ * clash left over (a short id repeating, a label that already reads like another's display) takes the
+ * room's whole id.
  */
-export function botNames(rooms: readonly Pick<BotRoom, "key" | "label" | "project" | "cwd">[]): Map<string, { name: string; qualifier: string | null }> {
+export function botNames(rooms: readonly Pick<BotRoom, "key" | "label" | "project" | "cwd">[]): Map<string, { name: string; qualifier: string | null; display: string }> {
   const count = (k: string, m: Map<string, number>) => m.set(k, (m.get(k) ?? 0) + 1);
   const byLabel = new Map<string, number>();
   for (const r of rooms) count(r.label.toLowerCase(), byLabel);
   const byPair = new Map<string, number>();
   for (const r of rooms) count(`${r.label.toLowerCase()}\n${(botProject(r) ?? "").toLowerCase()}`, byPair);
-  const out = new Map<string, { name: string; qualifier: string | null }>();
+  const out = new Map<string, { name: string; qualifier: string | null; display: string }>();
   for (const r of rooms) {
     if ((byLabel.get(r.label.toLowerCase()) ?? 0) < 2) {
-      out.set(r.key, { name: r.label, qualifier: null });
+      out.set(r.key, { name: r.label, qualifier: null, display: r.label });
       continue;
     }
     const project = botProject(r);
     const twice = (byPair.get(`${r.label.toLowerCase()}\n${(project ?? "").toLowerCase()}`) ?? 0) > 1;
     const id = r.key.replace(/^omp-/, "").slice(0, 4);
-    out.set(r.key, { name: r.label, qualifier: [project, twice ? `#${id}` : null].filter(Boolean).join(" ") || `#${id}` });
+    const qualifier = [project, twice ? `#${id}` : null].filter(Boolean).join(" ") || `#${id}`;
+    out.set(r.key, { name: r.label, qualifier, display: `${r.label} · ${qualifier}` });
   }
+  const byDisplay = new Map<string, number>();
+  for (const n of out.values()) count(n.display.toLowerCase(), byDisplay);
+  for (const [key, n] of out) if ((byDisplay.get(n.display.toLowerCase()) ?? 0) > 1) n.display = `${n.display} #${key.replace(/^omp-/, "")}`;
   return out;
 }
 
@@ -178,6 +185,8 @@ export type Bot<R extends BotRoom = BotRoom> = {
   room: R;
   name: string;
   qualifier: string | null;
+  /** The name shown: unique among live bots (botNames). */
+  display: string;
   status: BotStatus;
   project: string | null;
   branch: string | null;
@@ -193,7 +202,7 @@ export function botList<R extends BotRoom>(rooms: readonly R[], sessions: readon
     .map((r) => {
       const p = botPreview(r, botMessages(r, sessions, messages));
       const n = names.get(r.key)!;
-      return { key: r.key, room: r, name: n.name, qualifier: n.qualifier, status: botStatus(r), project: botProject(r), branch: r.project?.branch ?? null, preview: p.text, at: p.at };
+      return { key: r.key, room: r, name: n.name, qualifier: n.qualifier, display: n.display, status: botStatus(r), project: botProject(r), branch: r.project?.branch ?? null, preview: p.text, at: p.at };
     })
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.at ?? 0) - (a.at ?? 0) || a.name.localeCompare(b.name));
 }
@@ -208,7 +217,8 @@ export function pinChief<B extends Pick<Bot, "key" | "room">>(bots: readonly B[]
   return { bots: [bots[i], ...bots.slice(0, i), ...bots.slice(i + 1)], chief: bots[i].key };
 }
 
-const fold = (s: string) =>
+/** Lower case without accents: "cho anh" matches "Chờ anh". */
+export const fold = (s: string) =>
   s
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
@@ -217,13 +227,13 @@ const fold = (s: string) =>
 
 export type BotFilter = "all" | BotStatus;
 
-/** The search box (accents optional: "cho anh" finds "Chờ anh") and the status filter. */
-export function filterBots<B extends Pick<Bot, "name" | "qualifier" | "project" | "branch" | "preview" | "status">>(bots: readonly B[], query: string, filter: BotFilter = "all"): B[] {
+/** The search box (accents optional: "cho anh" finds "Chờ anh"; a roster row's role counts too) and the status filter. */
+export function filterBots<B extends Pick<Bot, "name" | "qualifier" | "project" | "branch" | "preview" | "status"> & { role?: string }>(bots: readonly B[], query: string, filter: BotFilter = "all"): B[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
   return bots.filter((b) => {
     if (filter !== "all" && b.status !== filter) return false;
     if (!words.length) return true;
-    const hay = fold([b.name, b.qualifier, b.project, b.branch, b.preview, BOT_STATUS_LABEL[b.status]].filter(Boolean).join(" "));
+    const hay = fold([b.name, b.qualifier, b.project, b.branch, b.preview, b.role, BOT_STATUS_LABEL[b.status]].filter(Boolean).join(" "));
     return words.every((w) => hay.includes(w));
   });
 }

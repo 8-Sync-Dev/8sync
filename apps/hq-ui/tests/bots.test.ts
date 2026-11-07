@@ -70,10 +70,26 @@ describe("bot names", () => {
       room({ key: "omp-cccc3", label: "core", project: { root: "C:/okx", name: "okx", branch: "dev" } }),
       room({ key: "omp-dddd4", label: "learn", cwd: "C:\\Users\\tia" }),
     ]);
-    expect(names.get("omp-aaaa1")).toEqual({ name: "core", qualifier: "su-code" });
-    expect(names.get("omp-bbbb2")).toEqual({ name: "core", qualifier: "okx #bbbb" });
-    expect(names.get("omp-cccc3")).toEqual({ name: "core", qualifier: "okx #cccc" });
-    expect(names.get("omp-dddd4")).toEqual({ name: "learn", qualifier: null });
+    expect(names.get("omp-aaaa1")).toEqual({ name: "core", qualifier: "su-code", display: "core · su-code" });
+    expect(names.get("omp-bbbb2")).toEqual({ name: "core", qualifier: "okx #bbbb", display: "core · okx #bbbb" });
+    expect(names.get("omp-cccc3")).toEqual({ name: "core", qualifier: "okx #cccc", display: "core · okx #cccc" });
+    expect(names.get("omp-dddd4")).toEqual({ name: "learn", qualifier: null, display: "learn" });
+  });
+  it("never shows two bots under one name: a leftover clash takes the whole id (owner 2026-11-07: 4 bots all named core)", () => {
+    const shop = { root: "C:/shop", name: "shop", branch: "main" };
+    const names = botNames([
+      room({ key: "omp-abcd1111", label: "core", project: shop }),
+      room({ key: "omp-abcd2222", label: "core", project: shop }),
+      room({ key: "omp-eeee3333", label: "core", project: { root: "C:/tia", name: "tia", branch: null } }),
+      room({ key: "hq-x", label: "Core · tia", cwd: "C:/x" }),
+    ]);
+    const shown = [...names.values()].map((n) => n.display);
+    expect(new Set(shown.map((s) => s.toLowerCase())).size).toBe(shown.length);
+    expect(names.get("omp-abcd1111")!.display).toBe("core · shop #abcd #abcd1111");
+    expect(names.get("omp-eeee3333")!.display).toBe("core · tia #eeee3333");
+    expect(names.get("hq-x")!.display).toBe("Core · tia #hq-x");
+    // A label alone in HQ keeps its bare name.
+    expect(botNames([room({ key: "omp-1", label: "learn" })]).get("omp-1")!.display).toBe("learn");
   });
 });
 
