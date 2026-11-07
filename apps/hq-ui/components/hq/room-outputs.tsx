@@ -6,12 +6,13 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { agoShort, agoVi } from "@/lib/now";
 import { fileRefsIn } from "@/lib/ask-quote";
+import { bareFileNamesIn } from "@/lib/file-path";
+import type { FileSpot } from "@/lib/files";
 import { outputsMarkdown, turnForMessage, turnTitle, type Turn } from "@/lib/room-turns";
 import type { ActivityEvent } from "@/lib/server/activity";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
-import { FolderButton } from "./folder-button";
-import { pathComponents } from "./path-open";
+import { FileChips, pathMarkdown, useFileSpots } from "./path-open";
 import { SelectionAsk } from "./selection-ask";
 import { makeApi, type Api } from "./use-hq";
 
@@ -31,8 +32,6 @@ type Ctx = {
   focus: (key: string) => void;
   focused: { key: string; seq: number } | null;
   api: Api;
-  /** The room's folder: a relative file a result names is under it. */
-  cwd: string | null;
 };
 
 const RoomLogCtx = createContext<Ctx | null>(null);
@@ -44,7 +43,7 @@ const RoomLogCtx = createContext<Ctx | null>(null);
  * `working` (the room's state from the office): its newest turn is still going even when its last step
  * is a reply, for the panel and the chat links alike.
  */
-export function RoomLogProvider({ sessionId, cwd, token, working, children }: { sessionId: string | null; cwd: string | null; token: string; working: boolean; children: ReactNode }) {
+export function RoomLogProvider({ sessionId, token, working, children }: { sessionId: string | null; token: string; working: boolean; children: ReactNode }) {
   // Tagged with the room they came from: another room shows nothing of the last one's log.
   const [got, setLog] = useState<{ id: string; log: Log } | null>(null);
   const [now, setNow] = useState(0);
@@ -94,7 +93,7 @@ export function RoomLogProvider({ sessionId, cwd, token, working, children }: { 
   const retry = useCallback(() => setTick((t) => t + 1), []);
   const focus = useCallback((key: string) => setFocused((f) => ({ key, seq: (f?.seq ?? 0) + 1 })), []);
   const api = useMemo(() => makeApi(token), [token]);
-  const value = useMemo<Ctx>(() => ({ log, now, error, retry, focus, focused, api, cwd }), [log, now, error, retry, focus, focused, api, cwd]);
+  const value = useMemo<Ctx>(() => ({ log, now, error, retry, focus, focused, api }), [log, now, error, retry, focus, focused, api]);
   return <RoomLogCtx.Provider value={value}>{children}</RoomLogCtx.Provider>;
 }
 
@@ -146,6 +145,9 @@ export function RoomOutputs({ turns, now, room }: { turns: Turn[]; now: number; 
   const ctx = useRoomLog();
   const doc = useRef<HTMLDivElement>(null);
   const list = useMemo(() => [...turns].reverse(), [turns]);
+  // Every file the results name, located in one go; one not found is asked again as the room writes more.
+  const named = useMemo(() => list.flatMap((t) => (t.output ? [...fileRefsIn(t.output), ...bareFileNamesIn(t.output)] : [])), [list]);
+  const spots = useFileSpots(named, ctx?.log?.rev ?? "");
   const busy = (t: Turn) => t.live;
   const [active, setActive] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -241,7 +243,7 @@ export function RoomOutputs({ turns, now, room }: { turns: Turn[]; now: number; 
         <div ref={doc} tabIndex={0} aria-label="Kết quả từng việc, mới nhất ở trên" className="min-h-0 flex-1 overflow-y-auto rounded-lg border outline-none focus-visible:ring-2 focus-visible:ring-ring/60 max-md:max-h-[65svh]">
           <SelectionAsk fallbackRef={`Kết quả phòng ${room}`}>
             {list.map((t, i) => (
-              <TurnSection key={t.key} t={t} busy={busy(t)} n={list.length - i} now={now} flash={flash === t.key} api={ctx?.api ?? null} cwd={ctx?.cwd ?? null} />
+              <TurnSection key={t.key} t={t} busy={busy(t)} n={list.length - i} now={now} flash={flash === t.key} spots={spots} />
             ))}
           </SelectionAsk>
         </div>
@@ -258,13 +260,14 @@ function TurnMark({ t, busy }: { t: Turn; busy: boolean }) {
 
 /**
  * One turn: its title (what was asked), when and how much work, then the output in full (`busy`: so far),
- * and the files it names, each with its folder. Selected text in it is asked about under this title.
+ * and the files it names as chips that open them (`spots`: where each is). Selected text in it is asked
+ * about under this title.
  */
-const TurnSection = memo(function TurnSection({ t, busy, n, now, flash, api, cwd }: { t: Turn; busy: boolean; n: number; now: number; flash: boolean; api: Api | null; cwd: string | null }) {
+const TurnSection = memo(function TurnSection({ t, busy, n, now, flash, spots }: { t: Turn; busy: boolean; n: number; now: number; flash: boolean; spots: ReadonlyMap<string, FileSpot> }) {
   const meta = [t.at != null ? agoShort(t.at, now) : null, t.steps ? `${t.steps} bước` : null, t.agents ? `${t.agents} subagent` : null, t.errors ? `${t.errors} lỗi` : null]
     .filter(Boolean)
     .join(" · ");
-  const files = useMemo(() => (t.output && api ? fileRefsIn(t.output) : []), [t.output, api]);
+  const files = useMemo(() => (t.output ? { paths: fileRefsIn(t.output), bare: bareFileNamesIn(t.output) } : null), [t.output]);
   return (
     <article
       data-turn={t.key}
@@ -296,16 +299,9 @@ const TurnSection = memo(function TurnSection({ t, busy, n, now, flash, api, cwd
               Đang làm: dưới đây là câu trả lời mới nhất, chưa phải kết quả cuối.
             </p>
           )}
-          <MessageResponse components={pathComponents}>{t.output}</MessageResponse>
+          <MessageResponse {...pathMarkdown}>{t.output}</MessageResponse>
           {t.output.length >= 7999 && t.output.endsWith("…") && <p className="mt-1 text-xs text-muted-foreground">Kết quả dài hơn phần HQ giữ (8 000 ký tự). Đọc trọn trong terminal của phòng.</p>}
-          {api && files.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-              <span className="mr-0.5">File nhắc tới:</span>
-              {files.map((p) => (
-                <FolderButton key={p} path={p} base={cwd} api={api} label />
-              ))}
-            </div>
-          )}
+          {files && <FileChips paths={files.paths} bare={files.bare} spots={spots} />}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">{busy ? "Phòng đang làm việc này, chưa trả lời." : "Việc này kết thúc mà không có câu trả lời."}</p>

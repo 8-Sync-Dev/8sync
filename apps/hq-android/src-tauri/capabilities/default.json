@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Bundled connect screen only. No `remote` URLs: HQ pages loaded from the owner's PC get no Tauri IPC.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

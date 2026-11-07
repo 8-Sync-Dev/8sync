@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   const o = open(req);
   if ("res" in o) return o.res;
   const q = new URL(req.url).searchParams;
-  const root = filesRoot(q.get("root") ?? "", await knownRoots(o.db));
+  const root = filesRoot(q.get("root") ?? "", await knownRoots(o.db, { ended: true }));
   if (isFail(root)) return bad(root.error, root.status);
   const f = rawFile(root, q.get("path") ?? "");
   if (isFail(f)) return bad(f.error, f.status);

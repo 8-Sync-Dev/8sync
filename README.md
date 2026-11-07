@@ -20,6 +20,10 @@ omp and Claude Code are the engines we run every day and test; omp is the defaul
 
 ![8 Sync HQ: rooms, a room's log and the results tab, from a real machine](docs/assets/hq-loop.gif)
 
+[![42-second demo: one command per session, HQ, the / picker, /solo and graphify-first search. Click to play.](docs/assets/8sync-demo-poster.webp)](docs/assets/8sync-demo.mp4)
+
+[▶ Watch the 42-second demo](docs/assets/8sync-demo.mp4): `8sync . api`, the HQ office, the `/` picker across omp and Claude Code, `/solo` from Router to release, and what a code lookup costs.
+
 ## Install
 
 ```bash
@@ -45,6 +49,8 @@ cd my-app
 ```
 
 Each name is one conversation per repo, so `8sync . api` tomorrow continues today's thread. 8sync never opens a session or sends a prompt on its own: every session is one you open, in a terminal or from HQ.
+
+**HQ on Android:** [download 8sync-hq.apk](https://github.com/8-Sync-Dev/8sync/releases/latest/download/8sync-hq.apk). It is a small Rust (Tauri 2) app that opens your PC's HQ over `--tailnet` or `--public`, remembers recent addresses (never the `?k=` key) and brings you back to its connect screen with Back. Setup and roadmap: [docs/hq-android.md](docs/hq-android.md).
 
 ## Engines
 
@@ -105,7 +111,7 @@ Every session starts at STEP 0: questions about code go to a local code map, wit
 
 ![HQ results: a release note a session posted, open in the preview pane](docs/assets/hq-03-ket-qua-roadmap.webp)
 
-Screenshots and the [13-second demo](docs/assets/hq-demo.mp4) (Vietnamese voice-over) come from a real HQ; private data is blurred.
+Screenshots and the [42-second demo](docs/assets/8sync-demo.mp4) come from a real HQ; private data is blurred.
 
 ## Project memory
 

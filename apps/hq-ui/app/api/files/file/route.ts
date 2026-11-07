@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   if ("res" in o) return o.res;
   const q = new URL(req.url).searchParams;
   const given = q.get("root") ?? "";
-  const root = filesRoot(given, await knownRoots(o.db));
+  const root = filesRoot(given, await knownRoots(o.db, { ended: true }));
   if (isFail(root)) return bad(root.error, root.status);
   const view = readFileView(root, given, q.get("path") ?? "");
   return isFail(view) ? bad(view.error, view.status) : json(view);
@@ -42,7 +42,7 @@ export async function PUT(req: Request) {
     return bad("body must be a JSON object", 422);
   }
   if (typeof b.root !== "string" || typeof b.path !== "string" || !b.path) return bad("root, path: thư mục dự án và file trong đó", 422);
-  const root = filesRoot(b.root, await knownRoots(o.db));
+  const root = filesRoot(b.root, await knownRoots(o.db, { ended: true }));
   if (isFail(root)) return bad(root.error, root.status);
   const saved = saveText(root, b.path, b.text, b.hash);
   return isFail(saved) ? bad(saved.error, saved.status) : json(saved);

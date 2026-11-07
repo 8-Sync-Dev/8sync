@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { baseName, fileType, ARTIFACT_MEDIA_MAX_BYTES } from "../artifacts";
-import { FILES_CONFLICT, FILES_EDIT_MAX, FILES_HIDDEN, FILES_LIST_MAX, FILES_TEXT_MAX, sortEntries, type DirListing, type FileEntry, type FileKind, type FileSaved, type FileView } from "../files";
+import { FILES_CONFLICT, FILES_EDIT_MAX, FILES_HIDDEN, FILES_LIST_MAX, FILES_REF_MAX, FILES_TEXT_MAX, sortEntries, type DirListing, type FileEntry, type FileKind, type FileSaved, type FileSpot, type FileView } from "../files";
 import { allowedUnder, inside, realOrNull } from "./artifacts";
 import { fileSecret, safeEqual } from "./auth";
 import { mediaSecretPath } from "./paths";
@@ -57,6 +57,54 @@ export function resolveIn(root: string, rel: string): string | Fail {
 
 /** `real` as the `/`-separated path relative to `root`. */
 const relOf = (root: string, real: string) => path.relative(root, real).split(path.sep).join("/");
+
+/** How telling a refusal is when several candidates fail: "blocked" over "not a path" over "not there". */
+const RANK: Record<number, number> = { 403: 3, 422: 2, 404: 1 };
+
+/**
+ * Where `given` (a path a room's reply names) is, for the viewer: absolute (`~/` = home) as written;
+ * relative or a bare name under each of `bases` in turn (the room's folder, then its repo root). The first
+ * candidate that is a regular file inside a root HQ knows (`known`, filesRoot) and not a secret (resolveIn)
+ * wins, opened with its real folder as the root; else the most telling refusal. UNC shares (`\\host\x`)
+ * are never touched: resolving one would make Windows dial out to that host.
+ */
+export function locateFile(given: string, bases: readonly string[], known: string[]): FileSpot {
+  const no = (status: number, error: string): FileSpot => ({ path: given, ok: false, status, error });
+  let p = given.trim();
+  if (!p || p.length > FILES_REF_MAX || p.includes("\0")) return no(422, "đường dẫn không dùng được");
+  if (/^~(?:[\\/]|$)/.test(p)) p = path.join(os.homedir(), p.slice(1));
+  if (/^[a-z]:(?![\\/])/i.test(p)) return no(422, "đường dẫn không dùng được");
+  // `\\host\x` or `//host/x` is a network share on Windows and a relative oddity on POSIX: never a file here.
+  if (/^[\\/]{2}/.test(p)) return no(422, "không mở file trên ổ mạng (\\\\máy\\thư mục)");
+  const cands = path.isAbsolute(p) ? [p] : bases.filter((b) => path.isAbsolute(b)).map((b) => path.resolve(b, p));
+  if (!cands.length) return no(422, "đường dẫn tương đối mà không biết thư mục của phòng");
+  let best: FileSpot | null = null;
+  for (const abs of new Set(cands)) {
+    const spot = spotAt(given, abs, known);
+    if (spot.ok) return spot;
+    if (!best || (!best.ok && (RANK[spot.status] ?? 0) > (RANK[best.status] ?? 0))) best = spot;
+  }
+  return best!;
+}
+
+function spotAt(given: string, abs: string, known: string[]): FileSpot {
+  const no = (status: number, error: string): FileSpot => ({ path: given, ok: false, status, error });
+  if (/^[\\/]{2}/.test(abs)) return no(422, "không mở file trên ổ mạng (\\\\máy\\thư mục)");
+  const name = path.basename(abs);
+  if (!name || realOrNull(abs) === null) return no(404, "không thấy file trên máy");
+  const root = filesRoot(path.dirname(abs), known);
+  if (isFail(root)) return no(root.status === 403 ? 403 : 404, root.status === 403 ? "file không nằm trong dự án nào HQ đang biết" : "không thấy file trên máy");
+  const real = resolveIn(root, name);
+  if (isFail(real)) return no(real.status, real.error);
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(real);
+  } catch {
+    return no(404, "không thấy file trên máy");
+  }
+  if (!st.isFile()) return no(422, "đây là thư mục, không phải file");
+  return { path: given, ok: true, root, rel: relOf(root, real), kind: fileType(real)?.kind ?? null, size: st.size };
+}
 
 /** One folder: dot-folders kept, `.git`/`node_modules`/`target` and secret names left out, links out of the root dropped. */
 export function listFolder(root: string, rel: string): DirListing | Fail {
