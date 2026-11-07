@@ -35,6 +35,7 @@ describe("auto-update", () => {
   function fake(o: { latest: string | null; bin: string; upTo?: string; upOk?: boolean; on?: boolean; blocked?: string | null }) {
     let bin = o.bin;
     const ups: string[][] = [];
+    const saved: unknown[] = [];
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
     const deps: UpdateDeps = {
@@ -46,10 +47,11 @@ describe("auto-update", () => {
         if (o.upOk !== false) bin = o.upTo ?? o.latest ?? bin;
         return { ok: o.upOk !== false, stdout: "✓ installed", stderr: "" };
       },
+      saveLastUp: (u) => saved.push(u),
       blocked: () => o.blocked ?? null,
       on: () => o.on ?? true,
     };
-    return { deps, ups, release };
+    return { deps, ups, saved, release };
   }
 
   it("runs 8sync up once when a newer release is out, even when asked twice at once", async () => {
@@ -61,6 +63,8 @@ describe("auto-update", () => {
     expect(f.ups).toEqual([["up"]]);
     expect(ra).toBe(rb);
     expect(ra).toMatchObject({ latest: "0.135.0", binary: "0.135.0", error: null, lastUp: { from: "0.134.0", to: "0.135.0", ok: true } });
+    // Written down, since the update restarts this very server.
+    expect(f.saved).toEqual([ra.lastUp]);
   });
 
   it("does nothing on the latest release, while off, or when blocked; the button checks while off", async () => {

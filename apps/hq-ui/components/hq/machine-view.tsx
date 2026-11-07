@@ -1126,10 +1126,8 @@ function UpdatePanel({ api, active }: { api: Hq["api"]; active: boolean }) {
                 (st.running
                   ? "Đang kiểm / cài bản mới…"
                   : waitingRestart
-                    ? `Đã cài 8sync ${st.binary}: HQ đổi sang bản này khi shell trong HQ đóng`
-                    : st.checkedAt
-                      ? `Kiểm lúc ${hhmm(st.checkedAt)}${st.lastUp ? ` · lần cài cuối ${hhmm(st.lastUp.at)}: ${st.lastUp.from ?? "?"} → ${st.lastUp.to}${st.lastUp.ok ? "" : " (lỗi)"}` : ""}`
-                      : "Lượt kiểm đầu chạy khoảng 3 phút sau khi HQ mở")}
+                    ? `Đã cài 8sync ${st.binary}: HQ đang đổi sang bản này (khoảng 30 giây; shell trong HQ đang mở thì chờ shell đóng)`
+                    : [st.checkedAt ? `Kiểm lúc ${hhmm(st.checkedAt)}` : "Lượt kiểm đầu chạy khoảng 3 phút sau khi HQ mở", st.lastUp && `tự cài ${st.lastUp.from ?? "?"} → ${st.lastUp.to} lúc ${dayTime(st.lastUp.at)}${st.lastUp.ok ? "" : " (lỗi)"}`].filter(Boolean).join(" · "))}
             </p>
           </div>
           <Button variant="outline" size="sm" className={TOUCH} disabled={checking || st.running || !!st.blocked} onClick={() => void checkNow()}>

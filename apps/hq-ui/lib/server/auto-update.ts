@@ -35,6 +35,19 @@ export type UpdateStatus = {
 };
 
 export const updateFile = () => path.join(configDir(), "auto-update.json");
+/** The last `8sync up` HQ ran: it outlives the restart that update causes, so the panel can say what happened. */
+export const lastUpFile = () => path.join(configDir(), "auto-update-last.json");
+
+type LastUp = NonNullable<UpdateStatus["lastUp"]>;
+
+export function readLastUp(file = lastUpFile()): LastUp | null {
+  try {
+    const v = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<LastUp>;
+    return typeof v.at === "number" && typeof v.to === "string" && typeof v.ok === "boolean" ? { at: v.at, from: typeof v.from === "string" ? v.from : null, to: v.to, ok: v.ok, tail: typeof v.tail === "string" ? v.tail : "" } : null;
+  } catch {
+    return null;
+  }
+}
 
 export function readUpdate(file = updateFile()): UpdateConfig {
   try {
@@ -45,11 +58,15 @@ export function readUpdate(file = updateFile()): UpdateConfig {
   }
 }
 
-export function writeUpdate(cfg: UpdateConfig, file = updateFile()): void {
+function writeJson(file: string, v: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`);
+  fs.writeFileSync(tmp, `${JSON.stringify(v, null, 2)}\n`);
   fs.renameSync(tmp, file);
+}
+
+export function writeUpdate(cfg: UpdateConfig, file = updateFile()): void {
+  writeJson(file, cfg);
 }
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
@@ -80,6 +97,8 @@ export type UpdateDeps = {
   latest: () => Promise<string | null>;
   binary: () => Promise<string | null>;
   run: Run8;
+  /** Keep the last `8sync up` across the restart it causes. */
+  saveLastUp: (u: LastUp) => void;
   /** Why this HQ never updates (null: it may). */
   blocked: () => string | null;
   on: () => boolean;
@@ -102,6 +121,7 @@ const liveDeps = (): UpdateDeps => ({
     return r.ok ? parseBinaryVersion(r.stdout) : null;
   },
   run: run8,
+  saveLastUp: (u) => writeJson(lastUpFile(), u),
   blocked: () => blockedWhy(),
   on: () => readUpdate().on,
 });
@@ -109,7 +129,7 @@ const liveDeps = (): UpdateDeps => ({
 type State = { timer: ReturnType<typeof setInterval> | null; running: Promise<UpdateStatus> | null; s: Omit<UpdateStatus, "blocked" | "nextAt" | "ui" | "running"> };
 /** On `globalThis`: instrumentation.ts and the route handlers are separate bundles. */
 const g = globalThis as unknown as { __hqUpdate?: State };
-const S: State = (g.__hqUpdate ??= { timer: null, running: null, s: { checkedAt: null, latest: null, binary: null, lastUp: null, error: null } });
+const S: State = (g.__hqUpdate ??= { timer: null, running: null, s: { checkedAt: null, latest: null, binary: null, lastUp: readLastUp(), error: null } });
 
 /** Why this server never updates the binary, or null. */
 export function blockedWhy(env: Record<string, string | undefined> = process.env, ui = uiVersion()): string | null {
@@ -138,6 +158,7 @@ async function check(d: UpdateDeps, now: () => number): Promise<void> {
   S.s.binary = after;
   const ok = r.ok && after === latest;
   S.s.lastUp = { at: now(), from: binary, to: latest, ok, tail: tail(`${r.stdout}\n${r.stderr}`) };
+  d.saveLastUp(S.s.lastUp);
   if (!ok) S.s.error = `8sync up chưa lên được v${latest} (đang ${after ?? "?"}) — thử lại lượt sau`;
 }
 
@@ -177,6 +198,12 @@ export function updateReset(): void {
 
 export function startAutoUpdate(): void {
   if (S.timer || blockedWhy()) return;
+  // The installed binary at once, so the panel does not say "8sync ?" until the first check.
+  void liveDeps()
+    .binary()
+    .then((v) => {
+      S.s.binary ??= v;
+    });
   const first = setTimeout(() => void updateNow(), FIRST_MS);
   first.unref?.();
   S.timer = setInterval(() => void updateNow(), CHECK_MS);
