@@ -16,6 +16,12 @@
 // Polling: every 5 s for the first minute of quiet, then 15 s, then 30 s; a delivery starts over.
 // Main agent only (subagents share the env, they must not take the owner's messages).
 //
+// An omp 8sync did not launch (Orca's `omp --resume <file>`) has no `EIGHTSYNC_ROOM_ID`: its id is
+// looked up with `8sync . ls --json`, on a later tick again when that did not answer, and again after
+// a switch to a session stored in another dir. A poll hung for a minute is given up and a model
+// switch past 20 s is reported: nothing awaited may end polling for the life of the process, since
+// only a new omp (HQ's takeover) would start it again.
+//
 // A "/command" goes through omp's own input box instead: `sendUserMessage` skips every command
 // (built-ins like /model and /settings, command files, /skill:<name>), so the model would get the
 // text. The box is reached through the TUI a zero-line widget is handed once; the owner's draft is
@@ -32,6 +38,10 @@ import path from "node:path";
 const ROOM_ID = /^omp-[0-9a-f]{16}$/;
 const TICK_MS = 5_000;
 const RUN_TIMEOUT_MS = 5_000;
+/** A model switch not settled by then is reported on the room and the poll goes on (omp's `setModel` has no limit). */
+const MODEL_TIMEOUT_MS = 20_000;
+/** A poll still running after this is given up: its claim is served again after two minutes, a late result is dropped. */
+const STUCK_MS = 60_000;
 
 /** The text is one slash command: "/" then a name, as omp parses it. */
 export function isSlashCommand(text: string): boolean {
@@ -148,6 +158,32 @@ export function pollEvery(empty: number): number {
   return 6;
 }
 
+/**
+ * Whether this tick starts a poll (`every` from `pollEvery`). The poll started at `busy` holds the
+ * next one back until it has run `STUCK_MS`; then it is given up (`gen` moves on, so whatever it
+ * returns later is dropped) and polling goes on.
+ */
+export function pollGate(st: { busy: number; gen: number; tick: number }, every: number, now: number): boolean {
+  if (st.busy !== 0) {
+    if (now - st.busy < STUCK_MS) return false;
+    st.busy = 0;
+    st.gen += 1;
+  }
+  return st.tick % every === 0;
+}
+
+/** True when `p` settles within `ms`, false when not (it keeps running; the caller goes on). */
+export function within(p: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), ms);
+    const done = () => {
+      clearTimeout(t);
+      resolve(true);
+    };
+    p.then(done, done);
+  });
+}
+
 function run(id: string, cwd: string, args: string[]): Promise<string | null> {
   return exec(["ccc", "inbox", "--session", id, ...args, "--json"], cwd);
 }
@@ -195,9 +231,12 @@ function isSub(ctx: object): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
-  // 8sync's launches export the id; any other launch of a room's session resolves it at start.
+  // 8sync's launches export the id; any other launch of a room's session looks it up on a tick.
   let id = process.env.EIGHTSYNC_ROOM_ID ?? "";
-  const st = { inflight: false, empty: 0, tick: 0, model: "", error: null as string | null };
+  let lookup = false; // the id is still to be looked up
+  let dir = ""; // the session dir the id is for
+  let cur: ExtensionContext | null = null; // the main agent's context, of the session it runs now
+  const st = { busy: 0, gen: 0, empty: 0, tick: 0, model: "", error: null as string | null };
   const stateDir = path.join(os.homedir(), ".local", "state", "8sync", "hq");
   let tui: Focus | null = null;
 
@@ -221,39 +260,40 @@ export default function (pi: ExtensionAPI) {
    * This session only (omp's config is not touched). An unknown model, one without a key, a level the
    * model clamps, or a throw is recorded in `st.error`, never rethrown: a control must always be acked,
    * or the same one would be retried on every poll and hold back the messages queued with it.
-   * `setModel` resets the level to the new model's default, so the level goes second.
+   * `setModel` resets the level to the new model's default, so the level goes second. The outcome is
+   * written when it lands, also after the poll stopped waiting for it.
    */
   async function applyModel(ctx: ExtensionContext, c: ModelControl): Promise<void> {
     st.error = null;
+    let error: string | null = null;
     try {
       if (c.model) {
         const at = c.model.indexOf("/");
         const model = ctx.modelRegistry.find(c.model.slice(0, at), c.model.slice(at + 1));
-        if (!model) st.error = `omp không có model ${c.model}`;
-        else if (!(await pi.setModel(model))) st.error = `chưa có key hoặc đăng nhập cho ${c.model}`;
+        if (!model) error = `omp không có model ${c.model}`;
+        else if (!(await pi.setModel(model))) error = `chưa có key hoặc đăng nhập cho ${c.model}`;
       }
       if (c.thinking) {
         pi.setThinkingLevel(c.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
         const got = pi.getThinkingLevel();
-        if (got && got !== c.thinking) st.error ??= `model này không có mức ${c.thinking}, omp dùng ${got}`;
+        if (got && got !== c.thinking) error ??= `model này không có mức ${c.thinking}, omp dùng ${got}`;
       }
     } catch (e) {
-      st.error = `đổi model lỗi: ${e instanceof Error ? e.message : String(e)}`;
+      error = `đổi model lỗi: ${e instanceof Error ? e.message : String(e)}`;
     }
+    st.error = error;
     writeModel(ctx);
   }
 
-  pi.on("session_start", async (_event, ctx) => {
-    if (isSub(ctx)) return;
-    if (!ROOM_ID.test(id)) id = roomIdFor(await exec([".", "ls", "--json"], ctx.cwd), ctx.sessionManager.getSessionDir()) ?? "";
-    if (!ROOM_ID.test(id)) return;
+  /** The session is room `id` from now on: HQ's "/" list, the input box, the model it runs. */
+  function enter(ctx: ExtensionContext): void {
     try {
       fs.mkdirSync(stateDir, { recursive: true });
       fs.writeFileSync(path.join(stateDir, "omp-commands.json"), commandsJson(pi.getCommands()));
     } catch {
       // HQ's list keeps the last one written
     }
-    if (ctx.hasUI) {
+    if (ctx.hasUI && tui === null) {
       // A widget factory is handed the TUI; drop the zero-line widget at once.
       ctx.ui.setWidget("8sync-inbox", (t) => {
         if ("getFocused" in t && typeof t.getFocused === "function") tui = t;
@@ -261,35 +301,88 @@ export default function (pi: ExtensionAPI) {
       });
       ctx.ui.setWidget("8sync-inbox", undefined);
     }
+    st.model = "";
     writeModel(ctx);
-    ctx.setInterval(async () => {
-      st.tick += 1;
-      writeModel(ctx);
-      if (st.inflight || st.tick % pollEvery(st.empty) !== 0) return;
-      st.inflight = true;
-      try {
-        const got = parseInbox(await run(id, ctx.cwd, []));
-        if (got === null) {
+  }
+
+  async function tick(): Promise<void> {
+    const ctx = cur;
+    if (ctx === null) return;
+    st.tick += 1;
+    const room = ROOM_ID.test(id);
+    if (room) writeModel(ctx);
+    if (!(room || lookup) || !pollGate(st, pollEvery(st.empty), Date.now())) return;
+    const gen = st.gen;
+    const at = id;
+    st.busy = Date.now();
+    try {
+      if (!room) {
+        const ls = await exec([".", "ls", "--json"], ctx.cwd);
+        if (gen !== st.gen) return;
+        if (ls === null) {
+          // no answer (a slow start, Orca restoring every pane at boot): asked again on a later tick
           st.empty += 1;
           return;
         }
+        lookup = false;
         st.empty = 0;
-        st.tick = 0;
-        let entered = true;
-        try {
-          const { controls, rest } = splitControls(got);
-          for (const c of controls) await applyModel(ctx, c);
-          // No `deliverAs`: idle → a new prompt; working → a steer, taken after the running tool.
-          if (rest !== null) deliver(rest, (cmd) => submitTyped(ctx, tui, cmd), (text) => pi.sendUserMessage(text));
-        } catch {
-          entered = false;
-        }
-        await run(id, ctx.cwd, [entered ? "--ack" : "--release"]);
-      } catch {
-        // a failed poll is retried on the next tick
-      } finally {
-        st.inflight = false;
+        id = roomIdFor(ls, ctx.sessionManager.getSessionDir()) ?? "";
+        if (ROOM_ID.test(id)) enter(ctx);
+        return;
       }
-    }, TICK_MS);
+      const got = parseInbox(await run(at, ctx.cwd, []));
+      if (gen !== st.gen) return; // given up meanwhile: the claim is served again after two minutes
+      if (got === null) {
+        st.empty += 1;
+        return;
+      }
+      st.empty = 0;
+      st.tick = 0;
+      let entered = true;
+      try {
+        const { controls, rest } = splitControls(got);
+        for (const c of controls) {
+          if (await within(applyModel(ctx, c), MODEL_TIMEOUT_MS)) continue;
+          st.error = `đổi model chưa xong sau ${MODEL_TIMEOUT_MS / 1000} s`;
+          writeModel(ctx);
+        }
+        if (gen !== st.gen) return;
+        // No `deliverAs`: idle → a new prompt; working → a steer, taken after the running tool.
+        if (rest !== null) deliver(rest, (cmd) => submitTyped(ctx, tui, cmd), (text) => pi.sendUserMessage(text));
+      } catch {
+        entered = false;
+      }
+      await run(at, ctx.cwd, [entered ? "--ack" : "--release"]);
+    } catch {
+      // a failed poll is retried on the next tick
+    } finally {
+      if (gen === st.gen) st.busy = 0;
+    }
+  }
+
+  pi.on("session_start", (_event, ctx) => {
+    if (isSub(ctx)) return;
+    cur = ctx;
+    dir = ctx.sessionManager.getSessionDir();
+    if (ROOM_ID.test(id)) enter(ctx);
+    else lookup = true;
+    // omp keeps it across `/new`, `/resume` and forks (`session_switch`); cleared on shutdown.
+    ctx.setInterval(tick, TICK_MS);
+  });
+
+  pi.on("session_switch", (_event, ctx) => {
+    if (cur === null || isSub(ctx)) return;
+    cur = ctx;
+    const now = ctx.sessionManager.getSessionDir();
+    if (samePath(now, dir)) return; // same dir, same room (`/new`, a fork)
+    // `/resume` of a session stored elsewhere: another room, or none. A running poll was for the room
+    // left: dropped (its claim is served again later), and the id is looked up on the next tick.
+    dir = now;
+    id = "";
+    lookup = true;
+    st.gen += 1;
+    st.busy = 0;
+    st.empty = 0;
+    st.tick = 0;
   });
 }
