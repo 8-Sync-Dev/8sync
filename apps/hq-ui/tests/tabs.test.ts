@@ -3,11 +3,11 @@ import { MAIN_TABS, MORE_TABS, barTabs, isMore, moreLabel, moreTabs } from "@/li
 
 describe("HQ tab bar groups", () => {
   it("keeps the daily tabs in the bar (+ Chat phòng while a room is open) and folds the rest, no tab lost or doubled", () => {
-    expect(barTabs(false)).toEqual(["workspace", "overview", "office", "preview", "group"]);
+    expect(barTabs(false)).toEqual(["bots", "workspace", "overview", "office", "preview", "group"]);
     expect(barTabs(true)).toEqual([...MAIN_TABS]);
     const all = [...MAIN_TABS, ...MORE_TABS];
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(16);
+    expect(all).toHaveLength(17);
   });
   it("names the open folded tab on the Thêm button", () => {
     expect(moreLabel("overview")).toBe("Thêm");

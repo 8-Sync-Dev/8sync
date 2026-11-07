@@ -413,13 +413,19 @@ function TimelineSkeleton() {
   );
 }
 
-function Composer({
+/**
+ * The room composer (POST /api/messages, files, `@path`, model). `inline` (Bots thread): on a phone it
+ * stays under the conversation like a messenger, above the keyboard, instead of folding into the
+ * floating button; one bot has one target, so the session picker is left out.
+ */
+export function Composer({
   hq,
   sessions,
   target,
   onTarget,
   wide = false,
   extra,
+  inline = false,
 }: {
   hq: Hq;
   sessions: Session[];
@@ -429,6 +435,7 @@ function Composer({
   wide?: boolean;
   /** Right before Send in the box's bottom row (Chat phòng: the Báo cáo button). */
   extra?: ReactNode;
+  inline?: boolean;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -523,13 +530,13 @@ function Composer({
         : "Typed into the session's terminal until its channel connects.";
 
   return (
-    <ComposerDock id="room" draft={text.trim().length > 0 || att.files.length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
+    <ComposerDock id={inline ? "bot" : "room"} inline={inline} draft={text.trim().length > 0 || att.files.length > 0} label={current ? `Nhắn ${targetLabel(current)}` : "Nhắn phòng"}>
       {({ close }) => {
         closeDock.current = close;
         return (
           <div className="shrink-0 border-t bg-background">
             <form
-              className={cn("mx-auto w-full px-4 py-3 sm:px-6", wide ? "max-w-none" : "max-w-3xl")}
+              className={cn("mx-auto w-full px-4 py-3 sm:px-6", wide ? "max-w-none" : "max-w-3xl", inline && "max-sm:px-3 max-sm:py-2")}
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();
@@ -560,13 +567,14 @@ function Composer({
                   onKeyDown={onKey}
                   onPaste={att.onPaste}
                   disabled={disabled}
-                  rows={2}
+                  rows={inline ? 1 : 2}
                   maxLength={4000}
                   placeholder={current ? `Nhắn ${targetLabel(current)} · @ để chèn file` : "Message"}
-                  className="max-h-[40dvh] min-h-14 resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+                  className={cn("max-h-[40dvh] resize-none overflow-y-auto border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent", inline ? "min-h-11 max-sm:max-h-[30dvh]" : "min-h-14")}
                 />
                 <AttachList a={att} token={hq.token} />
-                <div className="flex items-center gap-2 px-2 pb-2 max-sm:flex-wrap">
+                <div className={cn("flex items-center gap-2 px-2 pb-2", !inline && "max-sm:flex-wrap")}>
+                  {!(inline && targets.length <= 1) && (
                   <Select value={current?.name ?? ""} onValueChange={onTarget} disabled={disabled}>
                     <SelectTrigger size="sm" className="h-7 min-w-0 gap-1.5 border-0 bg-muted/60 font-mono text-xs max-sm:basis-full sm:max-w-[55%]" aria-label="Send to session">
                       <SelectValue placeholder="Pick a session" />
@@ -580,12 +588,13 @@ function Composer({
                       ))}
                     </SelectContent>
                   </Select>
+                  )}
                   {current && <ModelPicker api={hq.api} session={addressOf(current)} engine={current.engine === "omp" ? "omp" : "claude"} model={current.model} className={TOUCH} />}
                   <AttachButton a={att} disabled={disabled || !current} />
                   <p className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{hint}</p>
                   <div className="ml-auto flex shrink-0 items-center gap-1.5">
                     {extra}
-                    <Button type="submit" size="sm" disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
+                    <Button type="submit" size="sm" className={inline ? TOUCH : undefined} disabled={disabled || busy || att.uploading > 0 || !text.trim() || !!current?.waiting}
                     title={current?.waiting ? "Claude is waiting for you in the terminal — answer it first (Open terminal)" : undefined}>
                     <SendHorizontalIcon /> Send
                     </Button>

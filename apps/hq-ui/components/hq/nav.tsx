@@ -9,6 +9,7 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowLeftIcon,
+  BotIcon,
   Building2Icon,
   CalendarClockIcon,
   CheckIcon,
@@ -53,6 +54,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { branchIndex, dirOf, folderNote, groupBranches, homeOf, shownOrder, spotOf, type WorktreeSpot } from "@/lib/branches";
+import { botStatus } from "@/lib/bots";
 import { agoShort } from "@/lib/now";
 import { GROUP_WORD, SORT_WORD, TREE_WORD, groupSessions, isUnread, moveKey, orderGroups, splitChildren, type GroupBy, type SortBy, type TreeChild, type TreeGroup, type TreeSession } from "@/lib/session-tree";
 import { groupKey, sidebarGroups, type HiddenProject, type SidebarGroup, type SidebarRoom } from "@/lib/sidebar";
@@ -81,9 +83,10 @@ const HOVER =
 const ICON_BTN =
   "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-black/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=open]:bg-black/5 dark:hover:bg-white/10 dark:data-[state=open]:bg-white/10 max-md:size-9";
 
-export type NavView = "overview" | "office" | "preview" | "group" | "loops" | (typeof MORE_TABS)[number];
+export type NavView = "bots" | "overview" | "office" | "preview" | "group" | "loops" | (typeof MORE_TABS)[number];
 
 const VIEWS: { tab: NavView; label: string; icon: typeof SearchIcon }[] = [
+  { tab: "bots", label: "Bots", icon: BotIcon },
   { tab: "overview", label: "Tổng quan", icon: LayoutDashboardIcon },
   { tab: "office", label: "Văn phòng", icon: Building2Icon },
   { tab: "preview", label: "Preview", icon: ImageIcon },
@@ -141,6 +144,7 @@ export function Nav({
   const [query, setQuery] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
   const data = office.office;
+  const botsNeed = (data?.rooms ?? []).filter((r) => r.status !== "ended" && botStatus(r) === "needs").length;
   // The newest server clock seen (office or the session poll); 0 until one answers (no times shown).
   const now = Math.max(data?.at ?? 0, tree.at);
 
@@ -354,6 +358,11 @@ export function Nav({
         {VIEWS.map((v) => (
           <button key={v.tab} type="button" className={cn(row, "h-7 max-md:h-10")} aria-current={tab === v.tab} onClick={() => onTab(v.tab)}>
             <v.icon className="size-4 text-muted-foreground" aria-hidden /> {v.label}
+            {v.tab === "bots" && botsNeed > 0 && (
+              <span className="ml-auto rounded-full bg-st-needs/20 px-1.5 text-[11px] font-semibold text-[color-mix(in_oklch,var(--st-needs),black_42%)] tabular dark:text-st-needs" aria-label={`${botsNeed} bot chờ anh`}>
+                {botsNeed}
+              </span>
+            )}
           </button>
         ))}
         <DropdownMenu modal={false}>
